@@ -11,6 +11,7 @@ import {
   bytesPair,
   cardinal,
   duration,
+  instant,
   percent,
   relative,
   relativeMs,
@@ -225,5 +226,29 @@ describe("cardinal", () => {
 
   it("keeps a negative sign outside the grouping", () => {
     expect(cardinal(-4200)).toBe("-4\u202f200");
+  });
+});
+
+describe("instant", () => {
+  // The SHAPE is the requirement -- ISO order, 24h, seconds kept -- so it is
+  // asserted verbatim rather than by toContain. A locale whose shorthand
+  // happens to produce it is exactly what this must not silently become.
+  it("renders an instant in ISO order in the given zone", () => {
+    expect(instant("2026-08-10T13:59:19Z", "UTC")).toBe("2026-08-10 13:59:19");
+    expect(instant("2026-08-10T13:59:19Z", "Europe/Zurich")).toBe(
+      "2026-08-10 15:59:19",
+    );
+  });
+
+  // Zero-padded on both halves, and midnight is 00 -- some engines hand back
+  // "24" for hour12:false, which would date the row to the previous day at a
+  // glance while the date beside it had already rolled over.
+  it("pads every field and writes midnight as 00", () => {
+    expect(instant("2026-01-02T00:00:00Z", "UTC")).toBe("2026-01-02 00:00:00");
+  });
+
+  it("absorbs an absent or unparseable value the way relative does", () => {
+    expect(instant(null)).toBe(ABSENT);
+    expect(instant("garbage")).toBe(ABSENT);
   });
 });

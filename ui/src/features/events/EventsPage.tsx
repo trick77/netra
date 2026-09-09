@@ -13,11 +13,23 @@ import { Card } from "../../ui/Card";
 import { EmptyState } from "../../ui/EmptyState";
 import { Input, Select } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
+import { Table, type Column } from "../../ui/Table";
+import { EventTime } from "../../ui/When";
 import type { Event } from "../../lib/api";
 import type { Range } from "../../lib/range";
-import { ABSENT, absolute, relative } from "../../lib/format";
-import { KNOWN_EVENT_TYPES, mdraidSeverity, messageOf } from "./message";
+import { ABSENT } from "../../lib/format";
+import { KNOWN_EVENT_TYPES, messageOf } from "./message";
 import { PackageRunFold } from "./PackageRunFold";
+// Re-exported below, so a link written against EventsPage still resolves.
+import {
+  SEVERITY_RANK,
+  SEVERITY_TINT,
+  railSeverity,
+  severityOf,
+  type EventSeverity,
+} from "./severity";
+
+export { severityOf, type EventSeverity } from "./severity";
 
 // The windows this page OFFERS: the log reaches back further than a metrics
 // chart does, because events are sparse and "what happened this week" is the
@@ -35,10 +47,6 @@ export const EVENT_RANGE_VALUES: readonly Range[] = EVENT_RANGES.map(
   (o) => o.value,
 );
 
-/** Derived, never received: the events table carries type, subject and
- * detail, and no severity column at all. */
-export type EventSeverity = "critical" | "warning" | "info";
-
 /** What the dropdown offers, which is NOT every severity.
  *
  * `info` is missing on purpose. The filter is a threshold, so "info and worse"
@@ -47,69 +55,6 @@ export type EventSeverity = "critical" | "warning" | "info";
  * result. It stays a valid value in a URL, because a link written before this
  * existed should still open the page it named. */
 const SEVERITY_CHOICES: EventSeverity[] = ["critical", "warning"];
-
-/** Severity as a number, so the filter can be a THRESHOLD rather than an
- * equality. Selecting "warning" has to mean "warning and worse": an operator
- * narrowing to warning and thereby hiding every critical event is the opposite
- * of what the control looks like it does, and it only became load-bearing when
- * warning became the default. Higher is worse. */
-const SEVERITY_RANK: Record<EventSeverity, number> = {
-  info: 0,
-  warning: 1,
-  critical: 2,
-};
-
-// The states an emitter puts in its own detail JSON.
-//
-// Deliberately small. It was small originally because mdraid was the only
-// emitter (agent/collector/mdraid.go marshals the array state) and a table of
-// invented severities for types the hub never emits would be a taxonomy nobody
-// wrote. It stays small for the same reason under the wider log: the hub now
-// also sends package and unit events, and the ones that are serious say so
-// outright in a `severity` key rather than relying on a word matched here.
-const CRITICAL_STATES = ["degraded", "failed", "faulty"];
-const WARNING_STATES = ["recovering", "resync", "resyncing", "rebuilding"];
-
-function detailOf(event: Event): Record<string, unknown> | null {
-  // `detail` is `unknown` in lib/api.ts on purpose -- its shape is the
-  // emitting collector's, not the API's -- so it is narrowed rather than
-  // cast, and anything that is not a plain object simply says nothing.
-  if (typeof event.detail !== "object" || event.detail === null) return null;
-  if (Array.isArray(event.detail)) return null;
-  return event.detail as Record<string, unknown>;
-}
-
-/**
- * Severity of one event, derived from what its emitter said about itself.
- * An emitter that states a severity outright is believed; otherwise the
- * state word it reported decides. Everything else is info -- a package
- * upgrade is a fact, not an emergency, and colouring it as one is how a log
- * stops being read.
- *
- * mdraid is asked separately, and BEFORE the table above, because for mdraid
- * the table has never once fired. The words in it -- degraded, faulty,
- * recovering, rebuilding -- are not values sysfs `array_state` can take, and
- * that is the field the collector puts in `state`. The kernel calls a raid1
- * with one disk left `clean`, so every real degraded array this log has ever
- * shown was rendered as "info". See mdraidSeverity.
- */
-export function severityOf(event: Event): EventSeverity {
-  const detail = detailOf(event);
-  if (detail === null) return "info";
-
-  const declared = detail["severity"];
-  if (declared === "critical" || declared === "warning") return declared;
-
-  const array = mdraidSeverity(event);
-  if (array !== null) return array;
-
-  const state = detail["state"];
-  if (typeof state === "string") {
-    if (CRITICAL_STATES.includes(state)) return "critical";
-    if (WARNING_STATES.includes(state)) return "warning";
-  }
-  return "info";
-}
 
 export interface EventFilters {
   search: string;
@@ -244,24 +189,83 @@ export function applyFilters(
   });
 }
 
-/** Only critical and warning carry a status tint (spec 6). Info is the word
- * on its own -- a log where every row is decorated has no emphasis left for
- * the row that needs it. */
+/** Every severity is drawn the same way: a dotted Badge, in a column of its
+ * own.
+ *
+ * It used to be two shapes in one place -- critical and warning got a Badge,
+ * info got the bare word "info" with no chip and no dot -- on the argument
+ * that a log where every row is decorated has no emphasis left. The argument
+ * was right about emphasis and wrong about where to spend it. Run down a
+ * column, two shapes for one field read as two different KINDS of fact rather
+ * than as three steps of one, and the eye has to re-parse each row to work out
+ * which it is looking at. The emphasis the argument wanted is now the row rail
+ * (Table's rowSeverity), which no info row draws, so the quiet rows are still
+ * quiet without the severity cell changing shape underneath them.
+ *
+ * The tint comes from SEVERITY_TINT rather than a ternary here: keyed on
+ * EventSeverity, a fourth severity is a compile error instead of an undefined
+ * that Badge absorbs into a grey dot nobody asked for. */
 function SeverityMark({ severity }: { severity: EventSeverity }) {
-  // No class: index.css has no general muted-inline class, and "info" needs
-  // no decoration -- it is the absence of a status, stated in a word.
-  if (severity === "info") return <span>info</span>;
-  return (
-    <Badge severity={severity === "critical" ? "critical" : "warning"}>
-      {severity}
-    </Badge>
-  );
+  return <Badge severity={SEVERITY_TINT[severity]}>{severity}</Badge>;
 }
 
 /** The type is a bare `.badge`: with no `st-*` class it takes the neutral
  * chip ground, which is what a category needs and costs no new class. */
 function TypeChip({ type }: { type: string }) {
   return <span className="badge">{type}</span>;
+}
+
+/** The log's columns, in the order the row used to run them together.
+ *
+ * `now` is a parameter rather than a module constant so the hover age on the
+ * When cell moves with the page's clock instead of freezing at import time. */
+function columns(now: Date): Column<Event>[] {
+  return [
+    {
+      key: "ts",
+      header: "When",
+      cell: (event) => <EventTime iso={event.ts} now={now} />,
+      // The instant, not the rendered string: only one of the two still sorts
+      // correctly once the wording or the locale changes.
+      sortValue: (event) => Date.parse(event.ts),
+    },
+    {
+      key: "severity",
+      header: "Severity",
+      cell: (event) => <SeverityMark severity={severityOf(event)} />,
+      sortValue: (event) => SEVERITY_RANK[severityOf(event)],
+    },
+    {
+      key: "type",
+      header: "Type",
+      cell: (event) => <TypeChip type={event.type} />,
+      sortValue: (event) => event.type,
+    },
+    {
+      key: "host",
+      header: "Host",
+      cell: (event) => (
+        <a className="evhost" href={`/hosts/${event.host_id}`}>
+          {event.hostname}
+        </a>
+      ),
+      sortValue: (event) => event.hostname,
+    },
+    {
+      // What happened, in words. A subjectless event with nothing in its
+      // detail is one about the host as a whole (0001_init.sql), which is a
+      // fact worth marking rather than an empty cell.
+      key: "message",
+      header: "Event",
+      cell: (event) => (
+        <>
+          {messageOf(event) || ABSENT}
+          <PackageRunFold event={event} />
+        </>
+      ),
+      sortValue: (event) => messageOf(event) || null,
+    },
+  ];
 }
 
 export interface EventsPageProps {
@@ -318,32 +322,26 @@ export function EventsPage({
 
   return (
     <>
-      {/* The same head every page draws: the name of the page, and the one
-          control that narrows what is under it off the right end. No glyph --
-          the bar carries the marks now, and a page that repeats its own is
-          saying the same thing twice. */}
+      {/* The same head every page draws: the name of the page and nothing
+          else. No glyph -- the bar carries the marks now, and a page that
+          repeats its own is saying the same thing twice.
+
+          The free-text box used to sit off the right end here. It is a FILTER,
+          and every other control that narrows this page lives one line down; a
+          box doing the same job as the four beside it, parked up in the title
+          rail, reads as a search over something larger than the list it
+          actually narrows. */}
       <div className="pagehead">
         <h1>Events</h1>
-        <div className="spacer" />
-        <div className="filterbox">
-          <Input
-            id="ev-search"
-            type="search"
-            placeholder="Filter events"
-            aria-label="Filter events"
-            value={filters.search}
-            onChange={(e) => set("search", e.target.value)}
-          />
-        </div>
       </div>
       <p className="pagesub">
         What happened, when. An event is an instant, not a state.
       </p>
 
-      {/* What is left in the toolbar narrows by FIELD rather than by text:
-          three selects and the window. The free-text search went up beside
-          the title with the fleet's, so the two pages say "narrow this" in
-          the same place. */}
+      {/* Everything that narrows the log, on one line: three selects by
+          field, then the free text, then the window. The text box sits
+          immediately left of the range because those two are the pair a
+          reader reaches for together -- "this word, this week". */}
       <div className="toolbar">
         <label htmlFor="ev-host">Host</label>
         <Select
@@ -393,6 +391,16 @@ export function EventsPage({
         </Select>
 
         <span className="spacer" />
+        <div className="filterbox">
+          <Input
+            id="ev-search"
+            type="search"
+            placeholder="Filter events"
+            aria-label="Filter events"
+            value={filters.search}
+            onChange={(e) => set("search", e.target.value)}
+          />
+        </div>
         <Segmented
           options={EVENT_RANGES}
           value={filters.range}
@@ -412,30 +420,24 @@ export function EventsPage({
             }
           />
         ) : (
-          // role="list" on a div rather than a <ul>: index.css styles
-          // `.evrow` as a grid and carries no list reset, so a real <ul>
-          // would arrive with markers and an indent. The row keeps its
-          // semantics without the page inventing a class.
-          <div role="list">
-            {rows.map((event) => (
-              <div className="evrow" role="listitem" key={event.id}>
-                <time dateTime={event.ts} title={absolute(event.ts)}>
-                  {relative(event.ts, now)}
-                </time>
-                <div>
-                  <SeverityMark severity={severityOf(event)} />{" "}
-                  <TypeChip type={event.type} />{" "}
-                  <a href={`/hosts/${event.host_id}`}>{event.hostname}</a>{" "}
-                  {/* What happened, in words. A subjectless event with
-                      nothing in its detail is one about the host as a whole
-                      (0001_init.sql), which is a fact worth marking rather
-                      than an empty cell. */}
-                  <span>{messageOf(event) || ABSENT}</span>
-                  <PackageRunFold event={event} />
-                </div>
-              </div>
-            ))}
-          </div>
+          // The same Table every other list on the site is built from, rather
+          // than the bespoke two-column grid this page used to draw.
+          //
+          // Five fields were being run together into one line of prose --
+          // severity chip, type chip, hostname link, then the sentence -- so
+          // nothing lined up down the page and none of it could be sorted.
+          // Headed columns give the eye a fixed left edge per field, and they
+          // come with click-to-sort for free.
+          <Table
+            columns={columns(now)}
+            rows={rows}
+            rowKey={(event) => event.id}
+            // The rail, not the badge, is what a reader scanning for trouble
+            // actually follows: it marks the row from the table's edge. See
+            // Table's rowSeverity.
+            rowSeverity={(event) => railSeverity(severityOf(event))}
+            defaultSort={{ key: "ts", dir: "desc" }}
+          />
         )}
       </Card>
     </>

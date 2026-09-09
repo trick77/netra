@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Event } from "../../../lib/api";
-import { Events, eventSeverity } from "./Events";
+import { Events } from "./Events";
 
 function event(over: Partial<Event> = {}): Event {
   return {
@@ -17,22 +17,10 @@ function event(over: Partial<Event> = {}): Event {
   };
 }
 
-describe("eventSeverity", () => {
-  it("has no opinion when the emitting collector expressed none", () => {
-    // The events table has no severity column: internal/hub/store's schema
-    // stores type, subject and the collector's own detail JSON, nothing
-    // more. Inventing one from the type would colour a package upgrade.
-    expect(eventSeverity(event())).toBeNull();
-    expect(eventSeverity(event({ detail: null }))).toBeNull();
-    expect(eventSeverity(event({ detail: { severity: "spicy" } }))).toBeNull();
-  });
-
-  it("passes through a severity the collector did state", () => {
-    expect(eventSeverity(event({ detail: { severity: "critical" } }))).toBe(
-      "critical",
-    );
-  });
-});
+// The rule itself is severityOf's, tested in features/events/severity.test.
+// What this tab owes is that it USES that rule rather than a second one --
+// which it did carry, in an eventSeverity of its own that marked nothing the
+// collector had not stated outright.
 
 describe("Events", () => {
   it("renders a package event as a neutral chip with no status tint", () => {
@@ -150,13 +138,13 @@ describe("Events sorting", () => {
   });
 
   // By RANK, not alphabetically: "critical" collates above "warning", so a
-  // string sort is right in one direction and backwards in the other -- and
-  // an event the collector said nothing about is not the calmest on the page,
-  // so it sorts last either way.
-  it("orders Severity by rank and leaves the unstated ones last", async () => {
+  // string sort is right in one direction and backwards in the other. Every
+  // row has a rank now -- an event nobody rated is `info`, the quietest step
+  // of the same scale, rather than an unrated row parked at one end.
+  it("orders Severity by rank", async () => {
     render(<Events events={rows} />);
     await userEvent.click(header(/severity/i));
 
-    expect(subjects()).toEqual(["cron.service", "sda", "openssl"]);
+    expect(subjects()).toEqual(["openssl", "cron.service", "sda"]);
   });
 });
