@@ -961,15 +961,12 @@ a:hover {
   font-size: var(--text-ui);
   color: var(--ink);
 }
-/* The fleet's hostname, and only the fleet's, in the brand serif. The
-   identity column is the one place on the page that names a thing rather
-   than measuring it, and the serif says so at a glance -- every figure
-   around it stays in the sans. Scoped to .fleet-host because .host-cell-name
-   is shared with the container list, whose name column is one of several in
-   a row of like text and reads wrong set apart. */
-.fleet-host .host-cell-name {
-  font-family: var(--font-serif);
-}
+/* The fleet's hostname stays in the sans the rest of the row is set in. It
+   carried the brand serif for a while to mark the identity column as the one
+   thing on the page that names rather than measures; at list sizes that read
+   as a different list, not a marked column, and the weight and --ink step
+   above already set the name apart. The serif is the masthead's and the page
+   titles', not a cell's. */
 /* Except a host that is not reporting. That one keeps a hue, and it is the
    status palette's rather than the brand's: the name IS the reading on a row
    whose figures have all gone absent, so it is the only thing left to mark.
@@ -1760,22 +1757,28 @@ tbody tr:hover .host-cell-name {
      with everything else. */
   z-index: 5;
 }
-/* The product's name, and the link home. Serif, and sized to the control
-   beside it rather than to a type token: the name is the masthead, and at
-   --text-title it read as one more label among the glyphs. 32px on a 34px
-   line box stands exactly as tall as the search field it sits next to, and
-   the pair reads as one line rather than as a label in front of a box. The
-   line height is stated because 32px of leading would otherwise push the
-   bar past its own 52px. */
+/* The product's name, and the link home. Serif, at the size the login card
+   sets its own brand -- it is the one piece of type in the bar, and the bar
+   is the only place the app ever says what it is. At 32px it stood as tall
+   as the search field and took the bar over; at 24px on a 26px line box it
+   stands a step above the labels around it without owning the bar. Painted --accent, not --ink: colour
+   is what makes it the masthead now that size does not, and the bar holds
+   no severity marks for a warm hue to be confused with. The line height is
+   stated so the leading cannot push the bar past its own 52px. */
 .topbar .wordmark {
   flex: none;
   font-family: var(--font-serif);
-  font-size: 32px;
-  line-height: 34px;
+  font-size: 24px;
+  line-height: 26px;
   font-weight: 500;
   letter-spacing: -0.01em;
-  color: var(--ink);
+  color: var(--accent);
   text-decoration: none;
+  /* On top of the bar's own --space-4: the name is the masthead and the
+     field beside it is a control, and at the bar's uniform gap the two read
+     as one group. --space-5 in total sets the name off from the row of
+     controls without a rule between them. */
+  margin-right: calc(var(--space-5) - var(--space-4));
 }
 .topbar .wordmark:hover {
   color: #fff;
@@ -2582,31 +2585,16 @@ td {
 tbody tr:last-child td {
   border-bottom: 0;
 }
-/* Zebra. A row here is five or six cells wide, three of them charts, and the
-   hairline between rows is the only thing tying a hostname to the disk figure
-   at the far edge of the table -- a wide row is exactly where an eye drifts a
-   line. The stripe binds it.
+/* No zebra. Every row here already carries its own bands -- a sparkline, a
+   meter, a status mark, each a filled shape on its own ground -- and a stripe
+   under them was a third band competing with the two that hold the data. What
+   ties a hostname to the disk figure at the far edge of the row is the
+   hairline between rows and the hover, and both do it without painting half
+   the list a different colour.
 
-   --surface-2 rather than --surface, because a table sits ON --surface
-   (.tablewrap): the stripe has to be the rung ABOVE its ground, not the same
-   one. Measured against that ground it is 1.08:1 -- a shelf, not a highlight,
-   and the same step the elevation ladder uses everywhere else.
-
-   :nth-child, so the count restarts inside each <tbody>: a grouped table is
-   one tbody per group, and a stripe that ran across the group heads would
-   pair the last row of one group with the first of the next. The head is a
-   .grouprow th with its own --bg fill and is excluded outright, so it never
-   takes a stripe of its own. */
-tbody tr:nth-child(even):not(.grouprow) {
-  background: var(--surface-2);
-}
-/* Hover moves up a rung with it -- at --surface-2 it would have been
-   invisible on every striped row.
-   :not(.grouprow) is not about group heads, which paint their own --bg over
-   the row anyway: it is there to MATCH the stripe's specificity. The stripe
-   above scores (0,2,2) -- :nth-child plus the class inside :not() -- and a
-   bare `tbody tr:hover` scores (0,1,2), so the stripe won and half the rows
-   of every table hovered to no change at all. Same weight, later in source. */
+   :not(.grouprow) on the hover is not about group heads, which paint their
+   own --bg over the row anyway: it is left in place because the row that
+   heads a group is not a row you can point at. */
 tbody tr:hover:not(.grouprow) {
   background: var(--raised);
 }
@@ -3817,19 +3805,20 @@ svg.spark {
    PAGE scrolls sideways, which is the one thing this file says a layout must
    never do. Measured at 320px it overflowed by 67px.
 
-   The threshold was 430 while the wordmark was 20px; at 32px the bar's own
-   floor is 448, so a 440px window scrolled sideways with the wrap rules
-   still asleep. 480 rather than 448 exactly: a media query measures the
-   VIEWPORT and the bar gets the viewport minus a classic scrollbar, which
-   is another ~15px, so a threshold set on the floor still overflows by a
-   hair on the first width above it. .topbar is a flex row inside a 1fr grid
-   column -- minmax(auto, 1fr) -- so it is never narrower than its content
-   and the page, not the bar, is what scrolls.
+   The threshold tracks the wordmark: it went to 480 while the name was 32px
+   and the bar's own floor 448, and sits at 460 with the name at 24px, where
+   the floor measures 435. 460 rather than 435 exactly: a media query
+   measures the VIEWPORT and the bar gets the viewport minus a classic
+   scrollbar, another ~15px, so a threshold set on the floor still overflows
+   by a hair on the first width above it -- measured at a 440px viewport,
+   435 of bar in 425 of room. .topbar is a flex row inside a 1fr grid column
+   -- minmax(auto, 1fr) -- so it is never narrower than its content and the
+   page, not the bar, is what scrolls.
 
    Nothing is dropped to fix it: the glyphs get a row of their own, spread
    across it, with the wordmark and the action on the line above. That is what
    the rail did at this width too, for the same reason. */
-@media (max-width: 480px) {
+@media (max-width: 460px) {
   .topbar {
     height: auto;
     flex-wrap: wrap;
@@ -4446,28 +4435,24 @@ summary:focus-visible,
    log -- rows in a card, framed but unstriped. Which one you got depended on
    which page you were on, which is the one thing a list style must not do.
 
-   Every list is the framed box now (see .tablewrap above), and every list is
+   Every list is the framed box now (see .tablewrap above), and no list is
    striped. The fleet's exception is gone with its reason: it was full-bleed
    because a card around the only thing on the page drew a line around the
    page, and with a bar overhead and a title above the rows the frame is what
    ends the list rather than what boxes the page.
 
-   Nothing is added here for the tables: the bare `tbody tr:nth-child(even)`
-   stripe and its hover have been the app's rule all along, and what the fleet
-   had was an OVERRIDE of them -- a full-bleed box with the stripe dropped a
-   rung to match. Removing that override is the whole change; restating the
-   rule under .tablewrap would only be a second place to keep in sync. */
+   Nothing is added here for the tables: the frame, the hairline between rows
+   and the hover are stated once above and every list gets them. Restating
+   them under .tablewrap would only be a second place to keep in sync. */
 /* The events log is the one list that is not a table -- .evrow is a grid, in
-   a card -- and it stripes like one. The row reaches the card's own edge
-   rather than stopping inside its padding, so a stripe is a band across the
-   box instead of a floating strip. */
+   a card -- and it is flat like one. The row still reaches the card's own
+   edge rather than stopping inside its padding: a row is a band across the
+   box, and its hover and its separator have to run the full width or they
+   read as a floating strip. */
 .card .body > [role="list"] {
   margin: 0 calc(-1 * var(--space-4));
 }
 .evrow {
   padding-left: var(--space-4);
   padding-right: var(--space-4);
-}
-.evrow:nth-child(even) {
-  background: var(--surface-2);
 }
