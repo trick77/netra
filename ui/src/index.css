@@ -334,29 +334,61 @@
   --out-2: #fbc34c;
   --out-3: #fcd47f;
   --out-4: #fde5b2;
-  /* THE PER-CORE CPU STACK, built the way --in-* and --out-* are built: one
-     hue, four lightness steps, walked and wrapped.
+  /* THE ANONYMOUS-STACK SWEEP: one hue per band, evenly divided, at a fixed
+     saturation and lightness. lib/bands.ts's seriesHue() computes it and
+     these two are the only fixed part.
 
-     It was a computed full-spectrum hue sweep -- violet through blue, teal,
-     green and yellow to red, subdivided to fit the host -- on the argument
-     that hue is the only channel with the range to separate thirty-two
-     neighbours. It does separate them, and it made the CPU cell the one
-     chart in the fleet table that looks like a different product: every
-     other stack on the row is one family in shades, and a rainbow beside
-     them reads as a category, which core index is not.
+     It draws every stack whose bands are an unbounded family of LIKE things,
+     where the colour names nothing but "not the band beside me": the two
+     per-core CPU panels and the fleet row's CPU dialog, and the Docker CPU
+     and Docker Memory panels over a host's Containers list. Nothing else. A
+     stack whose colours name WHICH KIND of thing a band is -- the host
+     memory family, CPU time breakdown, traffic's two directions -- keeps its
+     semantic palette, because there the hue is the label.
 
-     The walk is what the traffic stack already does for a host's interfaces,
-     and it is NOT the monotonic one-hue ramp that was tried and failed here:
-     a ramp across thirty-two bands puts neighbours 0.047 apart in L, where a
-     four-step walk that wraps holds every adjacent pair a full step apart
-     however many cores there are. What it gives up is identity across the
-     whole stack -- with the sweep, colour told core 3 from core 19; with the
-     walk it only tells a band from its neighbour, and the key in the tooltip
-     names the core.
+     This replaces a four-step walk through one hue, and the walk replaced a
+     sweep before that. What sent it back is the case the walk could never
+     answer: on a host with eighteen containers or thirty-two cores the four
+     steps repeat four and a half or eight times over, so the stack tells you
+     where one band ends and nothing about which one you are looking at. Hue
+     is the only channel with the range to keep that many neighbours apart.
 
-     --cpu-1 IS --s1, the colour a one-core host's cpu_total silhouette is
-     already drawn in (totalCpuBand in tabs/Overview.tsx), so the two draw the
-     same chart.
+     The old objection was that a rainbow reads as a CATEGORY, and it is
+     answered by the fade rather than by the palette: these stacks draw at
+     SWEPT_FILL_OPACITY (ui/charts/size.ts) with a full-strength edge, so the
+     bands read as one translucent mass with separable layers instead of a
+     row of solid category blocks. It is beszel's construction, values
+     included -- 60%/55% is its dark-theme pair, and netra is dark only.
+
+     NOT the monotonic one-hue ramp that failed here: that one subdivided
+     lightness, landing 0.047 apart in L per step across thirty-two bands. A
+     hue sweep never subdivides the channel carrying its contrast, so every
+     adjacent pair holds a full step however many bands share it.
+
+     The sweep is ANCHORED, not free: bands.ts's CORE_HUE_OFFSET is 212, the
+     hue of --cpu-1 below, so band 0 stays the blue this stack has always led
+     with. totalBand() in features/fleet/hostTrends.ts -- the cpu_total
+     silhouette a host draws when its cpu_core family did not answer -- was
+     --s1, which is --cpu-1's hex, and now computes band 0 of this sweep
+     instead, so the fallback and the stack it stands in for still draw the
+     same chart. Containers start at 0.
+
+     Container hue 0 lands in the 0-41 degree band reserved above for
+     --accent and the status palette. A full sweep cannot avoid status hues
+     once a host runs more than a handful of containers, and it is
+     survivable for the same reason the traffic cell's is: these bands carry
+     no severity of their own, and the rail, the dot and the word that do
+     sit to the left of the chart. */
+  --series-s: 60%;
+  --series-l: 55%;
+
+  /* --cpu-1 IS --s1, the blue the per-core stack led with before the sweep,
+     and what the sweep's core offset is derived from.
+
+     Steps 2-4 have no caller since the sweep landed. They stay because the
+     hue anchor above is only meaningful beside the ramp it was measured in,
+     and because a future stack wanting a one-hue walk should find the
+     measured one rather than mint a new one.
 
      THE WALK RUNS TOWARD --bg, NOT TOWARD WHITE. It used to be --s1 blended
      2/9, 4/9 and 6/9 into white, which put the fourth step at #bdd7f6 --
@@ -384,15 +416,28 @@
   --cpu-3: #235186;
   --cpu-4: #1a3c5d;
 
-  /* The MEMORY counterpart, for the host page's stacked Docker MEMORY panel --
-     one band per container, however many the host runs, so it needs the same
-     wrapping walk the per-core CPU stack has and for the same reason.
+  /* The MEMORY counterpart. --cmem-1 is a CONTAINER's memory colour: the row
+     sparkline in the Containers list (features/container/ContainerChart.tsx)
+     and the detail page's memory band both lead on it.
+
+     The Docker MEMORY panel it was built for takes the sweep now, and its
+     own note above is why: "This is a walk, where the colour names nothing
+     but 'not the band beside me'" is exactly the case a sweep answers
+     better, and eleven containers repeating four ambers said less than
+     eleven hues do. What that gives up is amber-above-amber on the
+     Containers tab; what it buys is a container reading as ONE colour on the
+     Docker CPU and Docker Memory panels side by side.
+
+     Amber still means memory everywhere it names a QUANTITY rather than a
+     container: the host memory stack led by --mem-used, the fleet row's
+     memory silhouette, and --cmem-1 in the two places above. Steps 2-4 have
+     no caller, and stay for the reason --cpu-2..4 do.
 
      --cmem-, not --mem-: --mem-used and its four siblings above are the HOST
      memory stack's semantic family (anon, shmem, arc, buffers, cached), where
-     the colour names which kind of byte it is. This is a walk, where the
-     colour names nothing but "not the band beside me", and giving the two the
-     same prefix would invite a maintainer to read one as the other.
+     the colour names which kind of byte it is. This one never did, and giving
+     the two the same prefix would invite a maintainer to read one as the
+     other.
 
      AMBER, NOT GREEN. It was --s2 and its blends toward white, on the
      argument that ContainerChart draws a row's two sparkline cells in --s1

@@ -15,7 +15,13 @@ import type {
   MetricsResponse,
 } from "../../../lib/api";
 import { purgeContainer } from "../../../lib/api";
-import { ABSENT, bytes, duration, percent } from "../../../lib/format";
+import {
+  ABSENT,
+  byterate,
+  bytes,
+  duration,
+  percent,
+} from "../../../lib/format";
 import {
   driveFindings,
   driveKind,
@@ -31,6 +37,7 @@ import {
   containerTrends,
   hostContainerNote,
   hostContainersBlocked,
+  networkUnavailable,
   type ContainerTrend,
 } from "../../../lib/containers";
 import { containerBands, containerStackTotal } from "../../../lib/bands";
@@ -474,6 +481,7 @@ function DockerOverview({
 }) {
   const cpu = containerBands(trends, "cpu");
   const mem = containerBands(trends, "mem");
+  const net = containerBands(trends, "net");
 
   // Bands beat any capability the agent reported. `no-docker-socket` is the
   // case that makes this the right way round: cgroup v2 still yields CPU and
@@ -501,7 +509,7 @@ function DockerOverview({
       : "No container CPU or memory reached the hub for this host.";
 
   // Nothing collected and nothing to explain: a host that simply runs no
-  // containers. The list below already says so, and two empty panels above it
+  // containers. The list below already says so, and empty panels above it
   // would only repeat it in a form that looks like a fault.
   if (!collected && unavailable === undefined) return null;
 
@@ -512,7 +520,7 @@ function DockerOverview({
 
   // One family, at the dialog's own range -- the same fetch a row's enlarged
   // sparkline makes, so widening either costs the host's containers once.
-  const detail = (metric: "cpu" | "mem") => async (next: Range) => {
+  const detail = (metric: "cpu" | "mem" | "net") => async (next: Range) => {
     const res = await fetchHostFamily(hostId, "container", next);
     return {
       series: containerBands(containerTrends(res), metric),
@@ -561,6 +569,58 @@ function DockerOverview({
         fetchSeries={detail("mem")}
         unavailable={unavailable}
       />
+      {/* The third quantity Docker costs a host, and the one this page said
+          nothing about until now: the detail page charted a container's rx
+          and tx, and the host had no way to ask what its containers were
+          moving in total.
+
+          MIRRORED, unlike the two above it, because traffic has a direction
+          and every other traffic mark in the app says so the same way: in
+          above the midline, out below. That also settles the colour -- green
+          over amber, the container as a lightness step within its half,
+          rather than the hue sweep the CPU and Memory panels use. See
+          containerBands' "net" branch.
+
+          No nowValue: a mirror has two totals, and one number beside a shape
+          that is two quantities would have to pick one of them. The detail
+          page's Network panel makes the same call. */}
+      <ChartPanel
+        title="Docker Network"
+        about="Every container's traffic, stacked. In above the midline, out below. Containers sharing the host's network namespace are not counted here — their bytes are the host's own interface traffic."
+        fmt={byterate}
+        series={net}
+        mirrored
+        stacked
+        legend={false}
+        height={PANEL_HEIGHT}
+        notice={notice}
+        window={window}
+        range={range}
+        ranges={RAIL_RANGES}
+        fetchSeries={detail("net")}
+        // Three states, most specific first.
+        //
+        // The agent's own explanation beats the generic one: `unavailable`
+        // says containers are missing wholesale, while container_network says
+        // CPU and memory arrived and only the traffic did not.
+        //
+        // Then the case NO capability covers, which is the common one on a
+        // real host: every container on `network_mode: host` shares the
+        // host's namespace, so the collector reports no rows for them rather
+        // than a failure, the columns never arrive, and containerBands has
+        // nothing to build. Judged on the BANDS, like `collected` above,
+        // because that is the only thing that knows whether traffic reached
+        // the hub. Without this the panel draws a blank plot beside two
+        // populated ones, which reads as "these containers moved no bytes" --
+        // exactly what networkUnavailable exists to prevent.
+        unavailable={
+          networkUnavailable(capabilities?.container_network) ??
+          unavailable ??
+          (net.length === 0
+            ? "No container traffic reached the hub for this host. Containers that share the host's network namespace are counted in its own interface traffic instead."
+            : undefined)
+        }
+      />
     </div>
   );
 }
@@ -569,9 +629,10 @@ function DockerOverview({
  * Taller than a small multiple, and NOT drawn in the `.sm` grid.
  *
  * `.sm` is auto-fill minmax(292px) and exists for the twenty panels of a
- * charts tab; two panels in it come out as thumbnails at the top of a page
- * whose subject they are. Two of these across `.grid2` are half the tab's
- * width each, which is what a stack of fourteen bands needs to be readable.
+ * charts tab; a few panels in it come out as thumbnails at the top of a page
+ * whose subject they are. `.dockover` is auto-fit minmax(420px), so the three
+ * of these run across a wide tab and wrap to two and then one as it narrows
+ * -- and 420px is what a stack of fourteen bands needs to stay readable.
  */
 const PANEL_HEIGHT = 200;
 

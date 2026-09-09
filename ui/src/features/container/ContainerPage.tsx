@@ -9,6 +9,7 @@ import { Fragment, useState } from "react";
 import { Badge, type Severity } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { containerIsGone, containerSamplesBlocked } from "./columns";
+import { networkUnavailable } from "../../lib/containers";
 import { purgeContainer } from "../../lib/api";
 import { Card } from "../../ui/Card";
 import { Meter } from "../../ui/Meter";
@@ -276,13 +277,19 @@ function bandsFor(sampled: Sampled | null): ContainerBands {
     cpuBands,
     memBands,
     // Mirrored about a midline, ingress above and egress below, like every
-    // other traffic chart in the app. Green over violet, from the series ramp
-    // rather than the fleet row's --in-1/--out-1 pair: this panel always
-    // carries a legend, and blue below green would separate by only CVD dE 9
-    // and read as one mass.
+    // other traffic chart in the app -- and now in the same two colours as
+    // every one of them.
+    //
+    // It was green over VIOLET, from the series ramp, on the argument that
+    // blue below green separates by only CVD dE 9 and reads as one mass.
+    // True, and it does not reach amber: --out-1 is the status palette's own
+    // #fab219, which is what the fleet row's traffic cell, the host Traffic
+    // panel and the host-page Docker Network panel all draw egress in. A
+    // reader who has learnt "orange here is outbound bytes" was learning it
+    // everywhere except on this page.
     netBands: [
-      band("in", "var(--s2)", sampled?.netRx ?? empty),
-      band("out", "var(--s5)", sampled?.netTx ?? empty),
+      band("in", "var(--in-1)", sampled?.netRx ?? empty),
+      band("out", "var(--out-1)", sampled?.netTx ?? empty),
     ],
     ioBands: [
       band("read", "var(--s2)", sampled?.ioRead ?? empty),
@@ -294,37 +301,6 @@ function bandsFor(sampled: Sampled | null): ContainerBands {
 function last(values: readonly (number | null)[]): number | null {
   return values.filter((v): v is number => v !== null).at(-1) ?? null;
 }
-
-/**
- * What each `container_network` capability value means, in the reader's
- * terms rather than the kernel's. Both are failures, and both name a remedy,
- * because a sentence an operator cannot act on is the bug these replaced:
- *
- *   namespaced      the container was started without `pid: host`. The setup
- *                   script now renders it unconditionally, so re-running it
- *                   is the fix -- named here for the same reason
- *                   CGROUP_REMEDY names it in lib/containers.ts.
- *   no-host-netns   the namespace IS present and the link still would not
- *                   read, which in practice is the kernel's ptrace access
- *                   check: it needs CAP_SYS_PTRACE for a non-dumpable target
- *                   even when the uids match, and `no-new-privileges` makes
- *                   every target non-dumpable. Re-running the script changes
- *                   nothing, so it points at the Docker socket instead --
- *                   which answers host-vs-bridged outright and is the only
- *                   path to this state, since a host WITH the socket never
- *                   reaches the namespace comparison at all.
- *
- * Values mirror capNetNamespaced and capNetNoHostNS in
- * internal/agent/collector/containers.go, which picks between them from
- * AGENT_PID_HOST rather than from an errno -- the two failures are
- * indistinguishable at the syscall.
- */
-const NETWORK_UNAVAILABLE: Record<string, string> = {
-  "no-host-netns":
-    "The agent could not read this host's network namespaces, so it cannot tell a host-networked container from a bridged one and measured no container traffic. Mounting the Docker socket answers that question without the kernel access this needs.",
-  namespaced:
-    "The agent is running without the host's PID namespace, so it cannot resolve the processes that own each container's interfaces and measured no container traffic. Re-run setup-agent.sh on this host.",
-};
 
 export interface ContainerPageProps {
   container: Container;
@@ -672,21 +648,11 @@ export function ContainerPage({
           fetchSeries={detail((b) => b.netBands)}
           mirrored
           // The agent's own explanation, in place of a chart that would
-          // otherwise read as "this container moved no traffic".
-          //
-          // ANY value blanks the panel, because the key exists only to
-          // report that networking produced nothing -- a working collector
-          // reports no key at all. Matching one value left the other one,
-          // "namespaced", drawing the empty chart this prop exists to
-          // prevent. An unrecognised value still blanks it and says what
-          // the agent said: a capability netra does not know the wording of
-          // is still the agent reporting a failure.
-          unavailable={
-            containerNetwork === undefined
-              ? undefined
-              : (NETWORK_UNAVAILABLE[containerNetwork] ??
-                `The agent reported per-container networking as "${containerNetwork}", so no container traffic was measured.`)
-          }
+          // otherwise read as "this container moved no traffic". The rule
+          // that ANY value blanks the panel, and why, is in
+          // networkUnavailable -- shared now with the host page's Docker
+          // Network panel, which answers the same capability.
+          unavailable={networkUnavailable(containerNetwork)}
           series={netBands}
         />
         <ChartPanel

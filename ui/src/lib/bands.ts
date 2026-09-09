@@ -8,6 +8,7 @@
  * particular is a subtraction with several ways to get it subtly wrong.
  */
 import { fsName, griddedValues, carriesColumn, hasReading } from "./metrics";
+import { SWEPT_FILL_OPACITY } from "../ui/charts/size";
 import type { ContainerTrend } from "./containers";
 import type { MetricsResponse } from "./api";
 import type { Band } from "../ui/charts/StackedSparkline";
@@ -222,10 +223,11 @@ export function perCoreBands(
         ? raw.map((v) => (v === null ? null : v / n))
         : raw;
       return {
-        // The key names the core, so a hovered band is identifiable even
-        // though thirty-two of them cannot each own a hue.
+        // The key names the core. The sweep gives each one its own hue now,
+        // but a hue is not a label: this is what a hovered band reads out.
         name: `core ${series.key.core ?? i}`,
-        color: coreColor(i, n),
+        color: seriesHue(i, n, CORE_HUE_OFFSET),
+        fill: SWEPT_FILL_OPACITY,
         values,
       };
     })
@@ -233,24 +235,25 @@ export function perCoreBands(
 }
 
 /**
- * One band per container on a host, for the two stacked Docker panels above
+ * One band per container on a host, for the three stacked Docker panels above
  * its Containers list.
  *
  * The same construction perCoreBands uses, for the same reason: an unbounded
- * number of series that no palette can name apart, so the colour is a
- * wrapping walk through one hue's shades and the band's name -- the
- * container_key -- is what identifies it.
+ * number of series that no fixed palette can name apart, so cpu and mem take
+ * seriesHue's sweep and the band's name -- the container_key -- is what
+ * identifies it beyond that.
  *
- * The walk separates ARRAY neighbours, which is not quite the same as visual
- * ones: an idle container is a flat band of zero height, so four bands with
- * three idle ones between them put the same shade against itself. perCoreBands
- * has had exactly this property since it shipped -- an idle core draws no
- * height either -- and the answer is the same one, deliberately: the shade
- * only ever told a band from its neighbour, never which container it is. That
- * is what the key on hover is for, and what the enlarged view's stats table,
- * which names every container beside its swatch, is for. Assigning shades by
- * whether a container happens to be busy would make them change under a
- * reader between polls, which is a worse trade than two ambers meeting.
+ * "net" is the exception, and deliberately. It returns bands INTERLEAVED --
+ * [c1 in, c1 out, c2 in, c2 out, ...] -- which is the order MirrorStackMarks
+ * reads its halves off (every other series, ui/charts/Chart.tsx), and it
+ * colours them from IN_SHADES and OUT_SHADES rather than the sweep. Direction
+ * is the first question a traffic chart answers, and green-in over amber-out
+ * is what every other traffic mark in the app already says.
+ *
+ * The interleaved pair means a container contributes TWO entries, so the
+ * shade index is the container's position and not the band's -- container k
+ * is --in-{k%4} above the midline and --out-{k%4} below it, and its two
+ * halves belong to each other.
  *
  * Band ORDER is the response's, never re-sorted by size. The host page polls,
  * and a stack re-ordered on every poll would shuffle its bands between
@@ -278,21 +281,65 @@ export function containerBands(
    * response, and decoding it per panel as well was three passes where one
    * does -- on a page that polls. */
   byKey: ReadonlyMap<string, ContainerTrend>,
-  metric: "cpu" | "mem",
+  metric: "cpu" | "mem" | "net",
 ): Band[] {
+  if (metric === "net") return containerNetBands(byKey);
+
   const trends = [...byKey.entries()]
     .map(([key, trend]) => ({ key, values: trend[metric] }))
     .filter((t) => t.values.length > 0);
   if (trends.length === 0) return [];
 
   const reported = bucketsWithAnyReading(trends.map((t) => t.values));
-  const shades = metric === "cpu" ? CPU_SHADES : CONTAINER_MEM_SHADES;
+  const n = trends.length;
 
   return trends.map((trend, i) => ({
     name: trend.key,
-    color: shades[i % shades.length]!,
+    color: seriesHue(i, n, CONTAINER_HUE_OFFSET),
+    fill: SWEPT_FILL_OPACITY,
     values: reported.map((any, j) => trend.values[j] ?? (any ? 0 : null)),
   }));
+}
+
+/**
+ * The mirrored half of containerBands: one in band and one out band per
+ * container, interleaved.
+ *
+ * A container is kept only when it reported at least one of the two -- a
+ * container with rx and no tx is a real reading and draws one half -- and
+ * both halves are then emitted, so the pairing MirrorStackMarks relies on
+ * (index 2k is up, 2k+1 is down) holds however sparse the data is. An absent
+ * half is an empty series rather than a missing entry, which the null rule
+ * below then fills exactly as it fills a container that was not running.
+ *
+ * The reported-bucket test spans BOTH directions: a bucket where some
+ * container moved bytes either way is a bucket the host answered in, and a
+ * container silent in it consumed nothing rather than being unknown.
+ */
+function containerNetBands(byKey: ReadonlyMap<string, ContainerTrend>): Band[] {
+  const trends = [...byKey.entries()]
+    .map(([key, trend]) => ({ key, rx: trend.netRx, tx: trend.netTx }))
+    .filter((t) => t.rx.length > 0 || t.tx.length > 0);
+  if (trends.length === 0) return [];
+
+  const reported = bucketsWithAnyReading(
+    trends.flatMap((t) => [t.rx, t.tx]).filter((v) => v.length > 0),
+  );
+  const fill = (values: (number | null)[]): (number | null)[] =>
+    reported.map((any, j) => values[j] ?? (any ? 0 : null));
+
+  return trends.flatMap((trend, i) => [
+    {
+      name: `${trend.key} in`,
+      color: IN_SHADES[i % IN_SHADES.length]!,
+      values: fill(trend.rx),
+    },
+    {
+      name: `${trend.key} out`,
+      color: OUT_SHADES[i % OUT_SHADES.length]!,
+      values: fill(trend.tx),
+    },
+  ]);
 }
 
 /**
@@ -341,65 +388,101 @@ export function containerStackTotal(bands: readonly Band[]): (number | null)[] {
 }
 
 /**
- * The shades one container's band is drawn in, walked and wrapped -- the
- * memory half. CPU walks CPU_SHADES, so a row's blue CPU sparkline and amber
- * memory sparkline keep their pairing in the panels above the list.
+ * The traffic stack's two walks -- one band per container, in above the
+ * midline and out below it.
  *
- * Index 0 is --cmem-1, an amber in the register --mem-used occupies rather
- * than the --s2 green it used to be: memory is amber everywhere else netra
- * draws it, and ContainerChart follows this token now instead of leading it.
- * The argument and the measurements are in index.css.
+ * DIRECTION WINS, and the container is a lightness step within its half. It
+ * is the construction the host's per-interface Traffic panel already uses,
+ * and the reason is the same one index.css gives there: the fleet row's
+ * traffic cell, the host Traffic panel and this one are the same fact at
+ * three sizes, and a panel that re-hued its bands per container would be a
+ * different chart from the cell it was opened out of. So the CPU and memory
+ * panels beside this one sweep hue per container, and this one does not:
+ * green is inbound bytes and amber is outbound, here as everywhere.
+ *
+ * Four steps, wrapping. A host running more than four containers repeats a
+ * shade, exactly as more than four interfaces does; the shade only ever told
+ * a band from the one beside it, and the band's key is what names it.
  */
-export const CONTAINER_MEM_SHADES = [
-  "var(--cmem-1)",
-  "var(--cmem-2)",
-  "var(--cmem-3)",
-  "var(--cmem-4)",
+export const IN_SHADES = [
+  "var(--in-1)",
+  "var(--in-2)",
+  "var(--in-3)",
+  "var(--in-4)",
 ];
 
-/**
- * The shades one core's band is drawn in, walked and wrapped.
- *
- * Index 0 IS --s1, which is what a host with no per-core series draws its
- * cpu_total silhouette in (totalCpuBand in tabs/Overview.tsx) -- so a
- * single-core host draws the same chart either way, the same property
- * UP_SHADES has against UP_COLOR.
- */
-export const CPU_SHADES = [
-  "var(--cpu-1)",
-  "var(--cpu-2)",
-  "var(--cpu-3)",
-  "var(--cpu-4)",
+export const OUT_SHADES = [
+  "var(--out-1)",
+  "var(--out-2)",
+  "var(--out-3)",
+  "var(--out-4)",
 ];
 
+/** Where each sweep starts, in degrees. See seriesHue. */
+export const CORE_HUE_OFFSET = 212;
+export const CONTAINER_HUE_OFFSET = 0;
+
 /**
- * The colour of one core's band in a stack of `n`.
+ * The colour of band `i` in a stack of `n` anonymous ones -- one core of
+ * many, one container of many.
  *
- * A four-step walk through one hue, wrapping -- the same construction the
- * traffic stack uses for a host's interfaces, and the reason every stack in
- * a fleet row now reads as the same kind of mark.
+ * A full hue sweep, evenly divided, at a fixed saturation and lightness that
+ * index.css owns as --series-s and --series-l. It is beszel's construction
+ * (site/src/components/charts/hooks.ts), taken because it answers the thing a
+ * four-step wrapping walk could not: on a host with eighteen containers the
+ * walk repeats itself four and a half times, so the stack tells you where one
+ * band ends and says nothing about which container you are looking at. Hue is
+ * the only channel with the range to keep that many neighbours apart.
  *
- * This was a computed spectrum sweep, and the argument for it was sound as
- * far as it went: hue is the only channel with the range to keep thirty-two
- * neighbours apart, and a MONOTONIC one-hue ramp is genuinely unreadable
- * here -- 0.047 apart in L per step across thirty-two bands, which the
- * palette validator fails outright. A wrapping walk is not that ramp. It
- * holds every adjacent pair a full lightness step apart no matter how many
- * cores the host has, because it never has to subdivide.
+ * ORDER IS THE RESPONSE'S, never usage rank. beszel sorts its containers by
+ * total usage before assigning hue, which re-colours the whole stack whenever
+ * the busiest container changes. Position in the response does not move like
+ * that, so a container keeps its place in the stack between polls.
  *
- * What it costs is identity across the whole stack: the sweep let colour tell
- * core 3 from core 19, and the walk only tells a band from the one beside it.
- * Nobody was reading a core's number off its hue -- the band's key names the
- * core, and the hairline stroke each band carries does the separating -- and
- * the cost of the sweep was that the CPU cell was the only chart in the fleet
- * table drawn as a category rather than as a family.
+ * THE STEP IS 360/n, DIVIDING THE WHOLE CIRCLE, and it is the step rather
+ * than the palette that makes this read as beszel. Neighbours in the stack
+ * get neighbouring hues, so the bands sweep bottom to top as one spectrum --
+ * red, amber, green, teal, blue, violet -- and the stack looks like a
+ * deliberate ramp. It was briefly the golden angle, 137.508 degrees, which is
+ * independent of the count and therefore perfectly stable; it also puts every
+ * band two thirds of the wheel from the one below it, and the result is a
+ * jumble. Olive against blue against purple is a set of unrelated colours,
+ * not a family, which is exactly the "reads as a category" objection the old
+ * four-step walk was defended with.
  *
- * `n` is no longer read: a walk that wraps does not need to know how many
- * bands share it. Kept in the signature because the caller has it and a
- * future ramp would want it back.
+ * WHAT THAT COSTS, stated because it is real: every hue depends on `n`, so a
+ * container starting or stopping re-colours the whole stack on the next poll.
+ * Three containers sit at 0/120/240; a fourth appears and they redraw at
+ * 0/90/180/270, so the second one goes green to yellow with nothing else on
+ * the page changing. The enlarged view can differ from the panel for the same
+ * reason, since it refetches at a wider range and may see a container the
+ * panel's window does not. That is accepted: the colour identifies a band
+ * against its neighbours within one chart, never across time, and the key on
+ * hover and the enlarged view's stats table are what name a container.
+ *
+ * This is NOT the monotonic one-hue ramp that was rejected here before: that
+ * one subdivided a single hue's lightness, landing 0.047 apart in L per step
+ * across thirty-two bands. A hue sweep holds full lightness contrast between
+ * every pair no matter how many bands share it, because it never subdivides
+ * the channel that carries the contrast.
+ *
+ * The offsets keep each sweep anchored to the token its chart used to lead
+ * with: CORE_HUE_OFFSET is --cpu-1 #3987e5's own hue, so band 0 is still that
+ * blue. totalBand() in features/fleet/hostTrends.ts -- the cpu_total
+ * silhouette drawn when the cpu_core family does not answer -- computes band 0
+ * of this sweep rather than the --s1 it used to hold, so a one-core host draws
+ * the same chart either way. That property predates the sweep and survives it;
+ * at the series saturation the two are 12 dE apart if the fallback is left
+ * behind, which is why it is not.
+ *
+ * Accepted cost: container hue 0 lands in the 0-41 degree band index.css
+ * reserves for --accent and the status palette. A full sweep cannot avoid
+ * status hues once a host runs more than a handful of containers, and these
+ * bands carry no severity -- the rail, the dot and the word to their left do.
  */
-function coreColor(i: number, _n: number): string {
-  return CPU_SHADES[i % CPU_SHADES.length]!;
+export function seriesHue(i: number, n: number, offset: number): string {
+  const hue = (offset + (i * 360) / Math.max(1, n)) % 360;
+  return `hsl(${hue.toFixed(1)}, var(--series-s), var(--series-l))`;
 }
 
 function optional(res: MetricsResponse, base: string): (number | null)[] {

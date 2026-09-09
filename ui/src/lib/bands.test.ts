@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONTAINER_MEM_SHADES,
-  CPU_SHADES,
+  CONTAINER_HUE_OFFSET,
+  CORE_HUE_OFFSET,
+  IN_SHADES,
+  OUT_SHADES,
+  seriesHue,
   containerBands,
   containerStackTotal,
   fsUsePercent,
   memoryBands,
   perCoreBands,
 } from "./bands";
+import { SWEPT_FILL_OPACITY } from "../ui/charts/size";
 import { containerTrends } from "./containers";
 import type { MetricsResponse } from "./api";
 
@@ -399,18 +403,75 @@ describe("perCoreBands", () => {
     ]);
   });
 
-  // Colour cannot carry identity across thirty-two bands; all it can do is
-  // keep neighbours apart. Two alternating tokens gave the stack no internal
-  // structure, and a single-hue light-to-DARK ramp fails the palette
-  // validator's adjacent-lightness check outright -- 0.047 apart over eight
-  // steps, and it read as a blob of blues. A four-step walk that WRAPS is
-  // neither: it never subdivides, so every adjacent pair stays a full step
-  // apart however many cores the host has.
-  it("walks four shades and wraps rather than spreading a sweep", () => {
+  // A hue per core, evenly divided, never a repeating walk: with four shades
+  // a 32-core host drew the same colour eight times over and the stack said
+  // where a band ended and nothing about which core it was. The sweep is
+  // anchored at CORE_HUE_OFFSET so core 0 keeps --cpu-1's blue, which is what
+  // a one-core host's cpu_total silhouette is drawn in.
+  it("sweeps a hue per core rather than walking four shades", () => {
     const colors = perCoreBands(cores).map((b) => b.color);
 
-    expect(colors).toEqual(CPU_SHADES);
-    for (const c of colors) expect(c).toMatch(/^var\(--cpu-\d\)$/);
+    expect(colors).toEqual([
+      seriesHue(0, 4, CORE_HUE_OFFSET),
+      seriesHue(1, 4, CORE_HUE_OFFSET),
+      seriesHue(2, 4, CORE_HUE_OFFSET),
+      seriesHue(3, 4, CORE_HUE_OFFSET),
+    ]);
+    expect(new Set(colors).size).toBe(4);
+    expect(colors[0]).toBe(`hsl(212.0, var(--series-s), var(--series-l))`);
+  });
+
+  // The step divides the WHOLE circle by the band count, which is what makes
+  // the stack read as one spectrum rather than as a set of unrelated colours:
+  // neighbours in the stack are neighbours on the wheel. A constant step --
+  // the golden angle was tried -- is stable against a changing count and puts
+  // every band two thirds of the wheel from the one below it, which is the
+  // jumble this replaced.
+  it("spreads the whole circle so neighbouring bands get neighbouring hues", () => {
+    const hues = (count: number) =>
+      perCoreBands(
+        response({
+          family: "cpu_core",
+          key_columns: ["core"],
+          columns: ["busy"],
+          series: Array.from({ length: count }, (_, i) => ({
+            key: { core: String(i) },
+            points: [[t0, 10]],
+          })),
+        }),
+      ).map((b) => Number(/hsl\(([\d.]+)/.exec(b.color)![1]));
+
+    const six = hues(6);
+    expect(six).toHaveLength(6);
+    // Every step is the same 360/6, walked from the anchor.
+    for (let i = 1; i < six.length; i++) {
+      const step = (six[i]! - six[i - 1]! + 360) % 360;
+      expect(step).toBeCloseTo(60, 1);
+    }
+    // Twelve cores halve the step rather than reusing the six-core hues --
+    // the count-dependence this buys the sweep with, stated in the docstring.
+    for (let i = 1; i < hues(12).length; i++) {
+      const twelve = hues(12);
+      expect((twelve[i]! - twelve[i - 1]! + 360) % 360).toBeCloseTo(30, 1);
+    }
+  });
+
+  // The fade is a property of the PALETTE, not of the chart, so it rides on
+  // the band and a panel cannot disagree with the dialog opened out of it.
+  it("fades every swept band and nothing else", () => {
+    for (const band of perCoreBands(cores)) {
+      expect(band.fill).toBe(SWEPT_FILL_OPACITY);
+    }
+    // The semantic stack next door keeps its measured opacity: --mem-cached
+    // sits on a documented 1.53:1 floor against the card, and fading it is
+    // how that band disappears.
+    const memory = response({
+      columns: ["mem_total", "mem_free", "mem_cached"],
+      series: [{ key: {}, points: [[t0, 1000, 200, 100]] }],
+    });
+    for (const band of memoryBands(memory)) {
+      expect(band.fill).toBeUndefined();
+    }
   });
 
   // Neighbours, not identity: on a host with more cores than shades the walk
@@ -435,7 +496,8 @@ describe("perCoreBands", () => {
   });
 
   // A single-core host draws the shade a host with no per-core series draws
-  // its cpu_total silhouette in, so the two are the same chart.
+  // its cpu_total silhouette in, so the two are the same chart. hostTrends'
+  // totalBand() computes band 0 of this same sweep for exactly that reason.
   it("colours a single-core host in the silhouette's own shade", () => {
     const one = response({
       family: "cpu_core",
@@ -446,7 +508,7 @@ describe("perCoreBands", () => {
 
     const bands = perCoreBands(one);
     expect(bands).toHaveLength(1);
-    expect(bands[0]!.color).toBe("var(--cpu-1)");
+    expect(bands[0]!.color).toBe(seriesHue(0, 1, CORE_HUE_OFFSET));
   });
 
   it("has nothing to draw for a host that reported no cores", () => {
@@ -459,8 +521,10 @@ describe("containerBands", () => {
   // containerBands takes the response already decoded, so the page can grid
   // the three container columns once for the list AND the two panels above it.
   // The tests still start from a response, which is what the hub sends.
-  const bandsOf = (res: MetricsResponse | null, metric: "cpu" | "mem") =>
-    containerBands(containerTrends(res), metric);
+  const bandsOf = (
+    res: MetricsResponse | null,
+    metric: "cpu" | "mem" | "net",
+  ) => containerBands(containerTrends(res), metric);
 
   const containers = (
     points: Record<string, ([number, ...(number | null)[]] | null)[]>,
@@ -561,15 +625,112 @@ describe("containerBands", () => {
 
     const cpu = bandsOf(many, "cpu").map((b) => b.color);
     expect(cpu).toHaveLength(11);
-    expect(cpu[0]).toBe(CPU_SHADES[0]);
-    expect(cpu[4]).toBe(CPU_SHADES[0]);
-    for (let i = 1; i < cpu.length; i++) {
-      expect(cpu[i]).not.toBe(cpu[i - 1]!);
-    }
+    // Eleven containers, eleven hues -- the case the four-shade walk could
+    // not answer, where it repeated itself very nearly three times over.
+    expect(new Set(cpu).size).toBe(11);
+    expect(cpu[0]).toBe(seriesHue(0, 11, CONTAINER_HUE_OFFSET));
 
-    // Memory walks its own family, so a row's blue CPU cell and green memory
-    // cell keep their pairing in the panels above the list.
-    expect(bandsOf(many, "mem")[0]!.color).toBe(CONTAINER_MEM_SHADES[0]);
+    // Memory takes the SAME sweep, so a container is one colour on the two
+    // panels a reader compares side by side.
+    expect(bandsOf(many, "mem").map((b) => b.color)).toEqual(cpu);
+  });
+
+  // --- the mirrored network half -------------------------------------------
+
+  const withNet = (points: Record<string, (number | null)[][]>) =>
+    response({
+      family: "container",
+      key_columns: ["container"],
+      columns: ["cpu_pct", "mem_used", "mem_limit", "net_rx", "net_tx"],
+      series: Object.entries(points).map(([container, rows]) => ({
+        key: { container },
+        points: rows,
+      })),
+    } as Partial<MetricsResponse>);
+
+  const traffic = withNet({
+    "web/api": [
+      [t0, 40, 100, null, 1000, 200],
+      [t0 + hour, 60, 120, null, 1200, 300],
+    ],
+    "web/db": [
+      [t0, 10, 400, null, 50, 900],
+      [t0 + hour, 12, 420, null, 60, 950],
+    ],
+  });
+
+  // MirrorStackMarks reads its halves off band POSITION -- every other series
+  // is one half -- so the pairing is the contract, not a convenience.
+  it("interleaves each container's in and out bands", () => {
+    const bands = bandsOf(traffic, "net");
+
+    expect(bands.map((b) => b.name)).toEqual([
+      "web/api in",
+      "web/api out",
+      "web/db in",
+      "web/db out",
+    ]);
+    expect(bands[0]!.values).toEqual([1000, 1200]);
+    expect(bands[1]!.values).toEqual([200, 300]);
+  });
+
+  // Direction wins over identity here, unlike the two panels beside it: green
+  // is inbound and amber is outbound on every traffic mark in the app, and a
+  // panel that re-hued per container would be a different chart from the cell
+  // it was opened out of.
+  it("colours the halves green over amber, container as a lightness step", () => {
+    const bands = bandsOf(traffic, "net");
+
+    expect(bands.map((b) => b.color)).toEqual([
+      IN_SHADES[0],
+      OUT_SHADES[0],
+      IN_SHADES[1],
+      OUT_SHADES[1],
+    ]);
+    // The sweep is emphatically NOT used here.
+    for (const b of bands) expect(b.color).toMatch(/^var\(--(in|out)-\d\)$/);
+  });
+
+  // The walk wraps, exactly as the host Traffic panel's interfaces do: the
+  // fifth container repeats the first shade and its key is what tells them
+  // apart.
+  it("wraps the in/out walk past four containers", () => {
+    const many = withNet(
+      Object.fromEntries(
+        Array.from({ length: 5 }, (_, i) => [
+          `stack/svc-${i}`,
+          [[t0, i, i * 10, null, i * 100, i * 50]],
+        ]),
+      ),
+    );
+
+    const colors = bandsOf(many, "net").map((b) => b.color);
+    expect(colors[0]).toBe(IN_SHADES[0]);
+    expect(colors[8]).toBe(IN_SHADES[0]);
+  });
+
+  // The same null rule the cpu and mem stacks follow, over BOTH columns: a
+  // bucket some container moved bytes in is a bucket the host answered in,
+  // so a container silent there moved nothing rather than being unknown.
+  it("counts a container with no traffic in a reported bucket as zero", () => {
+    const late = withNet({
+      "web/api": [
+        [t0, 40, 100, null, 1000, 200],
+        [t0 + hour, 60, 120, null, 1200, 300],
+      ],
+      "web/new": [[t0 + hour, 20, 80, null, 500, 90]],
+    });
+
+    const bands = bandsOf(late, "net");
+    expect(bands[2]!.values).toEqual([0, 500]);
+    expect(bands[3]!.values).toEqual([0, 90]);
+  });
+
+  // A host whose agent could not read the namespaces reports no net columns
+  // at all, and that must be an absent panel rather than a flat zero one --
+  // the Docker Network panel says why instead of drawing it.
+  it("has nothing to draw when the host reported no traffic columns", () => {
+    expect(bandsOf(three, "net")).toEqual([]);
   });
 
   // Band ORDER is the response's. The page polls, and a stack re-sorted by

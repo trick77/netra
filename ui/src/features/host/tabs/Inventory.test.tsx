@@ -426,6 +426,106 @@ describe("Containers", () => {
     expect(screen.getByText("Docker Memory")).toBeInTheDocument();
   });
 
+  // The same response with traffic on it. Container rx/tx has been collected
+  // and stored since the first migration and charted on the container detail
+  // page, and the HOST had no way to ask what its containers were moving.
+  const withTraffic = {
+    ...containerMetrics,
+    columns: ["cpu_pct", "mem_used", "mem_limit", "net_rx", "net_tx"],
+    series: [
+      {
+        key: { container: "netra/hub" },
+        points: [
+          [t0, 20, 100_000_000, null, 1_000, 400],
+          [t0 + 3_600_000, 30, 120_000_000, null, 2_000, 500],
+        ],
+      },
+      {
+        key: { container: "shop/web" },
+        points: [
+          [t0, 5, 50_000_000, null, 300, 900],
+          [t0 + 3_600_000, 70, 80_000_000, null, 400, 950],
+        ],
+      },
+    ],
+  } as unknown as MetricsResponse;
+
+  it("draws what Docker is moving beside what it is costing", () => {
+    render(<Containers rows={containers} host={host} metrics={withTraffic} />);
+
+    expect(screen.getByText("Docker Network")).toBeInTheDocument();
+    expect(screen.getByLabelText("Docker Network chart")).toBeInTheDocument();
+  });
+
+  // A mirror has two totals and no single headline, so this panel passes no
+  // nowValue and takes ChartPanel's LABELLED headline instead -- the same
+  // thing the host's per-interface Traffic panel does, which is the identical
+  // construction. What must never happen is the bare number the CPU and
+  // Memory panels print: unlabelled, it reads as the whole host's traffic
+  // when it is one container's inbound half.
+  it("names whose number the network headline is", () => {
+    render(<Containers rows={containers} host={host} metrics={withTraffic} />);
+
+    const now = headline("Docker Network") ?? "";
+    expect(now).toContain("netra/hub in");
+    // The two beside it DO headline the stack total, and unlabelled.
+    expect(headline("Docker CPU")).toBe("100%");
+  });
+
+  // The capability exists only to say that networking produced NOTHING while
+  // cpu and memory arrived, so an empty chart here would claim the containers
+  // moved no bytes. The sentence names the remedy instead.
+  it("explains itself rather than drawing an empty network chart", () => {
+    render(
+      <Containers
+        rows={containers}
+        host={host}
+        metrics={containerMetrics}
+        capabilities={{ container_network: "namespaced" }}
+      />,
+    );
+
+    expect(screen.getByText("Docker Network")).toBeInTheDocument();
+    expect(
+      screen.getByText(/without the host's PID namespace/),
+    ).toBeInTheDocument();
+    // The two panels beside it have data and are unaffected.
+    expect(headline("Docker CPU")).toBe("100%");
+  });
+
+  // The commoner case, which no capability covers: every container on this
+  // host runs network_mode: host, so the collector reports no traffic rows
+  // for them and no failure either. The columns never arrive, the bands are
+  // empty, and a blank plot beside two populated ones reads as "these
+  // containers moved no bytes".
+  it("says why it is empty when traffic was never measured", () => {
+    render(
+      <Containers rows={containers} host={host} metrics={containerMetrics} />,
+    );
+
+    expect(
+      screen.getByText(/No container traffic reached the hub/),
+    ).toBeInTheDocument();
+    // The two panels beside it still draw, and are not implicated.
+    expect(headline("Docker CPU")).toBe("100%");
+    expect(headline("Docker Memory")).toBe("200 MB");
+  });
+
+  // An unrecognised value is still the agent reporting a failure, and quoting
+  // it beats silence: it is greppable in the agent's source.
+  it("quotes a capability value it does not know the wording of", () => {
+    render(
+      <Containers
+        rows={containers}
+        host={host}
+        metrics={containerMetrics}
+        capabilities={{ container_network: "some-new-reason" }}
+      />,
+    );
+
+    expect(screen.getByText(/"some-new-reason"/)).toBeInTheDocument();
+  });
+
   // The headline is the STACK's, never series[0]'s: 100 % is the two
   // containers' latest CPU added up, and 30 % would be one of them wearing
   // the whole host's label.
