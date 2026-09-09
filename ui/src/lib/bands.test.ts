@@ -412,23 +412,23 @@ describe("perCoreBands", () => {
     const colors = perCoreBands(cores).map((b) => b.color);
 
     expect(colors).toEqual([
-      seriesHue(0, CORE_HUE_OFFSET),
-      seriesHue(1, CORE_HUE_OFFSET),
-      seriesHue(2, CORE_HUE_OFFSET),
-      seriesHue(3, CORE_HUE_OFFSET),
+      seriesHue(0, 4, CORE_HUE_OFFSET),
+      seriesHue(1, 4, CORE_HUE_OFFSET),
+      seriesHue(2, 4, CORE_HUE_OFFSET),
+      seriesHue(3, 4, CORE_HUE_OFFSET),
     ]);
     expect(new Set(colors).size).toBe(4);
     expect(colors[0]).toBe(`hsl(212.0, var(--series-s), var(--series-l))`);
   });
 
-  // The stability the sweep's docstring claims, tested rather than asserted.
-  // A step of 360/n makes every hue depend on the band COUNT, so a container
-  // starting mid-window re-colours the whole stack under a reader, and the
-  // enlarged view -- which refetches at a wider range and can see one more
-  // container -- disagrees with the panel it was opened from. The golden
-  // angle depends on `i` alone.
-  it("gives a band the same hue however many bands share the stack", () => {
-    const cores = (count: number) =>
+  // The step divides the WHOLE circle by the band count, which is what makes
+  // the stack read as one spectrum rather than as a set of unrelated colours:
+  // neighbours in the stack are neighbours on the wheel. A constant step --
+  // the golden angle was tried -- is stable against a changing count and puts
+  // every band two thirds of the wheel from the one below it, which is the
+  // jumble this replaced.
+  it("spreads the whole circle so neighbouring bands get neighbouring hues", () => {
+    const hues = (count: number) =>
       perCoreBands(
         response({
           family: "cpu_core",
@@ -439,13 +439,21 @@ describe("perCoreBands", () => {
             points: [[t0, 10]],
           })),
         }),
-      ).map((b) => b.color);
+      ).map((b) => Number(/hsl\(([\d.]+)/.exec(b.color)![1]));
 
-    const three = cores(3);
-    const four = cores(4);
-    expect(four.slice(0, 3)).toEqual(three);
-    // ...and they are still all different from each other.
-    expect(new Set(four).size).toBe(4);
+    const six = hues(6);
+    expect(six).toHaveLength(6);
+    // Every step is the same 360/6, walked from the anchor.
+    for (let i = 1; i < six.length; i++) {
+      const step = (six[i]! - six[i - 1]! + 360) % 360;
+      expect(step).toBeCloseTo(60, 1);
+    }
+    // Twelve cores halve the step rather than reusing the six-core hues --
+    // the count-dependence this buys the sweep with, stated in the docstring.
+    for (let i = 1; i < hues(12).length; i++) {
+      const twelve = hues(12);
+      expect((twelve[i]! - twelve[i - 1]! + 360) % 360).toBeCloseTo(30, 1);
+    }
   });
 
   // The fade is a property of the PALETTE, not of the chart, so it rides on
@@ -500,7 +508,7 @@ describe("perCoreBands", () => {
 
     const bands = perCoreBands(one);
     expect(bands).toHaveLength(1);
-    expect(bands[0]!.color).toBe(seriesHue(0, CORE_HUE_OFFSET));
+    expect(bands[0]!.color).toBe(seriesHue(0, 1, CORE_HUE_OFFSET));
   });
 
   it("has nothing to draw for a host that reported no cores", () => {
@@ -620,7 +628,7 @@ describe("containerBands", () => {
     // Eleven containers, eleven hues -- the case the four-shade walk could
     // not answer, where it repeated itself very nearly three times over.
     expect(new Set(cpu).size).toBe(11);
-    expect(cpu[0]).toBe(seriesHue(0, CONTAINER_HUE_OFFSET));
+    expect(cpu[0]).toBe(seriesHue(0, 11, CONTAINER_HUE_OFFSET));
 
     // Memory takes the SAME sweep, so a container is one colour on the two
     // panels a reader compares side by side.
