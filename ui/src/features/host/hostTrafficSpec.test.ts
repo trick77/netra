@@ -13,8 +13,9 @@ import { describe, expect, it } from "vitest";
 import type { MetricsResponse } from "../../lib/api";
 import { bandsFor, familyFor, specForSlug } from "./chartSpecs";
 import { cpuBands, trafficSeries } from "../fleet/hostTrends";
-import { perCoreBands } from "../../lib/bands";
+import { CPU_STATE_COLORS, perCoreBands } from "../../lib/bands";
 import { DOWN_SHADES, UP_SHADES } from "../../ui/charts/UpDownSparkline";
+import { SWEPT_FILL_OPACITY } from "../../ui/charts/size";
 
 // Two interfaces, at the raw tier -- where peakBase() falls back to the bare
 // column and there is no _max peer, so no envelope is drawn. A null in eth0's
@@ -405,5 +406,76 @@ describe("the CPU page on a host too large for the fleet cell", () => {
     expect(page.map((b) => b.name)).toEqual(
       perCoreBands(res, { normalise: true }).map((b) => b.name),
     );
+  });
+});
+
+// The two stacked CPU panels share the System tab's Resources group, and were
+// coloured by two unrelated mechanisms: the per-core stack builds its own
+// bands and takes the swept hue family at SWEPT_FILL_OPACITY, while this one
+// walked SERIES_VARS and drew four opaque hexes. They are read together, one
+// above the other, so they are drawn as one family now.
+describe("the CPU time breakdown beside the per-core stack", () => {
+  function states(withSteal: boolean): MetricsResponse {
+    const at = (i: number) => Date.parse(`2026-08-10T00:0${i}:00Z`);
+    const iso = (i: number) => `2026-08-10T00:0${i}:00Z`;
+    return {
+      family: "host",
+      tier: "raw",
+      step_s: 60,
+      window: { from: iso(0), to: iso(3) },
+      requested_window: { from: iso(0), to: iso(3) },
+      warnings: [],
+      key_columns: [],
+      columns: ["cpu_user", "cpu_system", "cpu_iowait", "cpu_steal"],
+      series: [
+        {
+          key: {},
+          points: [
+            [at(0), 30, 10, 5, withSteal ? 1 : null],
+            [at(1), 40, 12, 4, withSteal ? 2 : null],
+            [at(2), 20, 8, 6, withSteal ? 3 : null],
+          ],
+        },
+      ],
+      truncated: false,
+    } as unknown as MetricsResponse;
+  }
+
+  it("draws every state translucent, in the swept family", () => {
+    // Given a host reporting all four states
+    const bands = bandsFor(specForSlug("cpu-time-breakdown")!, states(true));
+
+    // Then the four are drawn in the measured s-token hues, expressed through
+    // the sweep's own saturation and lightness rather than as four separately
+    // tuned hexes...
+    expect(bands.map((b) => b.name)).toEqual([
+      "user",
+      "system",
+      "iowait",
+      "steal",
+    ]);
+    expect(bands.map((b) => b.color)).toEqual(CPU_STATE_COLORS);
+
+    // ...and every one of them at the fill weight the per-core stack above it
+    // uses. Opaque beside translucent is the difference a reader sees first.
+    expect(bands.map((b) => b.fill)).toEqual([
+      SWEPT_FILL_OPACITY,
+      SWEPT_FILL_OPACITY,
+      SWEPT_FILL_OPACITY,
+      SWEPT_FILL_OPACITY,
+    ]);
+  });
+
+  it("keeps each state's colour when a bare metal host has no steal", () => {
+    // Given a host with no hypervisor, whose cpu_steal is correctly null at
+    // every bucket and is dropped rather than drawn as a flat zero
+    const bands = bandsFor(specForSlug("cpu-time-breakdown")!, states(false));
+
+    // Then the three that remain keep the colours they had beside steal. The
+    // colours are indexed by BASE, not by how many bands got pushed: read off
+    // the running count, dropping steal would have slid iowait onto steal's
+    // hue and told two hosts' charts apart for no reason.
+    expect(bands.map((b) => b.name)).toEqual(["user", "system", "iowait"]);
+    expect(bands.map((b) => b.color)).toEqual(CPU_STATE_COLORS.slice(0, 3));
   });
 });
