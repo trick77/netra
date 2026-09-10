@@ -21,7 +21,13 @@ import {
 } from "../../lib/format";
 import { type Band } from "../../ui/charts/ChartPanel";
 import { DOWN_SHADES, UP_SHADES } from "../../ui/charts/UpDownSparkline";
-import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
+import {
+  CPU_STATE_COLORS,
+  filesystemBands,
+  memoryBands,
+  perCoreBands,
+} from "../../lib/bands";
+import { SWEPT_FILL_OPACITY } from "../../ui/charts/size";
 
 /** See Overview.tsx for why every column lookup on these pages is
  * optional: column() throws during render for a column the answering tier
@@ -328,6 +334,19 @@ interface PanelSpec {
    */
   colors?: string[];
   /**
+   * Fill weight for this spec's stacked bands, opaque when absent.
+   *
+   * Reaches Chart through OverlaySeries.fill, which is where the swept
+   * per-core and per-container stacks already set it -- they build their own
+   * bands and could. A spec walking `bases` had no way to say it, so the CPU
+   * time breakdown drew solid next to the translucent per-core stack it
+   * shares a group with. One field rather than a bespoke band builder: the
+   * walk below already handles the null-drop that a bare metal host's absent
+   * cpu_steal needs, and duplicating it to attach one number would be the
+   * expensive half of the change.
+   */
+  fill?: number;
+  /**
    * Colours for a keyed spec whose hue carries DIRECTION and whose series are
    * told apart by a step within it: outer index positional against `bases`,
    * inner index walked per series, wrapping.
@@ -522,6 +541,14 @@ export const SYSTEM: PanelSpec[] = [
       { base: "cpu_iowait", label: "iowait" },
       { base: "cpu_steal", label: "steal" },
     ],
+    // The same treatment the per-core stack above gets, which is the point:
+    // the two sit in one group and were coloured by two unrelated mechanisms
+    // -- a swept hue family at 45% fill there, four separately tuned opaque
+    // hexes off the SERIES_VARS walk here. See CPU_STATE_COLORS in
+    // lib/bands.ts for why these are the s-token hues and not the literal
+    // four-way sweep.
+    colors: CPU_STATE_COLORS,
+    fill: SWEPT_FILL_OPACITY,
     max: 100,
     stacked: true,
     fmt: (n) => (n === null ? ABSENT : `${count(n)}%`),
@@ -1465,6 +1492,7 @@ function bandsFor(
           SERIES_VARS[(bands.length + pass.length) % SERIES_VARS.length],
         values,
         ...(band && band.length > 0 ? { band } : {}),
+        ...(spec.fill !== undefined ? { fill: spec.fill } : {}),
       });
     }
     if (spec.stacked && spec.mirrored && pass.length !== spec.bases.length)

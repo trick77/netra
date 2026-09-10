@@ -621,3 +621,35 @@ export function filesystemBands(res: MetricsResponse | null): Band[] {
   }
   return bands;
 }
+
+/**
+ * The four CPU states -- user, system, iowait, steal -- drawn as one swept
+ * stack, so the CPU time breakdown reads as the same chart family as the
+ * per-core stack sitting beside it in the System tab's Resources group.
+ *
+ * WHY NOT seriesHue(i, 4, CORE_HUE_OFFSET) DIRECTLY, which is what "the same
+ * as CPU cores" would literally mean: a four-way sweep from 212 lands at
+ * 212 / 302 / 32 / 122, and 32 is inside the 0-41 degree band index.css
+ * reserves for --accent and the status palette while 122 is --ok's green.
+ * The sweep accepts that collision for cores and containers, and the argument
+ * there is explicit: those bands are ANONYMOUS and carry no severity. These
+ * four are named states, and the panel exists to say that iowait and steal
+ * are the two where something else held the CPU up. Painting steal ok-green
+ * and iowait accent-orange asserts the opposite, by accident.
+ *
+ * So the hues stay the ones index.css already measured for a legended
+ * four-band chart -- --s1..--s4, at 213 / 159 / 249 / 337, chosen to clear
+ * that reserved band -- and what changes is how they are DRAWN: the sweep's
+ * own --series-s and --series-l instead of four separately tuned hexes, and
+ * SWEPT_FILL_OPACITY instead of the opaque default. That is the part of the
+ * difference a reader actually sees between the two stacks.
+ *
+ * Positional against the spec's `bases`, never against the bands that got
+ * pushed: a bare metal host's cpu_steal is correctly all-null and is dropped
+ * (chartSpecs.ts), and user/system/iowait keep their own colours when it is.
+ */
+const SWEPT_STATE_HUES = [213, 159, 249, 337];
+
+export const CPU_STATE_COLORS = SWEPT_STATE_HUES.map(
+  (h) => `hsl(${h.toFixed(1)}, var(--series-s), var(--series-l))`,
+);
