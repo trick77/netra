@@ -149,7 +149,7 @@ type Limits struct {
 	HighCrit *float64
 }
 
-// Ceilings are the fixed thresholds used only when the hardware supplies none.
+// Ceilings is the fixed threshold used only when the hardware supplies none.
 //
 // The fallback, never an override: a chip that publishes its own limits is a
 // better authority on itself than a table written here could be. The numbers
@@ -157,8 +157,19 @@ type Limits struct {
 // 60 C critical picked for spinning disks makes every NVMe permanently red,
 // since composite temperatures of 60-70 C under load are ordinary and vendor
 // thresholds sit around 80-85.
+//
+// CRITICAL ONLY, AND THERE IS NO WARN FIELD. A fallback that also capped the
+// warning would reintroduce the fleet-wide-constant failure one severity down.
+// drivetemp registers tempN_max only when the drive reports SCT limits, so a
+// perfectly healthy 7200 rpm disk that has held 56-58 C all week publishes
+// nothing and would be clamped to a 55 C warning it can never get under --
+// permanently at warning, for being what it has always been.
+//
+// The ceiling exists to answer one question: is this subject somewhere no
+// subject of its kind should ever be. That is a critical-severity question. The
+// EARLY warning is the baseline's job, and the baseline is the half that knows
+// what this particular drive runs at.
 type Ceilings struct {
-	Warn float64
 	Crit float64
 }
 
@@ -216,38 +227,34 @@ func DeviationThresholds(b Baseline, floor float64, lim Limits, ceil Ceilings) B
 	margin := b.Margin(floor)
 	warn, crit := b.P99+margin/2, b.P99+margin
 
-	// The hardware's limit when it published one, this family's fixed ceiling
-	// when it did not. A chip that publishes only one of the two is taken at
-	// its word for that one and falls back for the other.
-	capWarn, fromDeviceWarn := ceil.Warn, false
-	if lim.High != nil {
-		capWarn, fromDeviceWarn = *lim.High, true
-	}
-	capCrit, fromDeviceCrit := ceil.Crit, false
-	if lim.HighCrit != nil {
-		capCrit, fromDeviceCrit = *lim.HighCrit, true
+	// The DEVICE's own pair caps both halves, because the chip publishes one
+	// value for each: tempN_max is "warn here" and tempN_crit is "stop here".
+	if lim.High != nil && *lim.High > 0 {
+		warn = math.Min(warn, *lim.High)
 	}
 
-	// A cap of zero or less is "this family has none" -- processes and load
-	// have no absolute number at which they are wrong, only a history to
-	// depart from.
-	//
-	// The source is set only where the cap actually BOUND the result. A drive
-	// whose vendor limit is 80 C but whose calibrated warning sits at 52 was
-	// judged by its history, and saying "device" there would make the log name
-	// a number that had nothing to do with the decision.
+	// SOURCE TRACKS THE CRITICAL THRESHOLD ALONE, and that is not an
+	// approximation -- it is what the renderers print. Both of them write "past
+	// its <crit> limit" when the source is `device`, so a source set by the
+	// WARNING cap would put the word "limit" next to a number the hardware
+	// never stated. A chip publishing max 70 and crit 85, on a sensor whose
+	// calibrated pair is 71/74, binds only the warning: crit stays 74, which is
+	// pure baseline, and the row would otherwise have claimed 74 C was the
+	// drive's own limit and that a 70.5 C reading was past it.
 	source := SourceBaseline
-	if capWarn > 0 && capWarn < warn {
-		warn = capWarn
-		if fromDeviceWarn {
+	switch {
+	case lim.HighCrit != nil && *lim.HighCrit > 0:
+		// The device spoke, so the family's guess is not consulted at all.
+		if *lim.HighCrit < crit {
+			crit = *lim.HighCrit
 			source = SourceDevice
 		}
-	}
-	if capCrit > 0 && capCrit < crit {
-		crit = capCrit
-		if fromDeviceCrit {
-			source = SourceDevice
-		}
+	case ceil.Crit > 0:
+		// A ceiling of zero or less is "this family has none" -- processes and
+		// load have no absolute number at which they are wrong, only a history
+		// to depart from. The source stays `baseline`: a number written in
+		// this file is not something the hardware said.
+		crit = math.Min(crit, ceil.Crit)
 	}
 
 	// A chip whose published warning limit sits at or above its critical one
@@ -300,14 +307,14 @@ const (
 // the older drives that predate SCT limit reporting, not as a second opinion on
 // the ones that have them.
 var temperatureRules = map[string]FamilyRule{
-	ChipNVMe:      {Floor: 4, Ceilings: Ceilings{Warn: 70, Crit: 80}, Unit: "C"},
-	ChipDriveTemp: {Floor: 4, Ceilings: Ceilings{Warn: 55, Crit: 60}, Unit: "C"},
+	ChipNVMe:      {Floor: 4, Ceilings: Ceilings{Crit: 80}, Unit: "C"},
+	ChipDriveTemp: {Floor: 4, Ceilings: Ceilings{Crit: 60}, Unit: "C"},
 }
 
 // defaultTemperatureRule covers every chip that is not a disk: packages, cores,
 // the board. 85/95 C is where a CPU throttles and where it shuts down, which is
 // the same pair the kernel itself acts on.
-var defaultTemperatureRule = FamilyRule{Floor: 6, Ceilings: Ceilings{Warn: 85, Crit: 95}, Unit: "C"}
+var defaultTemperatureRule = FamilyRule{Floor: 6, Ceilings: Ceilings{Crit: 95}, Unit: "C"}
 
 // RuleFor returns the family rule for one kind and, for temperatures, one chip.
 //

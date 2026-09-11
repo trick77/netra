@@ -109,7 +109,7 @@ func TestBaselineStillWarnsBeneathAGenerousDeviceLimit(t *testing.T) {
 func TestHostKindsHaveNoCeiling(t *testing.T) {
 	for _, kind := range []string{KindProcesses, KindLoad} {
 		rule := RuleFor(kind, "")
-		if rule.Ceilings.Warn != 0 || rule.Ceilings.Crit != 0 {
+		if rule.Ceilings.Crit != 0 {
 			t.Errorf("%s carries a ceiling %v, want none", kind, rule.Ceilings)
 		}
 
@@ -126,15 +126,72 @@ func TestHostKindsHaveNoCeiling(t *testing.T) {
 
 // A chip that publishes an equal max and crit -- coretemp does on some parts --
 // must still produce two distinguishable severities.
+//
+// The baseline is set so BOTH device limits actually bind, or the step-back
+// this pins is never reached and the test passes without exercising anything.
 func TestEqualDeviceLimitsKeepWarnUnderCrit(t *testing.T) {
-	b := Baseline{P01: 40, P99: 60, Samples: 10080}
+	b := Baseline{P01: 86, P99: 88, Samples: 10080}
 	rule := RuleFor(KindTemperature, "coretemp")
 	lim := Limits{High: ptr(90), HighCrit: ptr(90)}
 
 	bounds := DeviationThresholds(b, rule.Floor, lim, rule.Ceilings)
 
+	if bounds.Crit != 90 {
+		t.Fatalf("crit = %v, want the device's 90 -- the test no longer binds", bounds.Crit)
+	}
 	if bounds.Warn >= bounds.Crit {
 		t.Errorf("warn %v must stay under crit %v", bounds.Warn, bounds.Crit)
+	}
+}
+
+// THE FALLBACK CEILING MUST NOT CAP THE WARNING.
+//
+// drivetemp registers tempN_max only when the drive reports SCT limits, so a
+// healthy 7200 rpm disk that has held 56-58 C all week publishes nothing. A
+// fallback that capped warn at 55 would put it permanently at warning for being
+// what it has always been -- the fleet-wide-constant failure this whole file
+// exists to end, one severity down from where it was first found.
+func TestTheFallbackCeilingDoesNotCapTheWarning(t *testing.T) {
+	warm := Baseline{P01: 56, P99: 58, Samples: 10080}
+	rule := RuleFor(KindTemperature, ChipDriveTemp)
+
+	bounds := DeviationThresholds(warm, rule.Floor, Limits{}, rule.Ceilings)
+
+	if got := DeviationSeverity(57, bounds); got != "" {
+		t.Errorf("a drive sitting inside its own normal is %q, want healthy", got)
+	}
+
+	// The ceiling still does its own job: a drive whose normal is ALREADY past
+	// it is critical, which is the case it exists for.
+	cooking := Baseline{P01: 64, P99: 65, Samples: 10080}
+	hot := DeviationThresholds(cooking, rule.Floor, Limits{}, rule.Ceilings)
+	if got := DeviationSeverity(65, hot); got != SeverityCritical {
+		t.Errorf("a drive that has run past its family ceiling all week is %q, want critical", got)
+	}
+}
+
+// The source names whichever authority set the CRITICAL threshold, because that
+// is the number both renderers print beside the word "limit".
+//
+// A chip publishing max 70 and crit 85, on a sensor calibrated to 71/74, binds
+// only the warning. Calling that "device" would have the row claim 74 C was the
+// drive's own limit and that 70.5 C was past it.
+func TestSourceIsBaselineWhenOnlyTheWarnCapCameFromTheDevice(t *testing.T) {
+	b := Baseline{P01: 60, P99: 68, Samples: 10080}
+	rule := RuleFor(KindTemperature, ChipNVMe)
+	lim := Limits{High: ptr(70), HighCrit: ptr(85)}
+
+	bounds := DeviationThresholds(b, rule.Floor, lim, rule.Ceilings)
+
+	if bounds.Warn != 70 {
+		t.Fatalf("warn = %v, want the device's 70 -- the test no longer binds", bounds.Warn)
+	}
+	if bounds.Crit == 85 {
+		t.Fatalf("crit = 85, want a calibrated value -- the test no longer binds")
+	}
+	if bounds.Source != SourceBaseline {
+		t.Errorf("source = %q, want %q: the device limit did not decide crit",
+			bounds.Source, SourceBaseline)
 	}
 }
 

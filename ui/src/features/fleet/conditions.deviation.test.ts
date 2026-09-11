@@ -149,9 +149,43 @@ describe("the deviation conditions", () => {
     expect(out[0].tab).toBe("system");
   });
 
-  // A row whose detail lost its reading must be dropped from the sentence
-  // builder rather than printed as "is  — normally under".
-  it("says nothing for a row carrying no reading", () => {
-    expect(sentence([deviationRow("load", { p99: 6.1 })])).toBe("");
+  // A row whose detail lost its reading STILL APPEARS, named by the catalogue.
+  //
+  // Dropping it would be the failure this module exists to prevent: the kind is
+  // in the `written` set, so the catch-all that rescues unrecognised kinds does
+  // not run for it either, and the host would read clean on the fleet page
+  // while the hub had a condition open on it.
+  it("still shows a row carrying no reading, named by the catalogue", () => {
+    expect(sentence([deviationRow("load", { p99: 6.1 })])).toBe(
+      "Load above normal",
+    );
+  });
+
+  // One row per kind, with a count of the rest -- the same shape the drive row
+  // uses. A host with three hot drives is three things wrong, and collapsing to
+  // the worst alone loses the other two silently.
+  it("counts the other sensors over their own lines", () => {
+    const rows = [
+      deviationRow(
+        "temperature",
+        { value: 61, p99: 46, source: "baseline", unit: "C" },
+        "drivetemp/temp1/sda",
+      ),
+      deviationRow(
+        "temperature",
+        { value: 57, p99: 45, source: "baseline", unit: "C" },
+        "drivetemp/temp1/sdb",
+      ),
+      deviationRow(
+        "temperature",
+        { value: 55, p99: 44, source: "baseline", unit: "C" },
+        "drivetemp/temp1/sdc",
+      ),
+    ];
+    const out = hostConditions(rows, CATALOGUE, NOW);
+    expect(out).toHaveLength(1);
+    expect(String(out[0].what)).toBe(
+      "drivetemp/temp1/sda is 61 C — normally under 46 C (+2 more)",
+    );
   });
 });

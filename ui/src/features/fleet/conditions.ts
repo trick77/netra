@@ -730,13 +730,34 @@ export function hostConditions(
   // under 6.1" carries its own comparison, so the row is readable by someone
   // who has never seen the machine before -- which on a fleet page is everyone.
   for (const kind of ["temperature", "processes", "load"] as const) {
-    const row = of(kind);
-    if (row === undefined) continue;
+    const all = byKind.get(kind);
+    if (all === undefined || all.length === 0) continue;
+    const row = worstRow(all);
     const detail = fields(row);
     const value = num(detail.value);
-    if (value === null) continue;
+
+    // A row whose detail lost its reading STILL APPEARS, named by the
+    // catalogue. Skipping it would be the one failure this module is built to
+    // prevent: these kinds are in the `written` set below, so the catch-all
+    // that rescues unrecognised kinds does not run for them either, and the
+    // host would read clean on the fleet page while the hub had a condition
+    // open on it. Terse beats absent -- see the note above `written`.
+    if (value === null) {
+      out.push({
+        ...common(row),
+        what: kindLabel(catalogue, kind),
+        evidence: null,
+        tab: "system",
+      });
+      continue;
+    }
 
     const unit = str(detail.unit) ?? "";
+    // Every sensor over its own line, not just the worst. A host with three
+    // hot drives is three things wrong, and collapsing to one row silently
+    // loses the other two -- the same count the drive row a few lines up
+    // carries, for the same reason.
+    const more = all.length - 1;
     const subject = kind === "temperature" ? `${row.subject} ` : "";
     const normally = num(detail.p99);
 
@@ -756,6 +777,7 @@ export function hostConditions(
       what:
         `${subject}${silent !== undefined ? "was" : "is"} ` +
         `${deviationValue(value, unit)}${because === "" ? "" : ` — ${because}`}` +
+        (more > 0 ? ` (+${more} more)` : "") +
         staleNote(row, now),
       // Deliberately none. Evidence's marks are meter, units and reporting: a
       // reading against a per-subject threshold is not a proportion of

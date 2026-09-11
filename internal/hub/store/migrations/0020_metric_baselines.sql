@@ -120,6 +120,35 @@ ALTER TABLE sensors
 -- evidence of what normal looks like. Resolved intervals are excluded too: a
 -- fault that lasted two days and was fixed would otherwise keep inflating the
 -- baseline for the rest of the week.
+--
+-- AND THE EXCLUSION IS BOUNDED BY `c.opened_ts > cutoff`, WHICH IS THE OTHER
+-- HALF OF THE SAME ARGUMENT. Without it the rule has a mirror-image failure
+-- that is just as bad and much quieter.
+--
+-- Deploy a service that moves a host's load5 from 2 to 6 for good. The old
+-- baseline says p99 = 2.5, critical sits at 3.25, and the condition opens --
+-- correctly, nobody told netra about the deploy. Every sample from then on is
+-- excluded as "taken while a condition was open". For five days the recompute
+-- still sees enough pre-deploy samples to work with, and faithfully recomputes
+-- the OLD normal. Then the pre-deploy samples age out of the window, fewer than
+-- min_samples survive the exclusion, the gate refuses the row, and the baseline
+-- freezes at 2.5 permanently. The condition can now only clear if load falls
+-- back under a threshold derived from a week that no longer exists. Dismissing
+-- it does not help: resolved intervals are excluded too, so the condition
+-- reopens three ticks later having contributed three countable samples toward
+-- two thousand.
+--
+-- The distinction the exclusion needs is between a fault and a new normal, and
+-- NO AMOUNT OF LOOKING AT THE NUMBERS CAN DRAW IT -- both are "a level that
+-- changed and stayed". What can be said is that the window defines what normal
+-- means here, so anything that has held for longer than the whole window IS
+-- this subject's normal now, whatever anyone thinks of it. Past that point its
+-- samples count again, the baseline tracks reality, and the condition clears.
+--
+-- What stops that from resurrecting the first bug is the other tier: a drive
+-- that recalibrates around 58 C still meets its published CCTEMP, or the family
+-- ceiling when it publishes none, and stays critical on that. The ceiling
+-- earns its place here rather than in the percentiles.
 CREATE OR REPLACE PROCEDURE netra_recompute_baselines(job_id INTEGER, config JSONB)
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -131,14 +160,18 @@ DECLARE
     -- Below this the subject has no baseline and is left UNJUDGED rather than
     -- called healthy. ~34 h at the 60 s scrape cadence.
     --
-    -- This gate is also what makes the exclusion above safe. A condition open
-    -- long enough to consume the window leaves too few samples behind, the
-    -- gate refuses the row, and the UPSERT never runs -- so the existing
-    -- baseline survives untouched. Deleting it or writing a low count instead
+    -- A subject that falls under it keeps whatever baseline it already had:
+    -- the UPSERT simply does not run for it. That is the right answer for a
+    -- sparse subject -- a sensor that reports rarely, a host that was off for
+    -- most of the week -- because deleting the row or writing a low count
     -- would push a subject with a LIVE condition into unjudged, and an
     -- unjudged subject's condition is left alone forever: the hub would forget
     -- a problem it was actively reporting. 0016_conditions.sql:110-116 records
     -- the last time this codebase made that mistake.
+    --
+    -- It is NOT what protects a long-open condition from its own exclusion --
+    -- relying on it for that was the permanent-freeze bug described above, and
+    -- the `opened_ts > cutoff` bound is what actually handles that case.
     min_samples INTEGER := coalesce((config ->> 'min_samples')::INTEGER, 2000);
 
     cutoff TIMESTAMPTZ := now() - window_len;
@@ -163,6 +196,7 @@ BEGIN
             WHERE c.host_id = s.host_id
               AND c.kind    = 'temperature'
               AND c.subject = netra_sensor_subject(sen.chip, sen.label, sen.instance)
+              AND c.opened_ts > cutoff
               AND s.ts >= c.opened_ts
               AND s.ts <  coalesce(c.resolved_ts, 'infinity'::timestamptz)
        )
@@ -198,6 +232,7 @@ BEGIN
             WHERE c.host_id = h.host_id
               AND c.kind    = 'processes'
               AND c.subject = ''
+              AND c.opened_ts > cutoff
               AND h.ts >= c.opened_ts
               AND h.ts <  coalesce(c.resolved_ts, 'infinity'::timestamptz)
        )
@@ -226,6 +261,7 @@ BEGIN
             WHERE c.host_id = h.host_id
               AND c.kind    = 'load'
               AND c.subject = ''
+              AND c.opened_ts > cutoff
               AND h.ts >= c.opened_ts
               AND h.ts <  coalesce(c.resolved_ts, 'infinity'::timestamptz)
        )

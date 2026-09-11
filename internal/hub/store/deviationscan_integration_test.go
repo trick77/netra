@@ -145,13 +145,56 @@ func TestIntegrationASustainedFaultDoesNotRaiseItsOwnBaseline(t *testing.T) {
 	}
 }
 
-// The second-order case. A condition open across the WHOLE window leaves too
-// few samples behind, and the recompute must then leave the existing baseline
-// alone rather than delete it or write a low sample_count -- either of which
-// would push the subject into unjudged and strand a live condition.
-func TestIntegrationAnAllWindowFaultLeavesTheBaselineIntact(t *testing.T) {
+// THE MIRROR-IMAGE BUG, and the one the exclusion alone would have caused.
+//
+// A permanent, legitimate shift in normal -- a deploy that moves load5 from 2 to
+// 6 for good -- opens a condition, and from then on every sample is excluded as
+// "taken while a condition was open". Once the pre-shift samples age out of the
+// window the baseline freezes at the old normal forever, and the condition can
+// only clear if load returns to a level that no longer exists. Dismissing does
+// not escape it either: resolved intervals are excluded too, so it reopens three
+// ticks later.
+//
+// The bound is `c.opened_ts > cutoff`: anything that has held for longer than
+// the whole window IS this subject's normal now, so its samples count again.
+func TestIntegrationAPermanentShiftEventuallyRecalibrates(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "dev-stranded")
+	host := newHost(t, ctx, s, "dev-newnormal")
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// A week entirely at the NEW level, with the condition open across all of
+	// it -- which is where a host ends up some days after the deploy.
+	seedHostSeries(t, ctx, s, host, now, enoughSamples, 900, 6.0)
+	if _, err := s.Pool().Exec(ctx, `
+		INSERT INTO host_conditions (host_id, kind, subject, severity, opened_ts)
+		VALUES ($1, 'load', '', 'critical', $2)`,
+		host, now.Add(-30*24*time.Hour)); err != nil {
+		t.Fatalf("insert condition: %v", err)
+	}
+
+	if err := s.RecomputeBaselines(ctx, ""); err != nil {
+		t.Fatalf("RecomputeBaselines: %v", err)
+	}
+
+	var p99 float64
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT p99 FROM metric_baselines
+		 WHERE host_id = $1 AND kind = 'load' AND subject = ''`, host).Scan(&p99); err != nil {
+		t.Fatalf("no baseline row -- the subject is stuck on its old normal: %v", err)
+	}
+	if p99 != 6.0 {
+		t.Errorf("p99 = %v, want 6 -- a condition older than the window must stop "+
+			"excluding its own samples, or the baseline freezes forever", p99)
+	}
+}
+
+// A sparse subject keeps whatever baseline it had, which is what the
+// min-samples gate is actually for: deleting the row or writing a low count
+// would push a subject with a LIVE condition into unjudged, and an unjudged
+// subject's condition is left alone forever.
+func TestIntegrationASparseSubjectKeepsItsBaseline(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(t, ctx, s, "dev-sparse")
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sdb", nil, nil)
@@ -161,16 +204,8 @@ func TestIntegrationAnAllWindowFaultLeavesTheBaselineIntact(t *testing.T) {
 		t.Fatalf("first recompute: %v", err)
 	}
 
-	// Now a condition that has been open since before every one of those
-	// samples was taken.
-	if _, err := s.Pool().Exec(ctx, `
-		INSERT INTO host_conditions (host_id, kind, subject, severity, opened_ts)
-		VALUES ($1, 'temperature', 'drivetemp/temp1/sdb', 'critical', $2)`,
-		host, now.Add(-30*24*time.Hour)); err != nil {
-		t.Fatalf("insert condition: %v", err)
-	}
-
-	if err := s.RecomputeBaselines(ctx, ""); err != nil {
+	// A second pass over a window so short that almost nothing falls inside it.
+	if err := s.RecomputeBaselines(ctx, `{"window": "10 minutes"}`); err != nil {
 		t.Fatalf("second recompute: %v", err)
 	}
 
@@ -179,7 +214,7 @@ func TestIntegrationAnAllWindowFaultLeavesTheBaselineIntact(t *testing.T) {
 		SELECT sample_count FROM metric_baselines
 		 WHERE host_id = $1 AND kind = 'temperature' AND subject = 'drivetemp/temp1/sdb'`,
 		host).Scan(&count); err != nil {
-		t.Fatalf("the baseline was deleted, stranding an open condition: %v", err)
+		t.Fatalf("the baseline was deleted, stranding any open condition: %v", err)
 	}
 	if count != enoughSamples {
 		t.Errorf("sample_count = %d, want the previous %d kept", count, enoughSamples)

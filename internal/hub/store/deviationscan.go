@@ -236,6 +236,15 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		"p99":         baseline.P99,
 		"source":      bounds.Source,
 		"window_days": int(conditions.BaselineWindow / (24 * time.Hour)),
+		// When this reading was taken, which is what the API serves as
+		// measured_ts for a temperature condition.
+		//
+		// It rides the detail because the detail is refreshed on every pass
+		// that finds the subject still bad and FROZEN on a pass that could not
+		// judge it -- so it answers "when was this last actually measured"
+		// exactly, and without the API joining a hypertable once per open row
+		// on every fleet page load.
+		"measured_ts": in.readingTS.UTC().Format(time.RFC3339),
 	}
 	if in.rule.Unit != "" {
 		detail["unit"] = in.rule.Unit

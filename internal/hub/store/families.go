@@ -460,6 +460,21 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 		// The cost is that a genuine limit change can only be raised, never
 		// cleared, until the sensor row is deleted with its host. That is the
 		// right way round: a stale 80 C ceiling still judges better than none.
+		//
+		// KNOWN AND NOT FIXED HERE: a disk swapped into the same slot inherits
+		// the previous drive's judgement. Sensor identity is chip/label/
+		// instance and the instance is the block device name, so a new disk at
+		// sda reuses this row -- keeping the old drive's limits through the
+		// COALESCE above, and its metric_baselines row too, since the
+		// baseline cleanup only removes subjects whose whole HOST has gone
+		// quiet. The new drive is judged against another device's week until
+		// the next recompute moves the percentiles.
+		//
+		// Fixing it needs identity to carry something the slot does not --
+		// the serial, which `devices` already holds and `sensors` does not --
+		// and that is a migration of every sensor's history, not a line here.
+		// The exposure is bounded: limits differ little between drives of a
+		// type, and the baseline is rewritten daily.
 		id, ok, err := s.resolveOne(ctx, "sensor", sensorName(r), `
 			INSERT INTO sensors (host_id, chip, label, kind, instance, limit_high, limit_high_crit)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)

@@ -82,6 +82,14 @@ func (s *Service) Conditions(ctx context.Context, now time.Time) (ConditionsResp
 		       CASE c.kind
 		         WHEN 'disk'  THEN fc.ts
 		         WHEN 'drive' THEN d.last_seen
+		         -- From the condition's OWN detail, not from a join. The
+		         -- reading's timestamp is refreshed on every pass that finds
+		         -- the subject still bad, and frozen on a pass that could not
+		         -- judge it -- which is exactly "when was this last actually
+		         -- measured". A join to the newest sensor_sample would answer
+		         -- the same question by scanning a hypertable once per open
+		         -- row, on every fleet page load.
+		         WHEN 'temperature' THEN (c.detail ->> 'measured_ts')::timestamptz
 		       END AS measured_ts,
 		       hc.last_seen
 		  FROM host_conditions c
@@ -141,6 +149,25 @@ func subjectIsStale(kind string, measured, lastSeen *time.Time) bool {
 	case conditions.KindDrive:
 		return lastSeen.Sub(*measured) > conditions.DriveStaleAfter
 	default:
+		// Temperature, on the same rule the disk uses: it is read from a
+		// 60-second series, so a reading older than three scrapes is the same
+		// "measured, long ago" a stale mount is.
+		//
+		// Without this the row keeps quoting a temperature as though it were
+		// current. scanSensors deliberately marks a sensor that stopped
+		// reporting UNJUDGED rather than vanished -- a collector that failed
+		// for one pass looks exactly like a drive that was pulled -- so the
+		// condition stays open and the fleet page goes on printing the last
+		// number anybody saw, with nothing saying how old it is.
+		//
+		// `processes` and `load` are NOT here, for the reason the comment on
+		// the query gives: their subject IS the host, so their staleness is
+		// the host's own silence and the `silent` condition already says it in
+		// full. A second "not measured since" on the load row underneath would
+		// be the same fact twice.
+		if kind == conditions.KindTemperature {
+			return lastSeen.Sub(*measured) > conditions.StaleAfter
+		}
 		return false
 	}
 }
