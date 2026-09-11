@@ -5,7 +5,7 @@ import { Card } from "../../ui/Card";
 import { Input, Select } from "../../ui/Control";
 import { EmptyState } from "../../ui/EmptyState";
 import { Table, type Column } from "../../ui/Table";
-import { relative } from "../../lib/format";
+import { When } from "../../ui/When";
 import {
   createHost,
   deleteHost,
@@ -171,9 +171,9 @@ function hostColumns({
       header: "Last seen",
       /* A host with a token but no agent yet has never reported, which is a
          different fact from "the age is unknown" -- and on this page it is
-         the expected state right after creation. */
-      cell: (host) =>
-        host.last_seen === null ? "never" : relative(host.last_seen),
+         the expected state right after creation. `When` prints the word,
+         and prints the age the way the fleet list does. */
+      cell: (host) => <When iso={host.last_seen} never />,
       // The instant, not the "3 minutes ago" the cell prints. A host that has
       // never reported is the unknown Table sorts last, which is where a row
       // waiting for its agent belongs at either end of this column.

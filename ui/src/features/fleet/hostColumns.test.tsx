@@ -1356,7 +1356,7 @@ describe("hostColumns", () => {
         (c) => c.header === "Last seen",
       )!;
       const { container } = render(<>{col.cell(row)}</>);
-      return container.querySelector(".seen-cell")!;
+      return container.querySelector(".age")!;
     };
 
     it("prints an age against the page's clock, not the wall clock", () => {
@@ -1398,9 +1398,7 @@ describe("hostColumns", () => {
     // reading, a timestamp is the one you take to a log.
     it("carries the exact instant on the title", () => {
       const cell = seen(makeRow({ last_seen: "2026-08-10T11:46:00Z" }));
-      expect(cell.querySelector("[title]")!.getAttribute("title")).toBe(
-        absolute("2026-08-10T11:46:00Z"),
-      );
+      expect(cell.getAttribute("title")).toBe(absolute("2026-08-10T11:46:00Z"));
     });
 
     // The instant, the way the container list's Last seen sorts the same
