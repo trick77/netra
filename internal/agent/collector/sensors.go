@@ -72,6 +72,60 @@ func sensorScale(kind string) float64 {
 // milliDegrees is the unit hwmon reports temperatures in.
 const milliDegrees = 1000.0
 
+// limitSuffixes are the two hwmon attributes that state how hot a sensor is
+// allowed to get, in the order warning then critical.
+//
+// TEMPERATURE ONLY, and that is a scope decision rather than an oversight.
+// hwmon publishes inN_max and fanN_min too, but they do not mean the same
+// thing: inN_min/inN_max bracket a rail's NOMINAL RANGE, where being under is
+// the failure, and a fan's interesting limit is fanN_min for the same reason.
+// Mapping all of those onto one "high limit" would put three different
+// judgements behind one field name. Temperature is the one kind where _max and
+// _crit mean exactly "warn here" and "stop here" on every driver that publishes
+// them: nvme serves WCTEMP and CCTEMP, drivetemp the SCT limits, coretemp the
+// throttle point and TjMax.
+var limitSuffixes = [2]string{"_max", "_crit"}
+
+// readLimit reads one limit attribute, or returns nil for "this chip does not
+// publish it".
+//
+// PRESENCE DECIDES WHETHER TO LOOK, a read result never decides anything --
+// the same rule the label fallback follows a few lines down, arrived at for the
+// same reason. But the consequence of failure is deliberately the OPPOSITE of
+// the label's: a label that cannot be read forces the whole row to be dropped,
+// because a row under the wrong identity is worse than no row. A limit that
+// cannot be read costs only the limit. Returning early here would let one slow
+// sysfs read -- and readTrimmed answers errWedged for up to 1024 scrapes after
+// a single timeout -- delete the temperature it came with for most of a day,
+// which is a hardware reading traded for a constant the hub can do without.
+func (s *Sensors) readLimit(ctx context.Context, chipDir, base, suffix, kind string,
+	present map[string]struct{}) *float64 {
+	name := base + suffix
+	if _, ok := present[name]; !ok {
+		return nil
+	}
+
+	raw, err := s.readTrimmed(ctx, filepath.Join(chipDir, name))
+	if err != nil {
+		return nil
+	}
+	n, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil
+	}
+
+	// Drivers disable a limit by publishing a sentinel rather than by omitting
+	// the file: 0 for a temperature limit means "not set", and some nvme
+	// controllers report a disabled CCTEMP that way. A 0 C critical would make
+	// every reading critical forever, which is the loudest possible way to be
+	// wrong about a drive that is fine.
+	limit := n / sensorScale(kind)
+	if limit <= 0 {
+		return nil
+	}
+	return &limit
+}
+
 // Sensors reports temperatures from /sys/class/hwmon.
 //
 // Identity is chip name + label, NEVER the hwmonN directory name. The N is
@@ -394,6 +448,11 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 			if kind == sensorTemperature {
 				// Still set, and still the column existing panels read.
 				row.Temp = ptrTo(value)
+
+				// What the chip says about itself, so the hub does not have to
+				// guess a ceiling that fits both a spinning disk and an NVMe.
+				row.LimitHigh = s.readLimit(ctx, chipDir, base, limitSuffixes[0], kind, present)
+				row.LimitHighCrit = s.readLimit(ctx, chipDir, base, limitSuffixes[1], kind, present)
 			}
 			rows = append(rows, row)
 		}

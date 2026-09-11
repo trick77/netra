@@ -447,10 +447,43 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 		}
 		seen[key] = true
 
+		// COALESCE on the limits, not a plain assignment, and the difference
+		// decides whether this feature survives an agent rollout. A chip's
+		// published limit is constant for the life of the drive, so a row that
+		// arrives without one is almost never a drive whose limit was
+		// withdrawn -- it is an agent that predates the field, or a sysfs read
+		// that timed out and is wedged for the next thousand scrapes. Writing
+		// NULL over a good limit on the strength of that would quietly drop
+		// the whole fleet back to the fallback ceilings, which is exactly the
+		// permanently-red-NVMe failure the limits exist to prevent.
+		//
+		// The cost is that a genuine limit change can only be raised, never
+		// cleared, until the sensor row is deleted with its host. That is the
+		// right way round: a stale 80 C ceiling still judges better than none.
+		//
+		// KNOWN AND NOT FIXED HERE: a disk swapped into the same slot inherits
+		// the previous drive's judgement. Sensor identity is chip/label/
+		// instance and the instance is the block device name, so a new disk at
+		// sda reuses this row -- keeping the old drive's limits through the
+		// COALESCE above, and its metric_baselines row too, since the
+		// baseline cleanup only removes subjects whose whole HOST has gone
+		// quiet. The new drive is judged against another device's week until
+		// the next recompute moves the percentiles.
+		//
+		// Fixing it needs identity to carry something the slot does not --
+		// the serial, which `devices` already holds and `sensors` does not --
+		// and that is a migration of every sensor's history, not a line here.
+		// The exposure is bounded: limits differ little between drives of a
+		// type, and the baseline is rewritten daily.
 		id, ok, err := s.resolveOne(ctx, "sensor", sensorName(r), `
-			INSERT INTO sensors (host_id, chip, label, kind, instance) VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (host_id, chip, label, instance) DO UPDATE SET kind = EXCLUDED.kind
-			RETURNING id`, hostID, r.GetChip(), r.GetLabel(), r.GetKind(), r.GetInstance())
+			INSERT INTO sensors (host_id, chip, label, kind, instance, limit_high, limit_high_crit)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (host_id, chip, label, instance) DO UPDATE
+			   SET kind            = EXCLUDED.kind,
+			       limit_high      = COALESCE(EXCLUDED.limit_high, sensors.limit_high),
+			       limit_high_crit = COALESCE(EXCLUDED.limit_high_crit, sensors.limit_high_crit)
+			RETURNING id`, hostID, r.GetChip(), r.GetLabel(), r.GetKind(), r.GetInstance(),
+			r.LimitHigh, r.LimitHighCrit)
 		if err != nil {
 			return nil, err
 		}

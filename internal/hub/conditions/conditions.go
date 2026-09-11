@@ -27,7 +27,25 @@ const (
 	KindDisk        = "disk"
 	KindFailedUnits = "failed-units"
 	KindDrive       = "drive"
+
+	// The deviation kinds, judged against a baseline measured from each
+	// subject's own history rather than against a constant. See deviation.go.
+	KindTemperature = "temperature"
+	KindProcesses   = "processes"
+	KindLoad        = "load"
 )
+
+// DeviationKinds are the kinds whose threshold comes from metric_baselines.
+//
+// Named as a set because three separate places need the same answer: the
+// evaluator applies the open delay only to these, the catalogue orders them
+// together, and the scan reads baselines only for them. A list is cheaper to
+// keep honest than three switch statements that must agree.
+var DeviationKinds = map[string]bool{
+	KindTemperature: true,
+	KindProcesses:   true,
+	KindLoad:        true,
+}
 
 // Severities. `ok` and `neutral` are UI vocabulary for the absence of a
 // condition and never reach a row: a condition is definitionally something

@@ -66,6 +66,23 @@ func (s *Store) ScanConditions(ctx context.Context, now time.Time,
 		scan.Evaluated[conditions.KindDrive] = true
 	}
 
+	if err := s.scanSensors(ctx, &scan); err != nil {
+		slog.Error("condition scan: sensors", "err", err)
+	} else {
+		scan.Evaluated[conditions.KindTemperature] = true
+	}
+
+	// One query, two kinds, so both are marked evaluated or neither is. They
+	// come from the same row: a failure that hid the process count hid the
+	// load average with it, and claiming one was looked at would let Diff
+	// resolve conditions nobody judged.
+	if err := s.scanHostGauges(ctx, &scan); err != nil {
+		slog.Error("condition scan: host gauges", "err", err)
+	} else {
+		scan.Evaluated[conditions.KindProcesses] = true
+		scan.Evaluated[conditions.KindLoad] = true
+	}
+
 	return scan, nil
 }
 
