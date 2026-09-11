@@ -30,7 +30,8 @@ import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
-import { ABSENT, duration, relative } from "../../lib/format";
+import { When } from "../../ui/When";
+import { duration } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
 import { catalogueOf, EMPTY_CATALOGUE } from "../fleet/conditions";
 import { hostTabForSlug } from "../../lib/router";
@@ -626,9 +627,13 @@ export function HostPage({
                 rebooted {duration(host.uptime_s)} ago
               </Badge>
             )}
+            {/* The same `When` every Last seen column renders, so the header
+              agrees with the fleet row the reader just came from: the
+              absolute instant on hover, and "never" rather than a dash for a
+              host that has not reported once -- this header used to be the
+              one place that drew the dash. */}
             <span className="meta">
-              last seen{" "}
-              {host.last_seen === null ? ABSENT : relative(host.last_seen)}
+              last seen <When iso={host.last_seen} never />
             </span>
             {/* One range control for the whole page: every chart on every tab
               is drawn from it, so no tab may grow one of its own. */}

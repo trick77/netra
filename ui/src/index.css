@@ -3376,21 +3376,30 @@ details.sysfold > .body {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-/* Last seen, in the fleet row. The same shape as .uptime-cell above -- both
-   are an age in the reader's units, both are context rather than the reading
-   anyone came for -- but a step quieter, because the two now live on
-   different pages. Uptime is on the HOST page, where a reader has asked
-   about one machine and its System card is a short list of facts; this is a
-   column of fifty of them beside four columns of gauges, and at
-   --text-label it was the only 14px thing in a row otherwise built from
-   --text-ui readings and --text-micro annotations. It takes the annotation
-   size, the same one the traffic rates opposite it now take.
+/* An age -- "2 h 14 m ago" -- wherever one is printed: `When` renders every
+   seen-at column (fleet, containers, drives, packages, admin) and the host
+   header's "last seen", and this is the one class it puts on. It was
+   .seen-cell, wrapped by the fleet cell alone, and the same fact read five
+   ways across the app; the rule moved into the component so a caller cannot
+   opt out of it.
+
+   The same shape as .uptime-cell above -- both are an age in the reader's
+   units, both are context rather than the reading anyone came for -- but a
+   step quieter. Uptime is on the HOST page, where a reader has asked about
+   one machine and its System card is a short list of facts; an age is a
+   column of fifty of them beside four columns of gauges, and at --text-label
+   it was the only 14px thing in a row otherwise built from --text-ui
+   readings and --text-micro annotations. It takes the annotation size, the
+   same one the traffic rates opposite it take, and --muted to match them.
+   In the text-only lists (packages, drives, admin) the same rule reads the
+   same way: the row's other cells are the readings, and when a thing was
+   last seen is the annotation on them.
 
    tabular-nums is what makes the column scannable at all: `relative` prints
    two-unit ages ("2 h 14 m ago") and proportional digits leave the unit
    letters staggering down the column. Nowrap for the same reason .rate has
    it -- an age broken between its figure and its unit reads as two. */
-.seen-cell {
+.age {
   font-size: var(--text-micro);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -3749,6 +3758,12 @@ a.tile:focus-visible {
 .hosthead .meta {
   font-size: var(--text-label);
   color: var(--muted);
+}
+/* "last seen 20 s ago" is one caption, and its two halves must be one size:
+   the age keeps every other part of .age (the colour is the caption's own
+   already, the hover, the figures) and only the size is the sentence's. */
+.hosthead .meta .age {
+  font-size: inherit;
 }
 /* The box a panel MEASURES to decide how wide to draw its chart (see
    useMeasuredWidth). It carries no look of its own -- min-width is the whole
@@ -4556,9 +4571,12 @@ tbody:first-of-type .grouprow th {
    putting both above where they were. Row height grows ~2px; the sparkline
    sets most of it anyway.
 
-   `tbody td` is the row's base -- it is what Last seen inherits, a bare span
-   -- and the three named selectors are the cells that set --text-ui for
-   themselves and would otherwise stay at 14 inside it. */
+   `tbody td` is the row's base, and the three named selectors are the cells
+   that set --text-ui for themselves and would otherwise stay at 14 inside
+   it. Last seen is not among them: it is an .age, the annotation step
+   everywhere in the app, and it takes this list's 13 below rather than the
+   readings' 15 -- the fleet list prints the same column at its annotation
+   size, and the two lists sit one click apart. */
 .ctr-list .host-cell-name,
 .ctr-list .metric-now .v,
 .ctr-list .metric-read .v,
@@ -4571,7 +4589,8 @@ tbody:first-of-type .grouprow th {
 .ctr-list .metric-read .u,
 .ctr-list .metric-now .v small,
 .ctr-list .metric-read .v small,
-.ctr-list .grouprow .gbytes {
+.ctr-list .grouprow .gbytes,
+.ctr-list .age {
   font-size: 13px;
 }
 /* A child sits UNDER its heading. The heading's name starts after the

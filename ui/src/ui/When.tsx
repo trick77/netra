@@ -3,9 +3,18 @@ import { ABSENT, absolute, instant, relative } from "../lib/format";
 /**
  * A timestamp reads relative, with the absolute time on hover (spec §9).
  *
- * Lives here rather than beside one table because three of them now render a
- * seen-at column -- drives, packages and containers -- and a second copy is
- * how two columns headed the same thing come to format differently.
+ * Lives here rather than beside one table because every seen-at column --
+ * hosts, containers, drives, packages, the host page header, the admin list
+ * -- renders through it, and a second copy is how two columns headed the
+ * same thing come to format differently.
+ *
+ * The LOOK lives here too (.age), not at the call sites. It used to be a
+ * class the fleet cell alone wrapped around this span, and the result was
+ * five renderings of the one fact: the fleet's Last seen muted and tabular,
+ * the container list's and the inventory's in body ink with proportional
+ * digits, the admin list's a bare relative() with no hover, the host
+ * header's a dash where the others said "never". One component, one class,
+ * and a caller cannot get it wrong.
  */
 export function When({
   iso,
@@ -20,20 +29,32 @@ export function When({
    * in a browser; not in a test, and not for a caller supplying its own.
    */
   now,
+  /**
+   * What a null reads as. The default is the absent dash every other empty
+   * cell draws. A HOST is the exception: its record can exist having never
+   * reported once, and on that row every figure is absent for the ordinary
+   * reason that there is nothing to draw -- a dash here joins them and reads
+   * as "this cell has no value", which is not the fact. "never" is the fact,
+   * and the word hostStatus already uses; the three host surfaces (fleet,
+   * host header, admin) pass it.
+   */
+  never = false,
 }: {
   iso: string | null;
   now?: Date;
+  never?: boolean;
 }) {
   // Wrapped rather than bare, so a column of never-reported timestamps dims
   // the same way every other absent cell does -- Table only dims a cell whose
   // own output IS the string, and this component's is an element.
-  if (iso === null) return <span className="absent">{ABSENT}</span>;
+  if (iso === null)
+    return <span className="age absent">{never ? "never" : ABSENT}</span>;
   const exact = absolute(iso);
   // No title on a date that would not parse: absolute() answers ABSENT for
   // one, and a tooltip repeating the dash under the pointer is worse than no
   // tooltip. The same guard the visible reading gets from relative().
   return (
-    <span title={exact === ABSENT ? undefined : exact}>
+    <span className="age" title={exact === ABSENT ? undefined : exact}>
       {relative(iso, now)}
     </span>
   );

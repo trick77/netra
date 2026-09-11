@@ -1066,19 +1066,11 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
  * has drifted to "4 m ago" is visible here before any threshold has fired
  * and before the name goes red.
  *
- * `When` does the formatting, and it is the same `When` the container list's
- * own Last seen column renders. Its header says why: three tables now print a
- * seen-at column, and a second copy is how two columns headed the same thing
- * come to format differently. This cell adds the type (.seen-cell) and the
- * one case the container list does not have.
- *
- * That case is "never", and it is a WORD rather than the absent dash. A
- * container row always has a last_seen; a host record can exist having never
- * reported once, and every figure on that row is absent for the ordinary
- * reason that there is nothing to draw. A dash here joins them and reads as
- * "this cell has no value", which is true of four other cells on the same row
- * and is not the fact. "never" is the fact, and it is the word hostStatus
- * already uses.
+ * `When` does the formatting and carries the look (.age): every seen-at
+ * column in the app renders through it, and its header says why. The one
+ * thing this cell adds is `never` -- a host record can exist having never
+ * reported once, and When's doc says why that is a word rather than the
+ * dash.
  *
  * `now` is the page's clock, the same instant hostMark judges the row's
  * severity against. A cell reading its own would let one row's name go red
@@ -1086,15 +1078,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
  * from; identical in a browser, not in a test.
  */
 function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
-  return (
-    <span className="seen-cell">
-      {row.last_seen === null ? (
-        <span className="absent">never</span>
-      ) : (
-        <When iso={row.last_seen} now={now} />
-      )}
-    </span>
-  );
+  return <When iso={row.last_seen} now={now} never />;
 }
 
 // The Uptime column and its cell are gone from this list. Uptime is a fact
