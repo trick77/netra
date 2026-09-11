@@ -1156,6 +1156,26 @@ tbody tr:hover .host-cell-name {
 .fleet-host .host-cell-site {
   line-height: 1.25;
 }
+/* The mark stays on the name's line, always. The shared rule above wraps,
+   and on an iPad-width fleet the auto-layout table shrank the Host column to
+   the name's own width and the X or triangle dropped under it -- where it
+   read as a third line of subtitle, not a mark on the host. nowrap makes the
+   pair the row's minimum width, so the column widens by a glyph instead and
+   the table scrolls inside .tablewrap if it must. Fleet-scoped because the
+   container list's .host-cell-top stacks several badges after its name and
+   does want to wrap. */
+.fleet-host .host-cell-top {
+  flex-wrap: nowrap;
+}
+/* And the name itself does not break either: hostnames are hyphenated, and
+   a browser breaks after a hyphen, so "sim-ghost-longername-01" in a narrow
+   column stood as three lines with the mark centred against the middle one.
+   The location line under it is already nowrap for the same row-height
+   reason; the name is the one thing in the cell that must never ellipsise,
+   so it widens the column instead. */
+.fleet-host .host-cell-name {
+  white-space: nowrap;
+}
 
 /* Traffic cell — the up/down sparkline with both rates BESIDE it, not under
    it. Stacked, the two lines of type made this the tallest cell in the fleet
@@ -2781,7 +2801,8 @@ tbody tr:hover .host-cell-name {
   stroke-width: 2.25;
   /* Never shrink: 15px of glyph beside a hostname that can be any length, and
      .host-cell-top is a flex row -- without it a long name in a narrow Host
-     column squeezes the mark instead of wrapping. */
+     column squeezes the mark instead of widening the column (the fleet's row
+     is nowrap; see .fleet-host .host-cell-top). */
   flex: none;
   /* Block, so the SVG does not sit on a text baseline and carry inline
      layout's descender gap under it. .host-cell-top centres its children, so
