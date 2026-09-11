@@ -19,6 +19,9 @@ func TestCatalogueNamesEveryKind(t *testing.T) {
 		conditions.KindFailedUnits: false,
 		conditions.KindDisk:        false,
 		conditions.KindDrive:       false,
+		conditions.KindTemperature: false,
+		conditions.KindProcesses:   false,
+		conditions.KindLoad:        false,
 	}
 	for _, k := range conditions.Catalogue() {
 		if _, known := want[k.Kind]; !known {

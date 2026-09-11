@@ -57,6 +57,9 @@ type Evaluator struct {
 	// same escape hatch the agent's client keeps for its own ticker. Nothing
 	// mutates it after construction.
 	interval time.Duration
+	// delay is the open-side hysteresis for the deviation kinds, and the one
+	// piece of state this loop carries between passes. See conditions.Delay.
+	delay *Delay
 }
 
 // New builds an Evaluator that began running at startedAt.
@@ -66,6 +69,7 @@ func New(store Store, startedAt time.Time) *Evaluator {
 		now:       time.Now,
 		startedAt: startedAt,
 		interval:  Interval,
+		delay:     NewDelay(),
 	}
 }
 
@@ -165,6 +169,11 @@ func (e *Evaluator) Once(ctx context.Context) error {
 			}
 		}
 	}
+
+	// The open-side delay, after the warm-up guard and before Diff: a
+	// deviation finding has to survive OpenAfter consecutive passes before the
+	// state machine is told about it at all.
+	e.delay.Apply(scan, open)
 
 	actions := Diff(open, scan, now)
 	if len(actions) == 0 {

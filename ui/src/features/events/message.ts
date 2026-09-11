@@ -55,6 +55,14 @@ export const CONDITION_EVENT_TYPES = [
   "disk",
   "failed-units",
   "drive",
+  // The deviation kinds. `temperature` is a condition and is not the kernel's
+  // `thermal` a few lines up, which is an occurrence: the kernel says it
+  // throttled at a moment, this says a sensor has been outside its own normal
+  // range since one. Both belong in the dropdown, under the names their
+  // producers use.
+  "temperature",
+  "processes",
+  "load",
 ] as const;
 
 /** The known event types, which is also the order a type filter offers them.
@@ -467,7 +475,44 @@ function conditionMessage(
       text(f, "reason") === "vanished" ? "no longer reported" : "cleared";
     return open ? `${named} ${how} after ${open}` : `${named} ${how}`;
   }
+
+  // A deviation NAMES ITS NUMBERS, where the five older kinds do not, and the
+  // difference is not inconsistency.
+  //
+  // "Filesystem nearly full — /var" is a complete thought: everyone knows what
+  // full means, and the threshold behind it is the same 90% on every host in
+  // the fleet. "Temperature above normal — drivetemp/sda" is not. Above WHAT?
+  // The threshold was calibrated from that one drive's own history, so it is a
+  // different number on every subject and it exists nowhere else a reader can
+  // look -- the condition row is gone from the open set once this clears, and
+  // the baseline it was measured against is rebuilt daily. If the log does not
+  // carry the figures, nothing does.
+  const value = reading(f, "value");
+  if (value !== "") {
+    const against =
+      text(f, "source") === "device"
+        ? `its own limit of ${reading(f, "crit")}`
+        : `a normal under ${reading(f, "p99")}`;
+    return `${named} — ${value}, against ${against}`;
+  }
+
   return named;
+}
+
+/** One deviation figure with its unit, or "" when the detail did not carry it.
+ *
+ * Rounded to one decimal for the reason the fleet list rounds: a p99 arrives as
+ * 46.039215686274510 and printing that suggests the threshold is known to
+ * fifteen figures, when it is a percentile over a week of 60-second samples. */
+function reading(fields: Record<string, unknown>, key: string): string {
+  const value = fields[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) return "";
+  const rounded = Math.round(value * 10) / 10;
+  const shown = Number.isInteger(rounded)
+    ? String(rounded)
+    : rounded.toFixed(1);
+  const unit = text(fields, "unit");
+  return unit === "" ? shown : `${shown} ${unit}`;
 }
 
 /** The kinds as sentences. Mirrors CONDITION_KIND_INFO in fleet/conditions.ts,
@@ -479,6 +524,9 @@ const CONDITION_LABELS: Record<string, string> = {
   disk: "Filesystem nearly full",
   "failed-units": "Failed units",
   drive: "Drive errors",
+  temperature: "Temperature above normal",
+  processes: "Process count above normal",
+  load: "Load above normal",
 };
 
 export function messageOf(event: Event): string {
@@ -503,6 +551,9 @@ export function messageOf(event: Event): string {
     case "disk":
     case "failed-units":
     case "drive":
+    case "temperature":
+    case "processes":
+    case "load":
       return conditionMessage(event.type, subject, f);
     default: {
       // Widened deliberately: the tuple is `as const` so the dropdown keeps

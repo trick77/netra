@@ -632,6 +632,29 @@ message SensorSample {
   // the host has been up, and fork every one of their histories at the
   // agent upgrade.
   string instance = 7;
+
+  // The chip's own idea of how hot this sensor is allowed to get, in the
+  // kind's unit: hwmon tempN_max and tempN_crit.
+  //
+  // THE REASON A BASELINE IS NOT ENOUGH. A threshold calibrated from a
+  // sensor's own history says "warmer than usual", which is the right
+  // sentence for a drive that has run at 44 C for two years and is now at
+  // 58. It is the wrong sentence for a busy NVMe whose composite temperature
+  // sits at 65 C by design: a fixed ceiling picked for spinning disks calls
+  // that critical forever, and a pure baseline calls 85 C normal because it
+  // has been 85 C all week. The drive already knows the answer -- nvme
+  // publishes WCTEMP and CCTEMP, drivetemp publishes the SCT limits,
+  // coretemp publishes the throttle point -- so the hub asks rather than
+  // guesses, and keeps the baseline for the early warning underneath.
+  //
+  // Unset where the chip publishes nothing (k10temp, acpitz) and unset from
+  // an agent predating the field, which is why they are optional rather than
+  // zero-defaulted: 0 C is a legitimate limit for a voltage rail and an
+  // absurd one for a package, and the hub must be able to tell "no limit"
+  // from "a limit of zero". A read that FAILS also arrives unset -- a slow
+  // sysfs read costs the threshold, never the reading it came with.
+  optional double limit_high = 8;
+  optional double limit_high_crit = 9;
 }
 
 // NetSample is one interface over one scrape interval. Rates, for the same

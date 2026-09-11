@@ -78,5 +78,26 @@ func Catalogue() []KindInfo {
 		// drive has substituted for damage, which is worth acting on and is not
 		// the same as failing.
 		{Kind: KindDrive, Label: "Drive errors", Severity: SeverityCritical},
+
+		// The deviation kinds, last and grouped, because they answer a
+		// different question from the five above: those say something IS
+		// wrong, these say something is unlike itself. A reader scanning the
+		// filter should hit the definite ones first.
+		//
+		// "above normal" rather than "high", and the distinction is the same
+		// one the drive label makes a few lines up. "Temperature high" is a
+		// verdict that needs a number behind it to mean anything, and the
+		// number is different on every subject. "Above normal" is what the
+		// rule actually measured: this sensor is outside the range it has kept
+		// for a week. It also stays true when the hardware's own limit is what
+		// fired, because a drive past its vendor limit is certainly above its
+		// normal too.
+		//
+		// Entry severity is warning for all three: a deviation opens at
+		// warning and escalates, where a silent host or a failing drive is
+		// critical from the first observation.
+		{Kind: KindTemperature, Label: "Temperature above normal", Severity: SeverityWarning},
+		{Kind: KindProcesses, Label: "Process count above normal", Severity: SeverityWarning},
+		{Kind: KindLoad, Label: "Load above normal", Severity: SeverityWarning},
 	}
 }

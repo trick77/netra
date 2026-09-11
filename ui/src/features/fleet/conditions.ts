@@ -482,6 +482,25 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v !== "" ? v : null;
 }
 
+/**
+ * One deviation reading, in the unit it was measured in.
+ *
+ * Rounded to one decimal and no further, because the precision the hub sends
+ * is not precision a reader can use: a baseline p99 arrives as 46.03921568...
+ * and printing it would suggest the threshold is known to eight figures when
+ * it is a percentile over a week of 60-second samples. One decimal is the
+ * resolution a temperature sensor and a load average actually carry.
+ *
+ * Trailing ".0" is dropped so a process count reads "1842" rather than
+ * "1842.0" -- the same number in a unit that has no fractions.
+ */
+function deviationValue(value: number | null, unit: string): string {
+  if (value === null) return "";
+  const rounded = Math.round(value * 10) / 10;
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return unit === "" ? text : `${text} ${unit}`;
+}
+
 function names(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.filter((one): one is string => typeof one === "string");
@@ -702,12 +721,63 @@ export function hostConditions(
   // clean because the browser did not recognise what was wrong with it. That
   // is the failure this whole module exists to end, so it must not be
   // reintroduced by an incomplete switch statement.
+  // The deviation kinds, all three written by one builder because the sentence
+  // is the same shape for each: what it reads now, and what it normally reads.
+  //
+  // THE SECOND HALF IS NOT DECORATION. "Load is 14.2" is a number a reader has
+  // to already know this host to interpret, and the whole reason these kinds
+  // are calibrated per subject is that nobody knows every host. "14.2, normally
+  // under 6.1" carries its own comparison, so the row is readable by someone
+  // who has never seen the machine before -- which on a fleet page is everyone.
+  for (const kind of ["temperature", "processes", "load"] as const) {
+    const row = of(kind);
+    if (row === undefined) continue;
+    const detail = fields(row);
+    const value = num(detail.value);
+    if (value === null) continue;
+
+    const unit = str(detail.unit) ?? "";
+    const subject = kind === "temperature" ? `${row.subject} ` : "";
+    const normally = num(detail.p99);
+
+    // The vendor's own limit is a different sentence from a calibrated one,
+    // and an operator deciding whether to act reads them differently: past the
+    // drive's stated limit is a fact about the hardware, above its usual range
+    // is a fact about the week.
+    const because =
+      str(detail.source) === "device"
+        ? `past its ${deviationValue(num(detail.crit), unit)} limit`
+        : normally === null
+          ? ""
+          : `normally under ${deviationValue(normally, unit)}`;
+
+    out.push({
+      ...common(row),
+      what:
+        `${subject}${silent !== undefined ? "was" : "is"} ` +
+        `${deviationValue(value, unit)}${because === "" ? "" : ` — ${because}`}` +
+        staleNote(row, now),
+      // Deliberately none. Evidence's marks are meter, units and reporting: a
+      // reading against a per-subject threshold is not a proportion of
+      // anything, and drawing it as a meter would invent a full scale that
+      // does not exist -- there is no "100 % hot".
+      evidence: null,
+      // The System tab, for all three: it holds SystemGraphs (load, processes)
+      // and the Sensors charts below them, so every one of these readings has
+      // its series one click away.
+      tab: "system",
+    });
+  }
+
   const written = new Set([
     "silent",
     "sporadic",
     "failed-units",
     "disk",
     "drive",
+    "temperature",
+    "processes",
+    "load",
   ]);
   for (const [kind, rows] of byKind) {
     if (written.has(kind)) continue;
