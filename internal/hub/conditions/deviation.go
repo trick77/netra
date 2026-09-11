@@ -50,13 +50,33 @@ const (
 // and weekday load is not weekend load on anything that serves people.
 const BaselineWindow = 7 * 24 * time.Hour
 
-// BaselineMinSamples is how much history a baseline needs before it may judge.
+// BaselineMinSamples is the floor for STORING a baseline at all, and the least
+// history any kind may judge on.
 //
 // ~34 h at the 60 s cadence. Below it the subject is UNJUDGED rather than
 // healthy -- a new host must not be declared fine by a rule that has not
 // watched it yet, and must not be declared broken by percentiles drawn from one
 // afternoon.
+//
+// It is also the number the recompute's own gate uses
+// (0020_metric_baselines.sql), and the two are deliberately not the same
+// question. The SQL asks "is this worth storing"; the per-kind gates below ask
+// "is this enough to judge THIS kind on". Keeping the storage floor at the
+// lowest of them means a subject's row is already sitting there, accumulating,
+// while the kind that needs a longer history waits for it.
 const BaselineMinSamples = 2000
+
+// BaselineWeeklySamples is enough history to have seen a whole weekly cycle.
+//
+// A full week at the 60 s cadence is 10,080 samples, and THE GATE MUST SIT
+// BELOW THAT RATHER THAN AT IT. Raw retention is 7 days, so the window can
+// never hold more than a perfect week -- a gate at 10,080 would require a host
+// that has not missed a single scrape since it was installed, and any host that
+// ever drops one would never be judged at all. 8,000 leaves room for the 20 %
+// loss that SporadicMissRatio tolerates before the host is flagged as sporadic
+// on its own account, so a host netra considers to be reporting normally can
+// always reach it.
+const BaselineWeeklySamples = 8000
 
 // OpenAfter is how many consecutive ticks must find a reading over the line
 // before the condition opens.
@@ -185,7 +205,10 @@ type Baseline struct {
 }
 
 // Ready reports whether this baseline rests on enough history to judge with.
-func (b Baseline) Ready() bool { return b.Samples >= BaselineMinSamples }
+//
+// The bar is the KIND's, not one number for all of them -- see
+// FamilyRule.MinSamples.
+func (b Baseline) Ready(minSamples int) bool { return b.Samples >= minSamples }
 
 // Margin is how far past p99 a reading has to be to count as a departure.
 func (b Baseline) Margin(floor float64) float64 {
@@ -292,6 +315,32 @@ type FamilyRule struct {
 	Ceilings Ceilings
 	// Unit is what the number is in, for the sentence the UI writes.
 	Unit string
+	// MinSamples is how much history this kind needs before it may judge.
+	//
+	// PER KIND BECAUSE THE CYCLE THEY MUST HAVE SEEN IS DIFFERENT, and getting
+	// this wrong is visible on every fresh install. `processes` and `load` are
+	// driven by what people ask the machine to do, so they have a weekly shape:
+	// a netra installed on a Saturday has, by Sunday evening, cleared a 34-hour
+	// gate against a baseline built entirely from a quiet weekend. Monday
+	// morning is then a departure from normal on every host at once.
+	//
+	// It does not even correct itself quickly, because the recompute excludes
+	// samples taken while a condition is open: Monday's legitimate load is
+	// excluded as evidence, the baseline stays weekend-shaped, and the row
+	// stands until `opened_ts` ages out of the window about a week later. The
+	// cure for a false positive must not be a week of waiting.
+	//
+	// Temperature keeps the short gate. A drive has no weekday, its load-driven
+	// swing is already what the range margin is measured over, and it has the
+	// second tier -- the chip's own published limit -- which owes nothing to
+	// history at all.
+	//
+	// The cost is honest and worth paying: these two kinds say nothing for the
+	// first five and a half days a host reports. Nobody can know a machine's
+	// weekly rhythm in thirty-four hours, and a rule that pretends otherwise
+	// spends its first Monday crying wolf, which is how a fleet learns to
+	// ignore its own attention list.
+	MinSamples int
 }
 
 // Chip families, named by the hwmon driver that registers them.
@@ -307,14 +356,16 @@ const (
 // the older drives that predate SCT limit reporting, not as a second opinion on
 // the ones that have them.
 var temperatureRules = map[string]FamilyRule{
-	ChipNVMe:      {Floor: 4, Ceilings: Ceilings{Crit: 80}, Unit: "C"},
-	ChipDriveTemp: {Floor: 4, Ceilings: Ceilings{Crit: 60}, Unit: "C"},
+	ChipNVMe:      {Floor: 4, Ceilings: Ceilings{Crit: 80}, Unit: "C", MinSamples: BaselineMinSamples},
+	ChipDriveTemp: {Floor: 4, Ceilings: Ceilings{Crit: 60}, Unit: "C", MinSamples: BaselineMinSamples},
 }
 
 // defaultTemperatureRule covers every chip that is not a disk: packages, cores,
 // the board. 85/95 C is where a CPU throttles and where it shuts down, which is
 // the same pair the kernel itself acts on.
-var defaultTemperatureRule = FamilyRule{Floor: 6, Ceilings: Ceilings{Crit: 95}, Unit: "C"}
+var defaultTemperatureRule = FamilyRule{
+	Floor: 6, Ceilings: Ceilings{Crit: 95}, Unit: "C", MinSamples: BaselineMinSamples,
+}
 
 // RuleFor returns the family rule for one kind and, for temperatures, one chip.
 //
@@ -329,9 +380,9 @@ func RuleFor(kind, chip string) FamilyRule {
 		}
 		return defaultTemperatureRule
 	case KindProcesses:
-		return FamilyRule{Floor: 50, Unit: ""}
+		return FamilyRule{Floor: 50, MinSamples: BaselineWeeklySamples}
 	case KindLoad:
-		return FamilyRule{Floor: 0.5, Unit: ""}
+		return FamilyRule{Floor: 0.5, MinSamples: BaselineWeeklySamples}
 	}
 	return FamilyRule{}
 }

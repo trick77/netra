@@ -255,6 +255,69 @@ func TestIntegrationHostGaugeBaselinesAreComputed(t *testing.T) {
 
 // A subject with too little history is UNJUDGED, not healthy -- a new host must
 // not be declared fine by a rule that has not watched it yet.
+// A fresh install: about a day and a half of history, which is enough for a
+// drive and not enough for a machine's weekly rhythm.
+//
+// This is the first-Monday case end to end. Temperature is judged from the
+// short gate; processes and load stay UNJUDGED until they have seen a week, so
+// a netra installed over a weekend does not greet Monday morning by calling
+// every host abnormal.
+func TestIntegrationHostKindsWaitForAWeeklyCycle(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(t, ctx, s, "dev-firstmonday")
+	now := time.Now().UTC().Truncate(time.Minute)
+	seedHostCurrent(t, ctx, s, host, now)
+
+	// Enough to clear the storage floor and the temperature gate, nowhere near
+	// a week.
+	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	seedSensorSeries(t, ctx, s, host, sensorID, now, enoughSamples, 44)
+	seedHostSeries(t, ctx, s, host, now, enoughSamples, 300, 1.5)
+
+	if err := s.RecomputeBaselines(ctx, ""); err != nil {
+		t.Fatalf("RecomputeBaselines: %v", err)
+	}
+
+	// The rows exist -- the SQL floor is the lower of the two gates on purpose,
+	// so the history is already accumulating while the longer gate waits.
+	for _, kind := range []string{
+		conditions.KindTemperature, conditions.KindProcesses, conditions.KindLoad,
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM metric_baselines WHERE host_id = $1 AND kind = $2`,
+			host, kind).Scan(&n); err != nil {
+			t.Fatalf("count %s baselines: %v", kind, err)
+		}
+		if n != 1 {
+			t.Errorf("%s baseline rows = %d, want 1 stored and waiting", kind, n)
+		}
+	}
+
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
+	if err != nil {
+		t.Fatalf("ScanConditions: %v", err)
+	}
+
+	temp := conditions.Key{
+		HostID: host, Kind: conditions.KindTemperature, Subject: "drivetemp/temp1/sda",
+	}
+	if !scan.Seen[temp] {
+		t.Errorf("temperature was not judged on %d samples; unjudged=%v",
+			enoughSamples, scan.Unjudged[temp])
+	}
+
+	for _, kind := range []string{conditions.KindProcesses, conditions.KindLoad} {
+		key := conditions.Key{HostID: host, Kind: kind}
+		if !scan.Unjudged[key] {
+			t.Errorf("%s was judged on a weekend's worth of history", kind)
+		}
+		if scan.Seen[key] {
+			t.Errorf("%s was recorded as seen -- it would read as healthy", kind)
+		}
+	}
+}
+
 func TestIntegrationAnUncalibratedSubjectIsUnjudged(t *testing.T) {
 	ctx, s := condCtx(t)
 	host := newHost(t, ctx, s, "dev-new")
