@@ -4600,6 +4600,12 @@ tbody:first-of-type .grouprow th {
 .ctr-list .grouprow th:has(.gtoggle) .ghead {
   padding-left: calc(var(--space-4) + 3px);
 }
+/* The column header sits over the names, not over the chevron: every name
+   in the column, heading and row alike, now starts at the same x, and the
+   label naming the column starts there with them. */
+.ctr-list thead th:first-child {
+  padding-left: calc(var(--space-4) + 3px + 28px);
+}
 
 /* Below the fleet breakpoint the heading's own name may wrap: it is the one
    row on the page carrying a project, a host and a badge, and at 360px those
