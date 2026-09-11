@@ -186,30 +186,34 @@ export function FleetContainers({
           {note}
         </p>
       ))}
-      <Table
-        columns={containerColumns({
-          showHost,
-          range,
-          // The fleet's own windows: it stops at 24h, where a host page
-          // goes to 7d.
-          ranges: RAIL_RANGES,
-          now,
-          ...scales,
-        })}
-        rows={rows}
-        // Two hosts can run the same container_key, so identity is the pair.
-        rowKey={(row) => `${row.host_id}:${row.container_key}`}
-        // Which of eighty-four rows to look at, readable from the edge of
-        // the table. Memory against the container's own limit, through the
-        // same function the meter in the row uses, so the two marks cannot
-        // disagree.
-        rowSeverity={containerSeverity}
-        // `rows` arrives already filtered, so a host still standing is a host
-        // with a hit on it -- and a hit inside a closed group is a hit the
-        // reader cannot see. This is the only signal here that a filter is on;
-        // it is why `filtered` was already a prop.
-        groupBy={grouping}
-      />
+      {/* .ctr-list is the type scale the two container lists share -- see
+          index.css. The host tab (Inventory.tsx) wraps its list the same way. */}
+      <div className="ctr-list">
+        <Table
+          columns={containerColumns({
+            showHost,
+            range,
+            // The fleet's own windows: it stops at 24h, where a host page
+            // goes to 7d.
+            ranges: RAIL_RANGES,
+            now,
+            ...scales,
+          })}
+          rows={rows}
+          // Two hosts can run the same container_key, so identity is the pair.
+          rowKey={(row) => `${row.host_id}:${row.container_key}`}
+          // Which of eighty-four rows to look at, readable from the edge of
+          // the table. Memory against the container's own limit, through the
+          // same function the meter in the row uses, so the two marks cannot
+          // disagree.
+          rowSeverity={containerSeverity}
+          // `rows` arrives already filtered, so a host still standing is a host
+          // with a hit on it -- and a hit inside a closed group is a hit the
+          // reader cannot see. This is the only signal here that a filter is on;
+          // it is why `filtered` was already a prop.
+          groupBy={grouping}
+        />
+      </div>
     </>
   );
 }

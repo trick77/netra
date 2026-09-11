@@ -533,42 +533,12 @@ export function containerGroupCells(
   };
 }
 
-// The container_key is the stable identity (it survives a rename); the name
-// is what an operator reads. A container with no name still has a key, so
-// the compose identity behind that key is always shown rather than being a
-// fallback that silently changes what the primary line means from row to row.
-//
-// "project / service" rather than the raw "project/service": those two halves
-// are what the host tab used to spend two whole columns on, and spacing them
-// is what lets a reader separate them at a glance without those columns.
-/**
- * Is the compose identity already legible from the container's own name?
- *
- * Compared on letters and digits only, so the separator compose happened to
- * use ("immich-server", "immich_server", "immichserver") does not decide
- * whether a line of type appears. Equality, never a substring test: "redis"
- * inside "redis-sentinel" is a different service, and treating one as the
- * other would hide the fact that they differ.
- */
-function nameSaysIt(
-  name: string | null,
-  project: string,
-  service: string,
-): boolean {
-  if (name === null) return false;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const n = norm(name);
-  return n === norm(service) || n === norm(project + service);
-}
-
 function NameCell({
   row,
-  groupedByProject,
   state,
   now,
 }: {
   row: ContainerRow;
-  groupedByProject: boolean;
   /** The row's derived state, passed in rather than re-derived: the restart
    * mark takes its severity from it, and two calls to containerState against
    * two different clocks could disagree inside one row. */
@@ -579,27 +549,12 @@ function NameCell({
    * age against another. */
   now: Date;
 }) {
-  const { project, service } = composeIdentity(row.container_key);
-
-  // In a list already grouped BY project, the identity line drops the project:
-  // it is the heading these rows sit under, and repeating it on every one of
-  // them spends the widest column in the table saying what the reader was just
-  // told. And it drops the line entirely when the name already carries the
-  // service -- "immich-server" over "server" is one fact printed twice. What
-  // survives is the case the line exists for: a compose-generated name
-  // ("monitoring_grafana_1"), or a container renamed away from its service.
-  //
-  // Only when the list groups by project. The fleet groups by HOST, where the
-  // project is not in any heading and this line is the only place it appears
-  // at all.
-  const identity = groupedByProject
-    ? nameSaysIt(row.name ?? null, project === ABSENT ? "" : project, service)
-      ? null
-      : service
-    : project === ABSENT
-      ? service
-      : `${project} / ${service}`;
-
+  // No identity line under the name. There was one -- "project / service"
+  // in the fleet, the bare service on the host tab -- and in both lists the
+  // project is already the heading the row sits under, so the line spent the
+  // widest column in the table repeating it in a smaller face. The service
+  // alone was little better: "redis" under "authelia-redis" is the name
+  // again. The full key is on the detail page the name links to.
   return (
     <div className="host-cell">
       <div className="host-cell-top">
@@ -611,7 +566,12 @@ function NameCell({
           className="host-cell-name"
           href={`/containers/${row.host_id}/${encodeURIComponent(row.container_key)}`}
         >
-          {row.name ?? ABSENT}
+          {/* The key, not ABSENT, when there is no name: the identity line
+              that used to print it is gone, and a row reading "--" with
+              nothing under it is a container with no way to tell it from the
+              next unnamed one. Absence of a name is not absence of a
+              container. */}
+          {row.name ?? row.container_key}
         </a>
         {/* netra's own agent runs as a container on most hosts; unlabelled it
             reads as a workload someone deployed. Neutral, never severity="ok":
@@ -639,9 +599,6 @@ function NameCell({
             (state.ts) and the Status column says it, once. containerIsGone
             still gates the purge column -- same predicate, one voice. */}
       </div>
-      {identity === null ? null : (
-        <div className="host-cell-site mono">{identity}</div>
-      )}
     </div>
   );
 }
@@ -955,13 +912,6 @@ export interface ContainerColumnsOptions {
    * page is about.
    */
   showHost?: boolean;
-  /**
-   * The list groups by compose project, so the name cell stops repeating it.
-   *
-   * The host page's tab sets this; the fleet's does not, because it groups by
-   * host and the project appears nowhere else on its rows. See NameCell.
-   */
-  groupedByProject?: boolean;
   /** Only for the charts' accessible names -- this file never resolves a
    * range into a query. */
   range?: Range;
@@ -1011,7 +961,6 @@ export interface ContainerColumnsOptions {
 
 export function containerColumns({
   showHost = false,
-  groupedByProject = false,
   cpuMax,
   memMax,
   range = "24h",
@@ -1026,12 +975,7 @@ export function containerColumns({
       key: "container",
       header: "Container",
       cell: (row) => (
-        <NameCell
-          row={row}
-          groupedByProject={groupedByProject}
-          state={containerState(row, now, range)}
-          now={now}
-        />
+        <NameCell row={row} state={containerState(row, now, range)} now={now} />
       ),
       // The displayed name, falling back to the key the cell falls back to,
       // so the order matches what a reader sees rather than an id behind it.

@@ -165,10 +165,14 @@ describe("FleetContainers", () => {
     render(<FleetContainers rows={[makeRow({ name: null, image: null })]} />);
 
     const row = screen.getAllByRole("row")[2]!;
-    expect(within(row).getAllByText(ABSENT).length).toBe(2);
-    // The key still identifies it -- absence of a name is not absence of a
-    // container.
-    expect(within(row).getByText("9f2c1ab3")).toBeInTheDocument();
+    // The image is absent. The name is not: the key stands in for it, as the
+    // link -- absence of a name is not absence of a container, and with no
+    // identity line under the name any more, the link is the only place the
+    // key can be read.
+    expect(within(row).getAllByText(ABSENT).length).toBe(1);
+    expect(
+      within(row).getByRole("link", { name: "9f2c1ab3" }),
+    ).toBeInTheDocument();
   });
 
   it("links each container to its detail page", () => {

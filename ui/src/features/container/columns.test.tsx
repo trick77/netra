@@ -104,20 +104,17 @@ describe("trendScales", () => {
 });
 
 describe("containerColumns", () => {
-  it("shows the compose identity under the linked name", () => {
-    renderRows([makeRow()]);
+  // The name links, and nothing sits under it. The compose identity used to:
+  // "shop / web" in a smaller face, repeating the group heading the row is
+  // already under. The key is in the link, and on the page it opens.
+  it("links the name and prints no identity line under it", () => {
+    const { container } = renderRows([makeRow()]);
     expect(screen.getByRole("link", { name: "shop-web-1" })).toHaveAttribute(
       "href",
       "/containers/7/shop%2Fweb",
     );
-    // The two halves the host tab used to spend two whole columns on.
-    expect(screen.getByText("shop / web")).toBeInTheDocument();
-  });
-
-  it("shows a bare key as itself, with no invented project", () => {
-    renderRows([makeRow({ container_key: "a1b2c3d4e5f6" })]);
-    expect(screen.getByText("a1b2c3d4e5f6")).toBeInTheDocument();
-    expect(screen.queryByText(`${ABSENT} / a1b2c3d4e5f6`)).toBeNull();
+    expect(screen.queryByText("shop / web")).toBeNull();
+    expect(container.querySelector(".host-cell-site")).toBeNull();
   });
 
   // "agent" is an identity, not a health state. A green badge would assert a
