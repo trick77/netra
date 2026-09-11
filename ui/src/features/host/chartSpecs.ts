@@ -262,6 +262,17 @@ interface PanelSpec {
    * (each core divided by the core count, so the stack tops out at
    * cpu_total) and the CPU time breakdown (the states sum to busy). */
   stacked?: boolean;
+  /**
+   * Fill the area under each line even though the panel pins its floor.
+   *
+   * ChartPanel fills a line chart only where the floor is the data's own,
+   * because a fill from a declared floor is usually a block whose bottom
+   * edge is an axis decision. A percent-full panel is the exception: its
+   * pinned 0 IS the reading's floor -- an empty disk -- so the shade from 0
+   * to used% is "how full", which is what the panel exists to show. Set
+   * here for that case; every other pinned panel keeps the derived rule.
+   */
+  filled?: boolean;
   /** Hide the enlarged view's y axis, for a stack whose height is a shape
    * rather than a quantity. */
   hideAxis?: boolean;
@@ -1086,10 +1097,17 @@ export const STORAGE: PanelSpec[] = [
   // them would draw a host at 400% full. Fixed 0-100 for the same reason the
   // cell has one -- self-scaled, a disk at 40% and one at 95% draw the same
   // silhouette.
+  //
+  // Shaded despite the pin, which ChartPanel would otherwise refuse: the
+  // sibling Filesystem space and inodes panels auto-scale and so are filled,
+  // and this one drawn bare beside them read as a different kind of chart
+  // rather than as the same reading in percent. Here the pinned 0 is an
+  // empty disk, so the shade is honest -- see PanelSpec.filled.
   {
     title: "Filesystem usage",
     slug: "host-filesystem",
     source: "filesystem",
+    filled: true,
     bases: [
       { base: "used", label: "used" },
       { base: "free", label: "free" },

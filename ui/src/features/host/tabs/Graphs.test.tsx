@@ -549,3 +549,38 @@ describe("panel explanations", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+// Filesystem usage is pinned 0-100 and shaded anyway (PanelSpec.filled): the
+// pinned 0 is an empty disk, and its two auto-scaled siblings on the same tab
+// are filled, so a bare line beside them read as a different kind of chart.
+describe("the Filesystem usage panel", () => {
+  const filesystem = response({
+    family: "filesystem",
+    columns: ["used", "free"],
+    series: [
+      {
+        key: { mount: "/" },
+        points: [
+          [1_786_320_000_000, 41, 59],
+          [1_786_320_060_000, 44, 56],
+        ],
+      },
+      {
+        key: { mount: "/var" },
+        points: [
+          [1_786_320_000_000, 88, 12],
+          [1_786_320_060_000, 91, 9],
+        ],
+      },
+    ],
+  });
+
+  it("fills every mount's line despite the pinned floor", () => {
+    render(<StorageGraphs filesystem={filesystem} diskIo={null} />);
+
+    const panel = screen.getByRole("region", {
+      name: "Filesystem usage chart",
+    });
+    expect(panel.querySelectorAll("svg [data-area]").length).toBe(2);
+  });
+});

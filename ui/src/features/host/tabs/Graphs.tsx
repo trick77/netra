@@ -221,6 +221,7 @@ export function SpecPanel({
       fmt={spec.fmt}
       stacked={spec.stacked}
       mirrored={spec.mirrored}
+      filled={spec.filled}
       // A 32-core legend is longer than the chart it explains. Suppressed
       // with legend, not highlight: the latter also dims every other series
       // to 35% and washed the whole stack out.

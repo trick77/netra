@@ -415,10 +415,30 @@ describe("ChartPanel", () => {
     expect(four).toBeGreaterThan(alone / 4);
   });
 
-  // The floor half of the rule, which did NOT change: a filesystem pinned to
-  // 0-100 draws a block whose bottom edge is an axis decision, not a band the
-  // series moved through.
+  // The floor half of the derived rule: a panel pinned to 0-100 draws a
+  // block whose bottom edge is an axis decision, not a band the series moved
+  // through, so it is left bare unless the spec says otherwise.
   it("leaves a pinned multi-series panel unfilled", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Disk utilisation"
+        series={[
+          { name: "sda", color: "var(--s1)", values: [41, 44] },
+          { name: "sdb", color: "var(--s2)", values: [88, 91] },
+        ]}
+        min={0}
+        max={100}
+        height={112}
+      />,
+    );
+
+    expect(container.querySelector("svg [data-area]")).toBeNull();
+  });
+
+  // The spec's say: filesystem usage pins 0-100 and is shaded anyway, its 0
+  // being an empty disk. The override changes the mark and nothing else --
+  // the axis stays pinned, so the fill starts at 0, not at the lowest mount.
+  it("fills a pinned panel whose spec asks for it, from the pinned floor", () => {
     const { container } = render(
       <ChartPanel
         title="Filesystem usage"
@@ -428,11 +448,26 @@ describe("ChartPanel", () => {
         ]}
         min={0}
         max={100}
+        filled
+        height={112}
+      />,
+    );
+
+    expect(container.querySelectorAll("svg [data-area]").length).toBe(2);
+  });
+
+  it("lets a spec turn a free-scaled panel's fill off", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Load"
+        series={[{ name: "1m", color: "var(--s1)", values: [1, 2] }]}
+        filled={false}
         height={112}
       />,
     );
 
     expect(container.querySelector("svg [data-area]")).toBeNull();
+    expect(container.querySelector("svg [data-line]")).not.toBeNull();
   });
 
   // `footer` exists so a reading that qualifies a chart can be drawn with it
