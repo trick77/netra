@@ -331,10 +331,6 @@ export function HostAdminPage() {
             together: this page is where a host's AGENT gets its token. */}
         <h1>Agents</h1>
       </div>
-      <p className="pagesub">
-        One agent token per host, minted when the host is created.
-      </p>
-
       {loadError ? (
         <p className="error" role="alert">
           {loadError}

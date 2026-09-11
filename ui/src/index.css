@@ -2325,8 +2325,7 @@ tbody tr:hover .host-cell-name {
    they all state it the same way.
 
    Where .section was a baseline-aligned line of title + hint, this is a
-   flex ROW with a spacer: the hint moved under it (.pagesub) so the filter
-   has the right end to itself. */
+   flex ROW with a spacer, so the filter has the right end to itself. */
 .pagehead {
   display: flex;
   align-items: center;
@@ -2350,13 +2349,6 @@ tbody tr:hover .host-cell-name {
   letter-spacing: -0.01em;
   line-height: 1.2;
 }
-/* The line the .hint used to be, under the name rather than beside it. */
-.pagesub {
-  margin: 0 0 var(--space-3);
-  font-size: var(--text-label);
-  color: var(--muted);
-}
-
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -3683,7 +3675,7 @@ a.tile:focus-visible {
      title on one route starting 16px lower than the page title on every other
      one -- the larger half of a 21px discrepancy the eye reads as the header
      sagging when you click into a host. The space below it stays: that is the
-     gap to the tabs, which .pagehead spends on .pagesub instead. */
+     gap to the tabs. */
   padding: 0 0 var(--space-4);
   /* Wraps rather than overflowing: the header carries a name, four facts, a
      badge, a range control and an action, which do not fit on one line at

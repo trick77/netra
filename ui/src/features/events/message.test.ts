@@ -162,6 +162,97 @@ describe("messageOf, mdraid events", () => {
   });
 });
 
+describe("messageOf, container events", () => {
+  // The detail is what restartEvents in internal/hub/store/containerrestarts.go
+  // writes: the counter before and after, the delta, and the clock that dated
+  // the row. The clock keys never reach the sentence.
+  function container(type: string, detail: Record<string, unknown>) {
+    return event({ type, subject: "relume-tv/relume-tv", detail });
+  }
+
+  it("says a single restart without a count of times", () => {
+    expect(
+      messageOf(
+        container("container_restart", {
+          from: 3,
+          to: 4,
+          delta: 1,
+          ts_source: "observed",
+        }),
+      ),
+    ).toBe("relume-tv/relume-tv restarted (restart count 3 → 4)");
+  });
+
+  it("counts the restarts one sample folded together", () => {
+    expect(
+      messageOf(
+        container("container_restart", {
+          from: 3,
+          to: 5,
+          delta: 2,
+          ts_source: "docker_started_at",
+          observed_ts: "2026-09-10T07:46:31.912Z",
+        }),
+      ),
+    ).toBe("relume-tv/relume-tv restarted 2× (restart count 3 → 5)");
+  });
+
+  it("calls a manual docker restart a restart, not a recreate", () => {
+    // Docker does not bump RestartCount for `docker restart`, so the hub sees
+    // only started_at move and files it as a recreate with an unchanged count.
+    expect(
+      messageOf(
+        container("container_recreate", {
+          from: 0,
+          to: 0,
+          delta: 0,
+          ts_source: "docker_started_at",
+          observed_ts: "2026-09-10T07:46:31.912Z",
+        }),
+      ),
+    ).toBe("relume-tv/relume-tv restarted");
+  });
+
+  it("names both images of a redeploy that changed one", () => {
+    expect(
+      messageOf(
+        container("container_recreate", {
+          from: 2,
+          to: 0,
+          delta: 0,
+          image_from: "nginx:1.26",
+          image_to: "nginx:1.27",
+          ts_source: "observed",
+        }),
+      ),
+    ).toBe("relume-tv/relume-tv redeployed, image nginx:1.26 → nginx:1.27");
+  });
+
+  it("calls a counter reset a restart: docker start resets it too", () => {
+    expect(
+      messageOf(
+        container("container_recreate", {
+          from: 5,
+          to: 0,
+          delta: 0,
+          ts_source: "observed",
+        }),
+      ),
+    ).toBe("relume-tv/relume-tv restarted (restart count 5 → 0)");
+  });
+
+  it("keeps the clock keys out even of the fallback", () => {
+    expect(
+      messageOf(
+        container("container_restart", {
+          ts_source: "docker_started_at",
+          observed_ts: "2026-09-10T07:46:31.912Z",
+        }),
+      ),
+    ).toBe("relume-tv/relume-tv");
+  });
+});
+
 describe("messageOf, anything else", () => {
   // Worse than terse is empty: a type added to the hub before this module
   // knows about it must still put its facts on the row.
@@ -215,6 +306,8 @@ describe("KNOWN_EVENT_TYPES", () => {
       // The agent's own delivery, which is a producer like any other now that
       // a hub outage is an event rather than a warning derived from a counter.
       "hub",
+      "container_restart",
+      "container_recreate",
       // The hub's own judgements, arriving as transitions.
       ...CONDITION_EVENT_TYPES,
       ...KERNEL_EVENT_TYPES,
