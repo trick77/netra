@@ -104,16 +104,29 @@ describe("trendScales", () => {
 });
 
 describe("containerColumns", () => {
-  // The name links, and nothing sits under it. The compose identity used to:
-  // "shop / web" in a smaller face, repeating the group heading the row is
-  // already under. The key is in the link, and on the page it opens.
-  it("links the name and prints no identity line under it", () => {
+  // The name links, and the image sits under it -- on the fleet's location
+  // line, .host-cell-site, so both lists set their second line alike. The
+  // compose identity used to be there ("shop / web"), repeating the group
+  // heading the row is already under; the key is in the link, and on the
+  // page it opens. No Image column any more: the widest string in the row
+  // owned a column read only when a version is already in question.
+  it("links the name and prints the image under it", () => {
     const { container } = renderRows([makeRow()]);
     expect(screen.getByRole("link", { name: "shop-web-1" })).toHaveAttribute(
       "href",
       "/containers/7/shop%2Fweb",
     );
     expect(screen.queryByText("shop / web")).toBeNull();
+    expect(container.querySelector(".host-cell-site")?.textContent).toBe(
+      "nginx:1.27",
+    );
+    expect(screen.queryByRole("columnheader", { name: /image/i })).toBeNull();
+  });
+
+  // No line rather than a dash: a row with nothing under its name says
+  // nothing, where a "--" under every unnamed row says "missing" twenty times.
+  it("prints no image line when the agent reported none", () => {
+    const { container } = renderRows([makeRow({ image: null })]);
     expect(container.querySelector(".host-cell-site")).toBeNull();
   });
 
@@ -435,7 +448,7 @@ describe("containerColumns", () => {
     renderRows([makeRow()]);
     expect(
       screen.getAllByRole("columnheader").map((h) => h.textContent),
-    ).toEqual(["Container", "Status", "Image", "Last seen"]);
+    ).toEqual(["Container", "Status", "Last seen"]);
   });
 
   // The one filled colour a container row can honestly carry, and the one

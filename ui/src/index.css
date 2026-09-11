@@ -1009,7 +1009,10 @@ a:where(:hover) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  /* 0, not the 2px this had: the second line is a subtitle to the name,
+     and the name's own leading already separates them -- see the note on
+     .host-cell-site's line-height below. */
+  gap: 0;
   /* min-width:0 so a long name truncates inside the cell instead of setting
      the column's minimum width and pushing the charts out of the row. */
   min-width: 0;
@@ -1138,22 +1141,16 @@ tbody tr:hover .host-cell-name {
      with the figures across the row for the same attention. */
   color: var(--muted-2);
 }
-/* The fleet's location, and only the fleet's: the country sits on a second
-   line here, so the pair is set tight and pulled up under the hostname. Both
-   halves of that are scoped to .fleet-host because .host-cell and
-   .host-cell-site are shared with the container list, whose identity line is
-   one ellipsised line and wants the 2px it has.
-
-   gap:0 rather than 1px -- the location is a subtitle to the name, and the
-   name's own leading already separates them; the 2px on top of it read as a
-   space between two peers. line-height on the location pair for the same
-   reason: at the body's leading the country floated a line away from the
-   place it belongs to, and the third line cost visible height on every row
-   of the table. */
-.fleet-host .host-cell {
-  gap: 0;
-}
-.fleet-host .host-cell-site {
+/* The second line sits tight under the name, in both lists. This was scoped
+   to .fleet-host -- the country on a third line wanted pulling up -- while
+   the container list's identity line "wanted the 2px it has". That line is
+   gone and the image ref is under the name now, and a subtitle under a name
+   is one thing at one distance wherever it appears: the name's own leading
+   already separates them, and the 2px on top of it read as a space between
+   two peers. line-height for the same reason: at the body's leading the
+   second line floated away from the name it belongs to. The gap itself is
+   on .host-cell above. */
+.host-cell-site {
   line-height: 1.25;
 }
 /* The mark stays on the name's line, always. The shared rule above wraps,
@@ -1519,38 +1516,18 @@ tbody tr:hover .host-cell-name {
   font-family: var(--font-mono);
 }
 
-/* The container list's Image cell. .mono sets a family and nothing else, so
-   this was the one cell in the row left at the body size while the identity
-   line, the memory reading and the group totals were all a step under it --
-   and a mono face at the same px reads larger than the sans beside it. The
-   result was the longest and least urgent string in the row drawn as the
-   loudest thing in it. (The step it was measured against is gone -- --text-ui
-   and --text-label are both 14px now -- but the mono-reads-larger half stands
-   on its own and is the half that decided this rule.)
-
-   --text-micro is one of its three sanctioned uses (spec 3.6: badges, axis
-   ticks, eyebrows) stretched to a fourth, and deliberately: this is an
-   identifier a reader looks up when something is already wrong with a
-   version, not a thing they read down the column. --muted for the same
-   reason. break-all because an image ref has no spaces and would otherwise
-   set the column's minimum width. */
-.imgcell {
-  font-size: var(--text-micro);
-  color: var(--muted);
-  word-break: break-all;
-}
-
 /* The packages list's Version cell. The identifier face, for the reason .mono
    states -- a version is diffed character by character, and 1.2.0-2 against
    1.2.0-3 is the whole reading of that column.
 
    Its own class rather than bare .mono because of the size. A mono face reads
-   larger than the sans beside it at the same px, which is the note above on
-   .imgcell; 13px lands it at the visual weight of the 14px sans in the columns
-   either side. It does NOT go to --text-micro the way .imgcell does: an image
-   ref is looked up once something is already wrong, whereas the version IS
-   what this list is read for, so it stays at the row's own register rather
-   than dropping to an annotation. Ink, not --muted, for the same reason. */
+   larger than the sans beside it at the same px; 13px lands it at the visual
+   weight of the 14px sans in the columns either side. It does NOT go to
+   --text-micro the way an annotation does: the version IS what this list is
+   read for, so it stays at the row's own register rather than dropping to a
+   subtitle. Ink, not --muted, for the same reason. (The container list's
+   image ref used to be the sibling case here -- mono, a step down -- and is a
+   sans subtitle under the name now.) */
 .pkgver {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -4533,16 +4510,6 @@ tbody:first-of-type .grouprow th {
 .grouprow .onhost a {
   color: var(--ink-2);
 }
-/* The group's memory in bytes, in the Image column. A percentage says how full
-   the machine is and says nothing about how big the stack is; on a page
-   listing several hosts those are different questions. --text-micro and
-   --muted-2 for the same reason .imgcell takes them: it annotates, and the
-   bars beside it carry the reading. */
-.grouprow .gbytes {
-  font-size: var(--text-micro);
-  color: var(--muted-2);
-  font-variant-numeric: tabular-nums;
-}
 /* The heading's cells take the body's padding, ground and rules, or the row
    breaks in half where the spanned name ends.
 
@@ -4567,20 +4534,17 @@ tbody:first-of-type .grouprow th {
    which the sensor card's .ghead was pulling down to 12 (see .sensor-tiles),
    and that is fixed where it happens.
 
-   What this block does set: the annotations. Image ref, "of 8 cores", the
-   group's bytes and the age go 12 -> 13. A container row is the densest
-   thing the app draws -- name, badge, image, two charts each with a meter
-   and a two-line reading -- and the 12px line under every figure was the one
-   a reader squinted at. 13 is the .pkgver precedent: an optical step, not a
-   token, scoped to the one list that needs it. Badges, column headers and
-   the % sign stay at 12 with the rest of the app.
-
-   Scoped to a wrapper rather than done by overriding --text-micro inside it,
-   which would lift the badges and column headers with it. */
-.ctr-list .imgcell,
+   What this block does set: the annotations. "of 8 cores" and the age go
+   12 -> 13. A container row is the densest thing the app draws -- name,
+   badge, two charts each with a meter and a two-line reading -- and the 12px
+   line under every figure was the one a reader squinted at. 13 is the
+   .pkgver precedent: an optical step, not a token, scoped to the one list
+   that needs it. Badges, column headers and the % sign stay at 12 with the
+   rest of the app. The image under the name is NOT in this set: it is a
+   .host-cell-site, the fleet's location line, and takes that line's size so
+   the two lists print their second line alike. */
 .ctr-list .metric-now-wrap .u,
 .ctr-list .metric-read .u,
-.ctr-list .grouprow .gbytes,
 .ctr-list .age {
   font-size: 13px;
 }

@@ -62,6 +62,7 @@ import {
   containerColumns,
   containerGroupCells,
   containerGroupWorst,
+  GroupBytes,
   containerSeverity,
   lastReported,
   trendScales,
@@ -237,6 +238,7 @@ const BY_PROJECT = {
           {" · "}
           {group.length} container{group.length === 1 ? "" : "s"}
         </span>
+        <GroupBytes rows={group} />
         {worst === null ? null : (
           <Badge severity={worst.state.severity}>
             {worst.count} {stateKindLabel(worst.state.kind)}
@@ -1481,11 +1483,10 @@ const PACKAGE_COLUMNS: Column<Pkg>[] = [
     //
     // Name is deliberately NOT mono, though it is equally an identifier: it is
     // scanned alphabetically as a word, and setting it in mono turns the whole
-    // table into a terminal dump. Same split the container list already makes,
-    // where the name is sans and only the image ref is .mono.
+    // table into a terminal dump.
     //
     // One step under the row, because a mono face reads larger than sans at
-    // the same px -- .imgcell drops a step for the same reason.
+    // the same px -- see .pkgver.
     cell: (row) => <span className="pkgver">{row.version}</span>,
     // Table's numeric-aware string compare, which gets "1.9" under "1.10"
     // right and makes no claim to understand an epoch or a "~rc1" suffix.
