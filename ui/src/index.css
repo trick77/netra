@@ -3272,7 +3272,13 @@ details.sysfold > .body {
   grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
   gap: var(--space-2);
 }
-.ghead {
+/* Scoped to the tile grid. A table's collapsible group heading is ALSO a
+   .ghead (Table.tsx), and unscoped this rule reached it: --text-micro and the
+   8px margin-top landed on the label inside every .grouprow th, under
+   whatever that th declared, so the container lists' group headings painted
+   at 12px while their own rule said --text-label. Two components, one class
+   name; the fix is to say which one this is. */
+.sensor-tiles .ghead {
   grid-column: 1 / -1;
   display: flex;
   align-items: baseline;
@@ -3282,20 +3288,20 @@ details.sysfold > .body {
   margin-top: var(--space-2);
   font-size: var(--text-micro);
 }
-.ghead:first-child {
+.sensor-tiles .ghead:first-child {
   margin-top: 0;
 }
-.ghead .gn {
+.sensor-tiles .ghead .gn {
   color: var(--ink-2);
 }
 /* The rule takes the slack between the chip name and its summary, so the
    headings line up down the card however long a chip is called. */
-.ghead .rule {
+.sensor-tiles .ghead .rule {
   flex: 1;
   height: 1px;
   background: var(--border);
 }
-.ghead .gsum {
+.sensor-tiles .ghead .gsum {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -4553,42 +4559,27 @@ tbody:first-of-type .grouprow th {
   vertical-align: middle;
 }
 
-/* The two container lists (FleetContainers, the host tab's Containers), one
-   size up from the rest of the app: 15px where the row's own type is 14, 13px
-   where its annotations are 12.
+/* The two container lists (FleetContainers, the host tab's Containers). The
+   rows are at the app's own size -- 14px, what every other list is set in --
+   and this block does not touch that. It briefly said 15 (#248), and inside
+   the page rather than in a mock the list read as a different app from the
+   fleet one click away; what had actually looked small was the group heading,
+   which the sensor card's .ghead was pulling down to 12 (see .sensor-tiles),
+   and that is fixed where it happens.
 
-   Scoped to a wrapper rather than done by moving --text-ui, which #242 has
-   just settled at 14 for every other list, and not by overriding the tokens
-   inside the wrapper either: a scoped --text-micro would also lift the badges
-   and the column headers, and those stay the app's. The selectors name the
-   parts that move and nothing else.
+   What this block does set: the annotations. Image ref, "of 8 cores", the
+   group's bytes and the age go 12 -> 13. A container row is the densest
+   thing the app draws -- name, badge, image, two charts each with a meter
+   and a two-line reading -- and the 12px line under every figure was the one
+   a reader squinted at. 13 is the .pkgver precedent: an optical step, not a
+   token, scoped to the one list that needs it. Badges, column headers and
+   the % sign stay at 12 with the rest of the app.
 
-   Why this list and not the fleet's: a container row is the densest thing
-   the app draws -- a name, a badge, an image ref, two charts each with a
-   meter and a two-line reading -- and at 14/12 the reader was squinting at
-   the one line per cell that carries the fact. 15/13 keeps the step between
-   the reading and its annotation (the "of 8 cores" under a figure) while
-   putting both above where they were. Row height grows ~2px; the sparkline
-   sets most of it anyway.
-
-   `tbody td` is the row's base, and the three named selectors are the cells
-   that set --text-ui for themselves and would otherwise stay at 14 inside
-   it. Last seen is not among them: it is an .age, the annotation step
-   everywhere in the app, and it takes this list's 13 below rather than the
-   readings' 15 -- the fleet list prints the same column at its annotation
-   size, and the two lists sit one click apart. */
-.ctr-list .host-cell-name,
-.ctr-list .metric-now .v,
-.ctr-list .metric-read .v,
-.ctr-list .grouprow th,
-.ctr-list tbody td {
-  font-size: 15px;
-}
+   Scoped to a wrapper rather than done by overriding --text-micro inside it,
+   which would lift the badges and column headers with it. */
 .ctr-list .imgcell,
 .ctr-list .metric-now-wrap .u,
 .ctr-list .metric-read .u,
-.ctr-list .metric-now .v small,
-.ctr-list .metric-read .v small,
 .ctr-list .grouprow .gbytes,
 .ctr-list .age {
   font-size: 13px;
