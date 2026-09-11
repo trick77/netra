@@ -17,7 +17,10 @@ import (
 // dockerSocket is where the Docker API socket is mounted. The agent asks it
 // for names and labels ONLY -- every metric comes from cgroup v2, so a host
 // that declines to mount the socket still gets numbers.
-const dockerSocket = "/var/run/docker.sock"
+//
+// A var rather than a const, and only so a test can point the presence check
+// at a file it created. Nothing in the agent assigns it.
+var dockerSocket = "/var/run/docker.sock"
 
 // ErrNoDockerSocket is the socket not being THERE, as opposed to being there
 // and not answering. From a failed list call the two look identical and they
@@ -33,12 +36,27 @@ var ErrNoDockerSocket = errors.New("docker socket not mounted")
 // the default response shape under the agent.
 const dockerAPIVersion = "v1.41"
 
+// dockerBaseURL is what every request is built against. The host part is
+// ignored for a unix socket but must be present and valid for net/http to
+// build the request at all.
+//
+// A var for the same reason dockerSocket is one: a test points it, and
+// dockerClient, at an httptest server and drives the real request path --
+// which is otherwise the one part of this file no test can reach. Nothing in
+// the agent assigns it.
+var dockerBaseURL = "http://docker/" + dockerAPIVersion
+
 // dockerContainer is the subset of /containers/json netra reads.
 type dockerContainer struct {
 	ID     string            `json:"Id"`
 	Names  []string          `json:"Names"`
 	Image  string            `json:"Image"`
 	Labels map[string]string `json:"Labels"`
+
+	// ImageID is the content id ("sha256:...") the Image ref above resolves
+	// to. It is the join key into /images/json, which is where the daemon
+	// says whether an image was ever pulled -- see localImageRef.
+	ImageID string `json:"ImageID"`
 
 	// State is the daemon's own word: "running", "paused", "restarting". It
 	// arrives at the top level of the SAME response as the fields above, and
@@ -171,23 +189,37 @@ type dockerInspect struct {
 // IdleConnTimeout zero, and this function runs on far more scrapes than
 // SystemDockerContainers has containers.
 func SystemDockerInspect(ctx context.Context, id string) (ContainerStatus, error) {
-	endpoint := "http://docker/" + dockerAPIVersion + "/containers/" + url.PathEscape(id) + "/json"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return ContainerStatus{}, fmt.Errorf("build docker inspect request: %w", err)
-	}
-
-	resp, err := dockerClient.Do(req)
+	resp, err := dockerGet(ctx, "/containers/"+url.PathEscape(id)+"/json")
 	if err != nil {
 		return ContainerStatus{}, fmt.Errorf("inspect container: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		return ContainerStatus{}, fmt.Errorf("docker returned %s", resp.Status)
+	return decodeInspect(resp.Body)
+}
+
+// dockerGet is the one place a request to the daemon is built, sent and
+// status-checked. Three callers -- the list, the image list and inspect --
+// used to carry a copy each, and every copy was the part no unit test reaches
+// (it needs a socket). One copy keeps that untestable surface at one function,
+// and keeps the three from drifting in how they word a non-200.
+//
+// The caller closes the body.
+func dockerGet(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dockerBaseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build docker request: %w", err)
 	}
 
-	return decodeInspect(resp.Body)
+	resp, err := dockerClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query docker: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("docker returned %s", resp.Status)
+	}
+	return resp, nil
 }
 
 // decodeInspect turns one /containers/{id}/json body into a ContainerStatus.
@@ -245,29 +277,36 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 		return nil, fmt.Errorf("%w: %w", ErrNoDockerSocket, err)
 	}
 
-	// The host part is ignored for a unix socket but must be present and
-	// valid for net/http to build the request.
-	endpoint := "http://docker/" + dockerAPIVersion + "/containers/json"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	resp, err := dockerGet(ctx, "/containers/json")
 	if err != nil {
-		return nil, fmt.Errorf("build docker request: %w", err)
-	}
-
-	resp, err := dockerClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("query docker: %w", err)
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("docker returned %s", resp.Status)
-	}
 
 	var containers []dockerContainer
 	if err := json.NewDecoder(resp.Body).Decode(&containers); err != nil {
 		return nil, fmt.Errorf("decode docker response: %w", err)
 	}
 
+	// A second call: which of the images those containers run were ever
+	// pulled. Its failure is NOT the list's failure -- names, labels, state
+	// and health are all in hand already -- so a daemon that answers the list
+	// but not the image list costs only the local/ rewrite: pulled stays nil
+	// and pulledImage answers "pulled" for everything, which changes nothing.
+	var pulled map[string]bool
+	if imgResp, err := dockerGet(ctx, "/images/json"); err == nil {
+		pulled, _ = decodeImages(imgResp.Body)
+		_ = imgResp.Body.Close()
+	}
+
+	return containerMetas(containers, pulled), nil
+}
+
+// containerMetas turns the two decoded responses into the rows the collector
+// reports. Split from the requests above for the reason decodeInspect is: the
+// decisions -- which name is taken, which image string is sent, what makes a
+// container the agent -- are all here, and none of them needs a daemon.
+func containerMetas(containers []dockerContainer, pulled map[string]bool) []ContainerMeta {
 	out := make([]ContainerMeta, 0, len(containers))
 	for _, c := range containers {
 		name := ""
@@ -278,7 +317,7 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 		out = append(out, ContainerMeta{
 			ID:      c.ID,
 			Name:    name,
-			Image:   c.Image,
+			Image:   localImageRef(c.Image, pulledImage(pulled, c.ImageID)),
 			Project: c.Labels["com.docker.compose.project"],
 			Service: c.Labels["com.docker.compose.service"],
 			State:   c.State,
@@ -299,5 +338,93 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 		})
 	}
 
+	return out
+}
+
+// dockerImage is the subset of /images/json netra reads.
+type dockerImage struct {
+	ID string `json:"Id"`
+	// RepoDigests is the registry's name for the content: "nginx@sha256:..."
+	// on anything ever pulled or pushed. An image built on this host, or
+	// loaded from a tarball, has none -- and that absence is the only
+	// evidence the daemon offers that an image is local.
+	RepoDigests []string `json:"RepoDigests"`
+}
+
+// decodeImages turns one /images/json body into "was this image id ever
+// pulled". Split from the request for the reason decodeInspect is.
+func decodeImages(r io.Reader) (map[string]bool, error) {
+	var images []dockerImage
+	if err := json.NewDecoder(r).Decode(&images); err != nil {
+		return nil, fmt.Errorf("decode docker images response: %w", err)
+	}
+	out := make(map[string]bool, len(images))
+	for _, img := range images {
+		out[img.ID] = len(img.RepoDigests) > 0
+	}
 	return out, nil
+}
+
+// pulledImage answers for one container's image id, and answers TRUE when
+// nobody could look: a nil map (the image list failed), an id the list did
+// not carry, or a daemon too old to send ImageID. "Pulled" is the answer that
+// changes nothing, and an unknown must never invent a local/ prefix.
+func pulledImage(pulled map[string]bool, imageID string) bool {
+	if pulled == nil || imageID == "" {
+		return true
+	}
+	known, ok := pulled[imageID]
+	return !ok || known
+}
+
+// localImageRef is what the UI prints for an image that did not come from a
+// registry anyone else can reach.
+//
+// Docker's own reference grammar puts no registry on a Hub image -- "nginx:1.27"
+// and "timescale/timescaledb:latest-pg17" are docker.io refs -- so the ABSENCE
+// of a host in the string says nothing about where the image came from. What
+// does is the daemon's RepoDigests (see dockerImage): an image with none was
+// built or loaded here. That image, and one pulled from a registry on this
+// host's loopback, both come out as "local/<name>:<tag>", any registry host
+// stripped, so a fleet list reads "local/shop-worker:latest" beside
+// "ghcr.io/x/y:1" and the reader knows which one no other host could pull.
+//
+// A bare content id is left alone: a container whose image was untagged out
+// from under it names "sha256:..." and there is no name to prefix.
+func localImageRef(ref string, pulled bool) string {
+	if strings.HasPrefix(ref, "sha256:") {
+		return ref
+	}
+	host, rest := registryHost(ref)
+	if pulled && !loopbackRegistry(host) {
+		return ref
+	}
+	return "local/" + rest
+}
+
+// registryHost splits a reference into its registry component and the rest,
+// by Docker's rule: the first path segment is a host only if it contains a
+// "." or a ":" or is exactly "localhost". "koenkk/zigbee2mqtt:latest" has no
+// host -- "koenkk" is a Hub namespace -- and comes back whole with host "".
+func registryHost(ref string) (host, rest string) {
+	i := strings.IndexByte(ref, '/')
+	if i < 0 {
+		return "", ref
+	}
+	first := ref[:i]
+	if first != "localhost" && !strings.ContainsAny(first, ".:") {
+		return "", ref
+	}
+	return first, ref[i+1:]
+}
+
+// loopbackRegistry reports whether a registry host names this machine:
+// localhost, 127.0.0.1 or [::1], with or without a port.
+func loopbackRegistry(host string) bool {
+	h := host
+	if i := strings.LastIndexByte(h, ':'); i >= 0 && !strings.HasSuffix(h, "]") {
+		h = h[:i]
+	}
+	h = strings.Trim(h, "[]")
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
 }

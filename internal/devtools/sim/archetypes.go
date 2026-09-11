@@ -204,6 +204,12 @@ func nvmeVPS() *Profile {
 			{Key: "web/redis", Name: "web-redis-1", Image: "redis:7-alpine", MemLimit: 512 * mib, CPUBase: 2.1, MemBase: 130 * mib,
 				DockerState: "running", Health: "healthy", RestartsStart: 6, RestartsEnd: 0,
 				Labels: map[string]string{"com.docker.compose.project": "web", "com.docker.compose.service": "redis"}},
+			// Built on the host from a compose `build:` block. The agent
+			// prefixes an image the daemon never pulled with local/
+			// (collector.localImageRef); the sim writes the wire string.
+			{Key: "web/app", Name: "web-app-1", Image: "local/web-app:latest", MemLimit: 1 * gib, CPUBase: 5.8, MemBase: 310 * mib,
+				DockerState: "running", Health: "healthy",
+				Labels: map[string]string{"com.docker.compose.project": "web", "com.docker.compose.service": "app"}},
 		},
 		Units: []string{
 			"ssh.service", "docker.service", "systemd-resolved.service",

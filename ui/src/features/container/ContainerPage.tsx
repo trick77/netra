@@ -1,6 +1,6 @@
 // Container detail (spec 5.3). Four small multiples from the same ChartPanel
 // the host Graphs tab uses -- a container is another entity with a time
-// series and earns no bespoke chart -- then Identity and Not collected.
+// series and earns no bespoke chart -- then Identity and Labels.
 //
 // The page takes its data and its range as props rather than fetching:
 // Wave 5 owns the router and the polling loop, and a page that fetches for
@@ -77,8 +77,8 @@ export function displayTitle(container: Container): string {
  * What a field reads as when Docker was never asked.
  *
  * Deliberately not ABSENT's bare dash. A dash beside "Health" is read as "no
- * health problem", which is the exact misreading the Not collected card was
- * written to prevent; this says which of the two it is. It appears whenever
+ * health problem", and a field nobody could read must not be mistaken for a
+ * field that is fine; this says which of the two it is. It appears whenever
  * the agent has no Docker socket, is older than the release that sends these,
  * or -- for Restarts alone -- has a socket the daemon will not let it inspect.
  */
@@ -87,19 +87,6 @@ const notReported = "not reported";
 /** A label the daemon reports with an empty value. Printing nothing would make
  * the row look like a rendering bug rather than the label it is. */
 const EMPTY_LABEL = "(empty)";
-
-/**
- * The only range on this page that carries a restart series, named the way the
- * range picker names it so the card and the buttons above it agree.
- *
- * It is the RAW tier, and which tier answers is decided by the requested STEP
- * rather than by how far back the range reaches: lib/range.ts asks for 60s at
- * 1h and 5m at both 6h and 24h, and selectTier takes the coarsest tier at or
- * below the step. So 6h already resolves to container_samples_5m, where
- * restart_count does not exist (migration 0012). Naming 6h here would promise
- * a series on a range that has none.
- */
-const RESTART_SERIES_RANGE: Range = "1h";
 
 /**
  * Docker's health, in words rather than in Docker's vocabulary.
@@ -116,6 +103,30 @@ const RESTART_SERIES_RANGE: Range = "1h";
 export function healthText(health: string | null): string | null {
   if (health === null) return null;
   return health === "none" ? "no healthcheck" : health;
+}
+
+/**
+ * Docker's three verdicts wear the pill the lists give the same words --
+ * healthy is ok, unhealthy is critical (state.ts calls it that), starting is
+ * the warning columns.tsx draws -- so the Identity card's Health reads like
+ * the Status column above it rather than like a label. "no healthcheck" and
+ * "not reported" stay plain text: neither is a state, and a neutral badge
+ * keeps a dot precisely because it marks one (see Badge's header).
+ */
+const HEALTH_SEVERITY: Record<string, Severity> = {
+  healthy: "ok",
+  unhealthy: "critical",
+  starting: "warning",
+};
+
+function HealthValue({ health }: { health: string | null }) {
+  const text = healthText(health) ?? notReported;
+  const severity = health === null ? undefined : HEALTH_SEVERITY[health];
+  return severity === undefined ? (
+    <>{text}</>
+  ) : (
+    <Badge severity={severity}>{text}</Badge>
+  );
 }
 
 type Sampled = {
@@ -179,8 +190,12 @@ function read(res: MetricsResponse, containerKey: string): Sampled | null {
     // asking for one that is missing is a programmer error and
     // UnknownColumnError is the right answer. restart_count is missing at 5m,
     // 1h and 1d BY DESIGN, so asking blind would throw on every range but the
-    // 1h one -- a blank page for a working feature. See
-    // RESTART_SERIES_RANGE for why 6h is already a rollup.
+    // 1h one -- a blank page for a working feature. 1h is the only range
+    // that resolves to the raw tier: which tier answers is decided by the
+    // requested STEP, not by how far back the range reaches, and
+    // lib/range.ts asks for 5m at 6h already, so 6h is answered from
+    // container_samples_5m, where restart_count does not exist (migration
+    // 0012).
     restartCount: carriesColumn(res, "restart_count")
       ? griddedValues(res, i, "restart_count")
       : null,
@@ -673,7 +688,12 @@ export function ContainerPage({
         />
       </div>
 
-      <div className="grid2">
+      {/* .ctrcards, not .grid2. Two cards is one short of what multi-column
+          flow needs: with break-inside: avoid and a 390px Identity beside a
+          150px Labels, Chrome balanced by stacking both in the left column
+          and leaving the right one empty. A two-track grid puts them side
+          by side, each at its own height. */}
+      <div className="ctrcards">
         <Card title="Identity">
           <dl className="kv">
             <dt>container_key</dt>
@@ -693,7 +713,9 @@ export function ContainerPage({
             <dt>State</dt>
             <dd>{container.docker_state ?? notReported}</dd>
             <dt>Health</dt>
-            <dd>{healthText(container.health) ?? notReported}</dd>
+            <dd>
+              <HealthValue health={container.health} />
+            </dd>
             <dt>Restarts</dt>
             <dd>{container.restart_count ?? notReported}</dd>
             <dt>Last sample</dt>
@@ -728,34 +750,6 @@ export function ContainerPage({
                 ))}
             </dl>
           )}
-        </Card>
-
-        {/* The card that named health, restarts, state and labels as absent.
-            All four are collected now -- they are on the Identity card and in
-            the Labels card above -- so what is left is the residue: three
-            things the collection genuinely still cannot say. The card stays,
-            because that was always its point: a field simply absent from a UI
-            reads as a field that is fine. */}
-        <Card title="Not collected">
-          <dl className="kv">
-            <dt>Stopped containers</dt>
-            <dd>
-              a container's rows come from its cgroup, and a stopped one has
-              none, so it does not appear here at all -- Docker's own "exited"
-              is never seen and the header badge measures its absence instead
-            </dd>
-            <dt>Health history</dt>
-            <dd>
-              only the latest health and state are kept, so "when did it go
-              unhealthy" has no answer; a transition would need its own table
-            </dd>
-            <dt>Restarts beyond {RESTART_SERIES_RANGE}</dt>
-            <dd>
-              the restart counter lives in the raw samples only, and every range
-              but {RESTART_SERIES_RANGE} is answered from a rollup, so a wider
-              window shows the total above but no series to place it in
-            </dd>
-          </dl>
         </Card>
       </div>
     </>

@@ -1135,9 +1135,15 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
   {
     key: "device",
     header: "Drive",
+    // The body face, not .ident. The Mounts table one card up prints its
+    // labels in body text, and the two stack on one tab: "sda" set in mono
+    // under a plain "data" read as two kinds of thing where the reader sees
+    // one -- the disk and what is on it. It is scanned as a name, the way a
+    // package name is (see PACKAGE_COLUMNS); the serial beside it stays
+    // mono because it is the one string here read character by character.
     cell: (row) => (
       <span className="addr-cell">
-        <span className="ident">{row.device}</span>
+        {row.device}
         <DriveHealthPill drive={row} />
       </span>
     ),
