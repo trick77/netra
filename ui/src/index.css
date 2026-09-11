@@ -4546,6 +4546,61 @@ tbody:first-of-type .grouprow th {
   vertical-align: middle;
 }
 
+/* The two container lists (FleetContainers, the host tab's Containers), one
+   size up from the rest of the app: 15px where the row's own type is 14, 13px
+   where its annotations are 12.
+
+   Scoped to a wrapper rather than done by moving --text-ui, which #242 has
+   just settled at 14 for every other list, and not by overriding the tokens
+   inside the wrapper either: a scoped --text-micro would also lift the badges
+   and the column headers, and those stay the app's. The selectors name the
+   parts that move and nothing else.
+
+   Why this list and not the fleet's: a container row is the densest thing
+   the app draws -- a name, a badge, an image ref, two charts each with a
+   meter and a two-line reading -- and at 14/12 the reader was squinting at
+   the one line per cell that carries the fact. 15/13 keeps the step between
+   the reading and its annotation (the "of 8 cores" under a figure) while
+   putting both above where they were. Row height grows ~2px; the sparkline
+   sets most of it anyway.
+
+   `tbody td` is the row's base -- it is what Last seen inherits, a bare span
+   -- and the three named selectors are the cells that set --text-ui for
+   themselves and would otherwise stay at 14 inside it. */
+.ctr-list .host-cell-name,
+.ctr-list .metric-now .v,
+.ctr-list .metric-read .v,
+.ctr-list .grouprow th,
+.ctr-list tbody td {
+  font-size: 15px;
+}
+.ctr-list .imgcell,
+.ctr-list .metric-now-wrap .u,
+.ctr-list .metric-read .u,
+.ctr-list .metric-now .v small,
+.ctr-list .metric-read .v small,
+.ctr-list .grouprow .gbytes {
+  font-size: 13px;
+}
+/* A child sits UNDER its heading. The heading's name starts after the
+   chevron -- 16px of icon and the 12px gap, 28px past the cell's padding --
+   while a plain row's name started at the padding, so every container sat
+   28px LEFT of the stack it belongs to and the tree read upside down. The
+   first cell of a body row reserves that gutter.
+
+   The 3px is the severity rail. `.rail td:first-child` adds it only to a
+   marked row, so a warned container's name shifted 3px right of the healthy
+   one above it -- the rail was meant to be seen from the table's edge, not
+   to move the text. Reserved on every first cell, and on the heading's
+   label, so the rail paints over space the row already gave up. The
+   heading's own metric cells are td too, but never first-child: the th is. */
+.ctr-list tbody td:first-child {
+  padding-left: calc(var(--space-4) + 3px + 28px);
+}
+.ctr-list .grouprow th:has(.gtoggle) .ghead {
+  padding-left: calc(var(--space-4) + 3px);
+}
+
 /* Below the fleet breakpoint the heading's own name may wrap: it is the one
    row on the page carrying a project, a host and a badge, and at 360px those
    would push the table sideways. The readings no longer need a rule here --

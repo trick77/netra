@@ -386,8 +386,6 @@ export function Containers({
   // the list are what make a column readable downwards, and there is one
   // definition of them.
   const columns = containerColumns({
-    // Grouped by project below, so the name cell stops repeating it.
-    groupedByProject: true,
     range,
     // This page's own windows, so a chart enlarged out of a row cannot ask
     // for one the toolbar above it could not express.
@@ -412,34 +410,39 @@ export function Containers({
         range={range}
         capabilities={capabilities}
       />
-      <Inventory
-        label="Containers"
-        columns={columns}
-        rows={charted}
-        // The same pair the fleet list keys on, so "what a container row is"
-        // has one answer.
-        rowKey={(row) => `${row.host_id}:${row.container_key}`}
-        // The same rail the fleet's container list draws, from the same
-        // function: one container row, one definition of "needs attention".
-        rowSeverity={containerSeverity}
-        searchText={(row) =>
-          [row.container_key, row.name, row.image].filter(Boolean).join(" ")
-        }
-        notice={
-          note === null && purgeError === null ? undefined : (
-            <>
-              {note === null ? null : <p className="note">{note}</p>}
-              {/* A failed purge is reported where the button is, not swallowed:
-                the row is still there afterwards and without this the click
-                simply appeared to do nothing. */}
-              {purgeError === null ? null : (
-                <p className="note">Purge failed: {purgeError}</p>
-              )}
-            </>
-          )
-        }
-        groupBy={BY_PROJECT}
-      />
+      {/* .ctr-list is the type scale the two container lists share -- see
+          index.css. A wrapper rather than a Table prop: Table has none, and
+          the fleet's list (FleetContainers) wraps its own the same way. */}
+      <div className="ctr-list">
+        <Inventory
+          label="Containers"
+          columns={columns}
+          rows={charted}
+          // The same pair the fleet list keys on, so "what a container row is"
+          // has one answer.
+          rowKey={(row) => `${row.host_id}:${row.container_key}`}
+          // The same rail the fleet's container list draws, from the same
+          // function: one container row, one definition of "needs attention".
+          rowSeverity={containerSeverity}
+          searchText={(row) =>
+            [row.container_key, row.name, row.image].filter(Boolean).join(" ")
+          }
+          notice={
+            note === null && purgeError === null ? undefined : (
+              <>
+                {note === null ? null : <p className="note">{note}</p>}
+                {/* A failed purge is reported where the button is, not swallowed:
+                  the row is still there afterwards and without this the click
+                  simply appeared to do nothing. */}
+                {purgeError === null ? null : (
+                  <p className="note">Purge failed: {purgeError}</p>
+                )}
+              </>
+            )
+          }
+          groupBy={BY_PROJECT}
+        />
+      </div>
     </>
   );
 }
