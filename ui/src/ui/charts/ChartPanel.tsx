@@ -93,6 +93,11 @@ export interface ChartPanelProps {
    * Passed through to Overlay AND to the enlarged view, so clicking a
    * stacked panel open does not silently change the mark. */
   stacked?: boolean;
+  /** Fill the area under each line regardless of the derived rule below.
+   * For a pinned panel whose floor is nevertheless the reading's own -- a
+   * percent-full disk against 0-100. Left unset, the fill is derived: on
+   * wherever nothing is pinned, off otherwise. */
+  filled?: boolean;
   /** Whether the chart names its series underneath. Off for the per-core
    * stack, where the list is longer than the chart. */
   legend?: boolean;
@@ -201,6 +206,7 @@ export function ChartPanel({
   height = 112,
   highlight,
   stacked,
+  filled: filledProp,
   legend,
   reference,
   nowFmt,
@@ -341,12 +347,18 @@ export function ChartPanel({
   // have -- one line under Load shaded, four under IP statistics bare.
   //
   // Stacks and mirrors are filled by construction and ignore this.
+  //
+  // A spec can name the answer instead (the `filled` prop): filesystem usage
+  // pins 0-100 and is filled anyway, because its pinned 0 is an empty disk
+  // and the shade is exactly the reading. The scale is untouched by the
+  // override -- autoScale below keeps its own derivation -- only the mark.
   const filled =
-    !stacked &&
-    !mirrored &&
-    min === undefined &&
-    max === undefined &&
-    reference === undefined;
+    filledProp ??
+    (!stacked &&
+      !mirrored &&
+      min === undefined &&
+      max === undefined &&
+      reference === undefined);
 
   // The ladder is built from the SAME two peaks the marks are scaled to, so
   // an asymmetric chart gets an asymmetric axis instead of the geometry

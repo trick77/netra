@@ -67,11 +67,13 @@ export interface OverlayProps {
    * A filled area reads as a mass, and a mass is only honest when its bottom
    * edge means something: on a free-scaled chart the floor is the quietest
    * reading in the window, so the fill is the band the series actually moved
-   * through. On a chart pinned to a declared floor it is not -- filesystem
-   * usage between 40 % and 95 % against a fixed 0-100 draws four hosts as
-   * four solid blocks differing only along their top edge, which is the
-   * argument Sparkline.tsx has always made for turning its own fill off
-   * there.
+   * through. On a chart pinned to a declared floor it usually is not -- a
+   * temperature between 44 and 47 degrees against a fixed 0-100 is a solid
+   * block differing from every other host's only along its top edge, which
+   * is the argument Sparkline.tsx has always made for turning its own fill
+   * off there. ChartPanel derives the flag on that rule and lets a spec
+   * override it where the pinned floor is the reading's own (filesystem
+   * usage, whose 0 is an empty disk); this prop only carries the answer.
    *
    * Says nothing about how MANY series may be filled: areaFillOpacity() in
    * size.ts thins each area by the count sharing the baseline, so a panel of
