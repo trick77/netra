@@ -71,6 +71,10 @@ export const KNOWN_EVENT_TYPES = [
   "package",
   "unit",
   "hub",
+  // Derived by the hub from a container's RestartCount and StartedAt
+  // (internal/hub/store/containerrestarts.go).
+  "container_restart",
+  "container_recreate",
   ...CONDITION_EVENT_TYPES,
   ...KERNEL_EVENT_TYPES,
 ] as const;
@@ -107,8 +111,15 @@ function everyField(fields: Record<string, unknown>): string {
 
 /** Detail keys that are instructions to this UI rather than facts about the
  * event, and so have no place in a sentence describing it: the severity an
- * emitter stated, and the two counts describing an apt run's truncation. */
-const NOT_FACTS = new Set(["severity", "run_size", "more"]);
+ * emitter stated, the two counts describing an apt run's truncation, and the
+ * two keys saying which clock dated a container event. */
+const NOT_FACTS = new Set([
+  "severity",
+  "run_size",
+  "more",
+  "ts_source",
+  "observed_ts",
+]);
 
 function packageMessage(name: string, f: Record<string, unknown>): string {
   const from = text(f, "from_version");
@@ -167,6 +178,48 @@ export function packagesOmitted(event: Event): number {
 export function packageRunSize(event: Event): number {
   if (event.type !== "package") return 0;
   return count(fields(event), "run_size");
+}
+
+/** A container that came back up, in words.
+ *
+ * The hub writes `from`/`to` (Docker's RestartCount before and after) and
+ * `delta` for both types, plus `image_from`/`image_to` when a redeploy
+ * changed the image. It also writes `ts_source` and `observed_ts`, which say
+ * WHICH CLOCK dated the row and are left out here on purpose: the When cell
+ * already carries the instant, and "ts_source docker_started_at" in the
+ * middle of a sentence is a debugging note, not a fact about the container.
+ *
+ * `container_recreate` covers shapes the hub cannot tell apart from the wire
+ * (the Docker id never reaches it): a redeploy, and a `docker restart` or
+ * `docker start` of the same container -- which Docker does not count but
+ * does reset the counter for (moby daemon/start.go, ResetRestartManager).
+ * Only a changed image proves a redeploy; everything else is called a
+ * restart, with the counter's move shown when it moved. */
+function containerMessage(
+  type: string,
+  name: string,
+  f: Record<string, unknown>,
+): string {
+  // Not text(): a RestartCount of 0 is the common case and "" would send
+  // every fresh container to the fallback dump.
+  const from = f["from"];
+  const to = f["to"];
+  if (typeof from !== "number" || typeof to !== "number") {
+    return everyField(f) || name;
+  }
+
+  if (type === "container_restart") {
+    const delta = count(f, "delta");
+    const times = delta > 1 ? ` ${delta}×` : "";
+    return `${name} restarted${times} (restart count ${from} → ${to})`;
+  }
+  const imageFrom = text(f, "image_from");
+  const imageTo = text(f, "image_to");
+  if (imageFrom && imageTo) {
+    return `${name} redeployed, image ${imageFrom} → ${imageTo}`;
+  }
+  if (from !== to) return `${name} restarted (restart count ${from} → ${to})`;
+  return `${name} restarted`;
 }
 
 function unitMessage(name: string, f: Record<string, unknown>): string {
@@ -442,6 +495,9 @@ export function messageOf(event: Event): string {
     case "hub":
       // No subject: a delivery outage is about the host as a whole.
       return hubMessage(f);
+    case "container_restart":
+    case "container_recreate":
+      return containerMessage(event.type, subject, f);
     case "silent":
     case "sporadic":
     case "disk":

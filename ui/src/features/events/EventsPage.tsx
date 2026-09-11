@@ -338,9 +338,6 @@ export function EventsPage({
       <div className="pagehead">
         <h1>Events</h1>
       </div>
-      <p className="pagesub">
-        What happened, when. An event is an instant, not a state.
-      </p>
 
       {/* Everything that narrows the log, on one line: three selects by
           field, then the free text, then the window. The text box sits
