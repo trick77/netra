@@ -216,7 +216,7 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		return
 	}
 	baseline := conditions.Baseline{P01: *in.p01, P99: *in.p99, Samples: *in.samples}
-	if !baseline.Ready() {
+	if !baseline.Ready(in.rule.MinSamples) {
 		scan.Unjudged[key] = true
 		return
 	}

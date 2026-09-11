@@ -197,11 +197,69 @@ func TestSourceIsBaselineWhenOnlyTheWarnCapCameFromTheDevice(t *testing.T) {
 
 // Too little history is not a clean bill of health.
 func TestBaselineIsNotReadyBelowTheSampleGate(t *testing.T) {
-	if (Baseline{P01: 1, P99: 2, Samples: BaselineMinSamples - 1}).Ready() {
+	if (Baseline{P01: 1, P99: 2, Samples: BaselineMinSamples - 1}).Ready(BaselineMinSamples) {
 		t.Error("a baseline below the gate reported ready")
 	}
-	if !(Baseline{P01: 1, P99: 2, Samples: BaselineMinSamples}).Ready() {
+	if !(Baseline{P01: 1, P99: 2, Samples: BaselineMinSamples}).Ready(BaselineMinSamples) {
 		t.Error("a baseline at the gate reported not ready")
+	}
+}
+
+// THE FIRST MONDAY.
+//
+// A netra installed on a Saturday clears a 34-hour gate by Sunday evening
+// against a baseline built entirely from a quiet weekend, and Monday morning is
+// then a departure from normal on every host at once. Worse, the recompute
+// excludes samples taken while a condition is open, so Monday's legitimate load
+// is not counted as evidence and the row stands for about a week.
+//
+// So the two kinds driven by what people ask of a machine wait for a weekly
+// cycle. Temperature does not: a drive has no weekday, and it has the chip's
+// own published limit as a second tier that owes nothing to history.
+func TestHostKindsWaitForAWeeklyCycleAndTemperatureDoesNot(t *testing.T) {
+	weekendOnly := Baseline{P01: 1, P99: 2, Samples: BaselineMinSamples + 100}
+
+	for _, kind := range []string{KindProcesses, KindLoad} {
+		rule := RuleFor(kind, "")
+		if rule.MinSamples != BaselineWeeklySamples {
+			t.Errorf("%s gate = %d, want %d", kind, rule.MinSamples, BaselineWeeklySamples)
+		}
+		if weekendOnly.Ready(rule.MinSamples) {
+			t.Errorf("%s judged on a weekend's worth of history", kind)
+		}
+	}
+
+	for _, chip := range []string{ChipNVMe, ChipDriveTemp, "coretemp", "k10temp"} {
+		rule := RuleFor(KindTemperature, chip)
+		if rule.MinSamples != BaselineMinSamples {
+			t.Errorf("temperature/%s gate = %d, want %d",
+				chip, rule.MinSamples, BaselineMinSamples)
+		}
+		if !weekendOnly.Ready(rule.MinSamples) {
+			t.Errorf("temperature/%s waited for a weekly cycle it has no use for", chip)
+		}
+	}
+}
+
+// The weekly gate has to be REACHABLE. Raw retention is 7 days, so the window
+// can never hold more than a perfect week -- a gate at the theoretical maximum
+// would need a host that has never missed a scrape, and any host that dropped
+// one would never be judged again.
+func TestTheWeeklyGateIsReachableByAHostThatMissesScrapes(t *testing.T) {
+	perfectWeek := int(BaselineWindow / ScrapeInterval)
+	if BaselineWeeklySamples >= perfectWeek {
+		t.Fatalf("weekly gate %d is at or above a perfect week of %d samples, "+
+			"so a host that misses one scrape can never be judged",
+			BaselineWeeklySamples, perfectWeek)
+	}
+
+	// A host losing the most the sporadic rule tolerates before flagging it
+	// must still clear the gate, or netra would consider it healthy and refuse
+	// to judge it at the same time.
+	worstTolerated := int(float64(perfectWeek) * (1 - SporadicMissRatio))
+	if worstTolerated < BaselineWeeklySamples {
+		t.Errorf("a host at the sporadic tolerance reaches %d samples, under the %d gate",
+			worstTolerated, BaselineWeeklySamples)
 	}
 }
 
