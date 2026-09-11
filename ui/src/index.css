@@ -3675,6 +3675,21 @@ a.tile:focus-visible {
 .grid2 > * .card {
   margin-bottom: 0;
 }
+/* The container page's Identity and Labels cards. A grid rather than .grid2
+   because there are exactly two: multi-column balancing with break-inside:
+   avoid stacked both in the left column once the third card went, and a row
+   of two independent cards has no hole to pack away -- align-items: start
+   lets each keep its own height. The min(420px, 100%) track is .dockover's,
+   for the reason stated there. */
+.ctrcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+.ctrcards > .card {
+  margin-bottom: 0;
+}
 .hosthead {
   display: flex;
   /* Top, not centre. Centring measured every part of the row against the

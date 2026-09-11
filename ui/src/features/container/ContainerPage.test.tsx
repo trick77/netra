@@ -357,25 +357,13 @@ describe("ContainerPage", () => {
     expect(screen.getAllByText(ABSENT).length).toBeGreaterThanOrEqual(2);
   });
 
-  // The card used to name Health, Restarts, State and Labels. All four are
-  // collected now, so it must name the residue instead -- and it must not name
-  // a field the Identity card above it is printing a value for, which would be
-  // the page contradicting itself.
-  it("names what is left uncollected, not the fields it now shows", () => {
+  // The card that listed what the page could not say is gone. The Network
+  // panel still calls its own unavailable state "Not collected" -- that is
+  // the panel's headline and is asserted above -- so the check is for the
+  // card, by its title element, not for the words anywhere on the page.
+  it("draws no Not collected card", () => {
     renderPage();
-
-    const card = screen.getByText("Not collected").closest(".card")!;
-    for (const residue of [
-      "Stopped containers",
-      "Health history",
-      // 1h, not 6h. Which tier answers is decided by the requested STEP, and
-      // range.ts asks for 5m at 6h, so 6h is already a rollup and carries no
-      // restart_count -- naming it here promised a series that range lacks.
-      "Restarts beyond 1h",
-    ]) {
-      expect(card).toHaveTextContent(residue);
-    }
-    expect(card).not.toHaveTextContent("Labels");
+    expect(screen.queryByRole("heading", { name: "Not collected" })).toBeNull();
   });
 
   it("states what Docker says about the container", () => {
@@ -410,6 +398,27 @@ describe("ContainerPage", () => {
 
     const card = screen.getByText("Identity").closest(".card")!;
     expect(card).toHaveTextContent("no healthcheck");
+  });
+
+  // Docker's verdicts wear the pill the lists give them; the two absences
+  // ("no healthcheck", "not reported") do not, because they are not states.
+  it("draws Docker's health as a pill, and an absence as plain text", () => {
+    for (const [health, cls] of [
+      ["healthy", "st-ok"],
+      ["unhealthy", "st-crit"],
+      ["starting", "st-warn"],
+    ] as const) {
+      renderPage({ container: { ...CONTAINER, health } });
+      const card = screen.getByText("Identity").closest(".card")!;
+      const badge = card.querySelector(`.badge.${cls}`);
+      expect(badge).not.toBeNull();
+      expect(badge).toHaveTextContent(health);
+      cleanup();
+    }
+
+    renderPage({ container: { ...CONTAINER, health: "none" } });
+    const card = screen.getByText("Identity").closest(".card")!;
+    expect(card.querySelector(".badge")).toBeNull();
   });
 
   it("lists the container's labels", () => {

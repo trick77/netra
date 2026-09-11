@@ -657,6 +657,12 @@ message ContainerSample {
   // on it would restart the history of a service that merely got a new image.
   string container_key = 2;
   string name = 3;
+  // The image reference the container was created with, as Docker names it,
+  // with ONE rewrite: an image the daemon never pulled (built or loaded on
+  // the host), or one pulled from a loopback registry, is sent as
+  // "local/<name>:<tag>" with any registry host stripped. The agent does the
+  // rewrite (collector.localImageRef) because only it can see RepoDigests;
+  // the hub stores and the UI prints the string as it arrives.
   string image = 4;
   bool is_agent = 5;
   optional double cpu_pct = 6;

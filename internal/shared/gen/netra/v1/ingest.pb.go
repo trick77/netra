@@ -2430,11 +2430,17 @@ type ContainerSample struct {
 	// Compose project + service, falling back to container name (spec 6.2).
 	// Deliberately NOT the Docker id, which changes on every recreate -- keying
 	// on it would restart the history of a service that merely got a new image.
-	ContainerKey string   `protobuf:"bytes,2,opt,name=container_key,json=containerKey,proto3" json:"container_key,omitempty"`
-	Name         string   `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Image        string   `protobuf:"bytes,4,opt,name=image,proto3" json:"image,omitempty"`
-	IsAgent      bool     `protobuf:"varint,5,opt,name=is_agent,json=isAgent,proto3" json:"is_agent,omitempty"`
-	CpuPct       *float64 `protobuf:"fixed64,6,opt,name=cpu_pct,json=cpuPct,proto3,oneof" json:"cpu_pct,omitempty"`
+	ContainerKey string `protobuf:"bytes,2,opt,name=container_key,json=containerKey,proto3" json:"container_key,omitempty"`
+	Name         string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	// The image reference the container was created with, as Docker names it,
+	// with ONE rewrite: an image the daemon never pulled (built or loaded on
+	// the host), or one pulled from a loopback registry, is sent as
+	// "local/<name>:<tag>" with any registry host stripped. The agent does the
+	// rewrite (collector.localImageRef) because only it can see RepoDigests;
+	// the hub stores and the UI prints the string as it arrives.
+	Image   string   `protobuf:"bytes,4,opt,name=image,proto3" json:"image,omitempty"`
+	IsAgent bool     `protobuf:"varint,5,opt,name=is_agent,json=isAgent,proto3" json:"is_agent,omitempty"`
+	CpuPct  *float64 `protobuf:"fixed64,6,opt,name=cpu_pct,json=cpuPct,proto3,oneof" json:"cpu_pct,omitempty"`
 	// Already has cache and inactive_file subtracted. Raw cgroup memory.current
 	// counts the page cache as consumption, so a container that merely read
 	// files would report that as memory it is holding.

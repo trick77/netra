@@ -80,6 +80,119 @@ func TestDockerContainerDecodesNetworkMode(t *testing.T) {
 	if got[0].Labels["com.docker.compose.service"] != "web" {
 		t.Errorf("compose service = %q, want web", got[0].Labels["com.docker.compose.service"])
 	}
+	// ImageID is the join key into /images/json. A wrong tag here would make
+	// pulledImage answer "pulled" for every container and silently switch
+	// the local/ rewrite off fleet-wide.
+	if got[0].ImageID != "sha256:d0e5d" {
+		t.Errorf("ImageID = %q, want sha256:d0e5d", got[0].ImageID)
+	}
+	if got[1].ImageID != "" {
+		t.Errorf("ImageID = %q for a container without one, want empty", got[1].ImageID)
+	}
+}
+
+// A trimmed real /images/json body. The three shapes RepoDigests takes are
+// the whole point: a populated list (pulled), an empty list and a JSON null,
+// where the daemon writes null for a locally built image on some versions and
+// [] on others, and both must read as "never pulled".
+const imagesJSONFixture = `[
+  {
+    "Id": "sha256:d0e5d",
+    "RepoTags": ["nginx:1.27"],
+    "RepoDigests": ["nginx@sha256:aaaa"],
+    "Size": 192000000
+  },
+  {
+    "Id": "sha256:b1b1b",
+    "RepoTags": ["shop-worker:latest"],
+    "RepoDigests": [],
+    "Size": 51000000
+  },
+  {
+    "Id": "sha256:c2c2c",
+    "RepoTags": ["shop-web:latest"],
+    "RepoDigests": null,
+    "Size": 51000000
+  }
+]`
+
+func TestDecodeImages(t *testing.T) {
+	// Given a real /images/json body.
+	got, err := decodeImages(strings.NewReader(imagesJSONFixture))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Then only the image with a digest reads as pulled.
+	want := map[string]bool{"sha256:d0e5d": true, "sha256:b1b1b": false, "sha256:c2c2c": false}
+	if len(got) != len(want) {
+		t.Fatalf("decoded %d images, want %d", len(got), len(want))
+	}
+	for id, pulled := range want {
+		if got[id] != pulled {
+			t.Errorf("pulled[%q] = %v, want %v", id, got[id], pulled)
+		}
+	}
+
+	// And a body that is not the list shape is an error, not an empty map:
+	// an empty map would read as "every image unknown", which pulledImage
+	// turns into "pulled" -- the right outcome, but by accident.
+	if _, err := decodeImages(strings.NewReader(`{"message":"page not found"}`)); err == nil {
+		t.Error("decodeImages on an object body: want error, got nil")
+	}
+}
+
+// Every way of not knowing answers "pulled", because pulled is the answer
+// that leaves the image string alone. The one FALSE is an id the daemon
+// listed with no digest.
+func TestPulledImage(t *testing.T) {
+	known := map[string]bool{"sha256:d0e5d": true, "sha256:b1b1b": false}
+	for _, tc := range []struct {
+		name   string
+		pulled map[string]bool
+		id     string
+		want   bool
+	}{
+		{"listed with digest", known, "sha256:d0e5d", true},
+		{"listed without digest", known, "sha256:b1b1b", false},
+		{"id not in the list", known, "sha256:zzzz", true},
+		{"daemon sent no ImageID", known, "", true},
+		{"image list failed", nil, "sha256:b1b1b", true},
+	} {
+		if got := pulledImage(tc.pulled, tc.id); got != tc.want {
+			t.Errorf("%s: pulledImage = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The Hub cases are the ones that matter most: "nginx:1.27" has no registry in
+// the string and is NOT local, because Docker's grammar makes a hostless ref a
+// docker.io ref. Only the daemon's word (pulled=false) or a loopback host
+// makes an image local, and either way any registry host is stripped so the
+// result always starts "local/<name>".
+func TestLocalImageRef(t *testing.T) {
+	for _, tc := range []struct {
+		ref    string
+		pulled bool
+		want   string
+	}{
+		{"nginx:1.27", true, "nginx:1.27"},
+		{"timescale/timescaledb:latest-pg17", true, "timescale/timescaledb:latest-pg17"},
+		{"ghcr.io/trick77/netra-agent:latest", true, "ghcr.io/trick77/netra-agent:latest"},
+		{"registry.home.lan:5000/svc:2", true, "registry.home.lan:5000/svc:2"},
+		{"shop-worker:latest", false, "local/shop-worker:latest"},
+		{"shop-worker", false, "local/shop-worker"},
+		{"ghcr.io/me/app:dev", false, "local/me/app:dev"},
+		{"localhost/svc:2", true, "local/svc:2"},
+		{"localhost:5000/svc:2", true, "local/svc:2"},
+		{"127.0.0.1:5000/team/svc:2", true, "local/team/svc:2"},
+		{"[::1]:5000/svc", true, "local/svc"},
+		{"sha256:d0e5dabcdef", false, "sha256:d0e5dabcdef"},
+	} {
+		if got := localImageRef(tc.ref, tc.pulled); got != tc.want {
+			t.Errorf("localImageRef(%q, %v) = %q, want %q", tc.ref, tc.pulled, got, tc.want)
+		}
+	}
 }
 
 // sharesForeignNetNS is the whole policy in one predicate, so it is tested as
