@@ -491,8 +491,7 @@ export function containerGroupWorst(
 export function containerGroupCells(
   rows: readonly ContainerRow[],
 ): Record<string, ReactNode> {
-  const { cpuPct, memPct, memBytes, threads, memTotal } =
-    containerGroupReading(rows);
+  const { cpuPct, memPct, threads, memTotal } = containerGroupReading(rows);
 
   // The same block a row draws, minus the silhouette: there is no series to
   // sum, and a heading is a reading of now rather than a history. Everything
@@ -523,14 +522,30 @@ export function containerGroupCells(
           />
         </div>
       ),
-    // The bytes themselves, where the Image column sits. A percentage says how
-    // full the machine is and says nothing about how big the stack is; on a
-    // page listing several hosts those are different questions.
-    image:
-      memBytes === null ? null : (
-        <span className="gbytes">{bytes(memBytes)}</span>
-      ),
   };
+}
+
+/**
+ * The group's memory in bytes, for its heading: " · 7.9 GB" after the
+ * container count. A percentage says how full the machine is and says
+ * nothing about how big the stack is; on a page listing several hosts those
+ * are different questions.
+ *
+ * In the heading's label rather than in a cell of its own. It sat in the
+ * Image column while there was one; the image is a line under the name now,
+ * and a figure alone in the heading of an empty column read as a stray. Both
+ * lists' headings render this, so the bytes appear the same way on each.
+ * Nothing when the group has reported nothing -- the same distinction every
+ * cell in this module keeps.
+ */
+export function GroupBytes({ rows }: { rows: readonly ContainerRow[] }) {
+  const { memBytes } = containerGroupReading(rows);
+  return memBytes === null ? null : (
+    <span className="groupcount">
+      {" · "}
+      {bytes(memBytes)}
+    </span>
+  );
 }
 
 function NameCell({
@@ -599,6 +614,21 @@ function NameCell({
             (state.ts) and the Status column says it, once. containerIsGone
             still gates the purge column -- same predicate, one voice. */}
       </div>
+      {/* The image, under the name -- the same line the fleet prints a host's
+          location on, in the same class, so the two lists set their second
+          line at one size and one distance. It was a column of its own, and
+          the widest string in the row ("ghcr.io/immich-app/immich-server:
+          v1.119.1") owned a column read only when something is wrong with a
+          version; under the name it costs no height, because the sparkline
+          sets the row's, and the columns that carry a reading get the width.
+          Sans, not the identifier face: it is read as a name, not diffed
+          character by character. No tag on the wire is not `:latest` --
+          inventing one would name a version the agent never reported. And no
+          line at all when there is no image, rather than a dash under every
+          unnamed row. */}
+      {row.image === null ? null : (
+        <div className="host-cell-site">{row.image}</div>
+      )}
     </div>
   );
 }
@@ -1015,29 +1045,6 @@ export function containerColumns({
     // status column is a reader asking which rows to look at.
     sortValue: (row) => stateKindRank(containerState(row, now, range).kind),
   });
-  columns.push({
-    key: "image",
-    header: "Image",
-    // An image with no tag on the wire is not `:latest` -- inventing one
-    // would name a version the agent never reported.
-    //
-    // `.mono` is an identifier face (spec 3.1: --font-mono for versions,
-    // addresses, commands and identifiers). `.tnum` would be wrong here:
-    // that is tabular figures, for columns of digits that must line up.
-    //
-    // `.imgcell` is what stops it shouting. `.mono` sets a FAMILY and nothing
-    // else, so this cell inherited the body size while every other piece of
-    // text in the row -- the identity line, the memory reading, the group
-    // totals -- sat a step under it. (That step is gone: --text-ui and
-    // --text-label are both 14px now.) A mono face at the body size also
-    // carries a wider advance and a taller x-height
-    // than the sans beside it, so the longest, least urgent string in the
-    // row ("ghcr.io/immich-app/immich-server:v1.119.1") was drawn as the
-    // loudest. It is a version, read when something is wrong with a version.
-    cell: (row) => <span className="imgcell mono">{row.image ?? ABSENT}</span>,
-    sortValue: (row) => row.image ?? null,
-  });
-
   // The trend columns appear only when someone fetched the metrics.
   if (cpuMax !== undefined || memMax !== undefined) {
     columns.push({

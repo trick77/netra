@@ -7,6 +7,7 @@ import {
   containerColumns,
   containerGroupCells,
   containerGroupWorst,
+  GroupBytes,
   containerSeverity,
   trendScales,
   type ContainerRow,
@@ -310,6 +311,7 @@ function StackGroup({ rows }: { rows: readonly ContainerRow[] }) {
         {" · "}
         {rows.length} container{rows.length === 1 ? "" : "s"}
       </span>
+      <GroupBytes rows={rows} />
       {/* What a folded group needs to be honest. No badge when nothing is
           wrong, which is itself the signal that folding it cost nothing. */}
       {worst === null ? null : (

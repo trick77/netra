@@ -180,11 +180,14 @@ describe("Containers", () => {
   // or the whole "project / service" -- and this list already groups by
   // project, so the line said what the heading above the row had just said.
   it("prints no identity line under a container's name", () => {
-    const { container } = render(<Containers rows={containers} host={host} />);
+    render(<Containers rows={containers} host={host} />);
     const row = screen.getByRole("row", { name: /shop-web-1/ });
     expect(within(row).queryByText("web")).toBeNull();
     expect(within(row).queryByText("shop / web")).toBeNull();
-    expect(container.querySelector(".host-cell-site")).toBeNull();
+    // The line under the name is the image, and only the image.
+    expect(row.querySelector(".host-cell-site")?.textContent).toBe(
+      "nginx:1.27",
+    );
     // The Docker id changes on every `compose up -d`; showing it invites
     // people to key on it, which orphans all history.
     expect(row.textContent).not.toContain("42");
@@ -206,7 +209,7 @@ describe("Containers", () => {
   // same Column[] now, so a column that sorts there sorts here.
   it("sorts, the way the fleet's container list always did", () => {
     render(<Containers rows={containers} host={host} />);
-    expect(screen.getByRole("button", { name: "Image" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Status" })).toBeInTheDocument();
   });
 
   // On one host, what belongs together is a compose stack.
