@@ -17,7 +17,10 @@ import (
 // dockerSocket is where the Docker API socket is mounted. The agent asks it
 // for names and labels ONLY -- every metric comes from cgroup v2, so a host
 // that declines to mount the socket still gets numbers.
-const dockerSocket = "/var/run/docker.sock"
+//
+// A var rather than a const, and only so a test can point the presence check
+// at a file it created. Nothing in the agent assigns it.
+var dockerSocket = "/var/run/docker.sock"
 
 // ErrNoDockerSocket is the socket not being THERE, as opposed to being there
 // and not answering. From a failed list call the two look identical and they
@@ -32,6 +35,16 @@ var ErrNoDockerSocket = errors.New("docker socket not mounted")
 // stable since long before this, and pinning avoids a newer daemon changing
 // the default response shape under the agent.
 const dockerAPIVersion = "v1.41"
+
+// dockerBaseURL is what every request is built against. The host part is
+// ignored for a unix socket but must be present and valid for net/http to
+// build the request at all.
+//
+// A var for the same reason dockerSocket is one: a test points it, and
+// dockerClient, at an httptest server and drives the real request path --
+// which is otherwise the one part of this file no test can reach. Nothing in
+// the agent assigns it.
+var dockerBaseURL = "http://docker/" + dockerAPIVersion
 
 // dockerContainer is the subset of /containers/json netra reads.
 type dockerContainer struct {
@@ -191,11 +204,9 @@ func SystemDockerInspect(ctx context.Context, id string) (ContainerStatus, error
 // (it needs a socket). One copy keeps that untestable surface at one function,
 // and keeps the three from drifting in how they word a non-200.
 //
-// The host part is ignored for a unix socket but must be present and valid
-// for net/http to build the request. The caller closes the body.
+// The caller closes the body.
 func dockerGet(ctx context.Context, path string) (*http.Response, error) {
-	endpoint := "http://docker/" + dockerAPIVersion + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dockerBaseURL+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build docker request: %w", err)
 	}
@@ -288,6 +299,14 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 		_ = imgResp.Body.Close()
 	}
 
+	return containerMetas(containers, pulled), nil
+}
+
+// containerMetas turns the two decoded responses into the rows the collector
+// reports. Split from the requests above for the reason decodeInspect is: the
+// decisions -- which name is taken, which image string is sent, what makes a
+// container the agent -- are all here, and none of them needs a daemon.
+func containerMetas(containers []dockerContainer, pulled map[string]bool) []ContainerMeta {
 	out := make([]ContainerMeta, 0, len(containers))
 	for _, c := range containers {
 		name := ""
@@ -319,7 +338,7 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 		})
 	}
 
-	return out, nil
+	return out
 }
 
 // dockerImage is the subset of /images/json netra reads.
