@@ -78,6 +78,59 @@ describe("Table", () => {
     expect(screen.getByRole("columnheader")).toHaveStyle({ width: "200px" });
   });
 
+  // A pinned row outranks the sort in both directions, and outranks the
+  // "unknown sorts last" rule too: the point of pinning is that the row is
+  // found at the top without reading, and a null reading must not move it.
+  it("keeps a pinFirst row on top through every sort, even with no value", () => {
+    const sortable: Column<Row>[] = [
+      {
+        key: "name",
+        header: "Host",
+        cell: (r) => r.name,
+        sortValue: (r) => r.name,
+      },
+      {
+        key: "cpu",
+        header: "CPU",
+        cell: (r) => `${r.cpu}%`,
+        sortValue: (r) => (r.id === "h3" ? null : r.cpu),
+      },
+    ];
+    render(
+      <Table
+        columns={sortable}
+        rows={rows}
+        rowKey={(r) => r.id}
+        pinFirst={(r) => r.id === "h3"}
+      />,
+    );
+    const names = () =>
+      [
+        ...screen
+          .getByRole("table")
+          .querySelectorAll("tbody tr td:first-child"),
+      ].map((td) => td.textContent);
+    expect(names()).toEqual(["host-c", "host-a", "host-b"]);
+    fireEvent.click(
+      screen
+        .getByRole("columnheader", { name: /CPU/ })
+        .querySelector("button")!,
+    );
+    expect(names()).toEqual(["host-c", "host-a", "host-b"]);
+    fireEvent.click(
+      screen
+        .getByRole("columnheader", { name: /CPU/ })
+        .querySelector("button")!,
+    );
+    expect(names()).toEqual(["host-c", "host-b", "host-a"]);
+    fireEvent.click(
+      screen
+        .getByRole("columnheader", { name: /Host/ })
+        .querySelector("button")!,
+    );
+    expect(names()).toEqual(["host-c", "host-a", "host-b"]);
+  });
+
   it("renders nothing but an empty tbody when rows is empty", () => {
     render(<Table columns={columns} rows={[]} rowKey={(r) => r.id} />);
     const body = screen.getByRole("table").querySelector("tbody")!;
