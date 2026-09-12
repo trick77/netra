@@ -55,14 +55,14 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
 		       sen.chip,
 		       sen.limit_high, sen.limit_high_crit,
 		       l.temp, l.ts,
-		       b.p01, b.p99, b.sample_count
+		       e.slow, e.fast, e.var, e.first_ts, e.updated_ts
 		  FROM sensors sen
 		  LEFT JOIN latest l
 		         ON l.sensor_id = sen.id AND l.host_id = sen.host_id
-		  LEFT JOIN metric_baselines b
-		         ON b.host_id = sen.host_id
-		        AND b.kind    = $2
-		        AND b.subject = netra_sensor_subject(sen.chip, sen.label, sen.instance)
+		  LEFT JOIN metric_ewma e
+		         ON e.host_id = sen.host_id
+		        AND e.kind    = $2
+		        AND e.subject = netra_sensor_subject(sen.chip, sen.label, sen.instance)
 		 WHERE sen.kind = 'temperature'`,
 		currentWindow, conditions.KindTemperature)
 	if err != nil {
@@ -73,28 +73,28 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
 	for rows.Next() {
 		var hostID int32
 		var subject, chip string
-		var limitHigh, limitCrit, temp, p01, p99 *float64
-		var readingTS *time.Time
-		var samples *int
+		var limitHigh, limitCrit, temp, slow, fast, variance *float64
+		var readingTS, firstTS, updatedTS *time.Time
 
 		if err := rows.Scan(&hostID, &subject, &chip, &limitHigh, &limitCrit,
-			&temp, &readingTS, &p01, &p99, &samples); err != nil {
+			&temp, &readingTS, &slow, &fast, &variance, &firstTS, &updatedTS); err != nil {
 			return fmt.Errorf("scan sensor: %w", err)
 		}
 
 		key := conditions.Key{HostID: hostID, Kind: conditions.KindTemperature, Subject: subject}
-		rule := conditions.RuleFor(conditions.KindTemperature, chip)
-		limits := conditions.Limits{High: limitHigh, HighCrit: limitCrit}
 
 		judgeDeviation(scan, key, deviationInput{
 			value:     temp,
 			readingTS: readingTS,
-			p01:       p01,
-			p99:       p99,
-			samples:   samples,
-			rule:      rule,
-			limits:    limits,
-			detail:    map[string]any{"chip": chip},
+			state:     ewmaOf(slow, fast, variance, firstTS, updatedTS),
+			// The chip's own rule, which the fold could not know: it sees a
+			// subject as a string, so it uses the kind's default floor. The
+			// judgement is where the real floor, the family ceiling and the
+			// published limits all enter, so no threshold a reader sees rests
+			// on the fold's approximation.
+			rule:   conditions.RuleFor(conditions.KindTemperature, chip),
+			limits: conditions.Limits{High: limitHigh, HighCrit: limitCrit},
+			detail: map[string]any{"chip": chip},
 		})
 	}
 	return rows.Err()
@@ -118,14 +118,14 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 		)
 		SELECT h.id,
 		       l.processes_total, l.load5, l.ts,
-		       bp.p01, bp.p99, bp.sample_count,
-		       bl.p01, bl.p99, bl.sample_count
+		       ep.slow, ep.fast, ep.var, ep.first_ts, ep.updated_ts,
+		       el.slow, el.fast, el.var, el.first_ts, el.updated_ts
 		  FROM hosts h
 		  LEFT JOIN latest l ON l.host_id = h.id
-		  LEFT JOIN metric_baselines bp
-		         ON bp.host_id = h.id AND bp.kind = $2 AND bp.subject = ''
-		  LEFT JOIN metric_baselines bl
-		         ON bl.host_id = h.id AND bl.kind = $3 AND bl.subject = ''`,
+		  LEFT JOIN metric_ewma ep
+		         ON ep.host_id = h.id AND ep.kind = $2 AND ep.subject = ''
+		  LEFT JOIN metric_ewma el
+		         ON el.host_id = h.id AND el.kind = $3 AND el.subject = ''`,
 		currentWindow, conditions.KindProcesses, conditions.KindLoad)
 	if err != nil {
 		return fmt.Errorf("query host gauges: %w", err)
@@ -135,12 +135,14 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 	for rows.Next() {
 		var hostID int32
 		var procs *int
-		var load, pP01, pP99, lP01, lP99 *float64
+		var load *float64
 		var readingTS *time.Time
-		var pSamples, lSamples *int
+		var pSlow, pFast, pVar, lSlow, lFast, lVar *float64
+		var pFirst, pUpdated, lFirst, lUpdated *time.Time
 
 		if err := rows.Scan(&hostID, &procs, &load, &readingTS,
-			&pP01, &pP99, &pSamples, &lP01, &lP99, &lSamples); err != nil {
+			&pSlow, &pFast, &pVar, &pFirst, &pUpdated,
+			&lSlow, &lFast, &lVar, &lFirst, &lUpdated); err != nil {
 			return fmt.Errorf("scan host gauge: %w", err)
 		}
 
@@ -155,9 +157,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 		}, deviationInput{
 			value:     procValue,
 			readingTS: readingTS,
-			p01:       pP01,
-			p99:       pP99,
-			samples:   pSamples,
+			state:     ewmaOf(pSlow, pFast, pVar, pFirst, pUpdated),
 			rule:      conditions.RuleFor(conditions.KindProcesses, ""),
 		})
 
@@ -166,9 +166,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 		}, deviationInput{
 			value:     load,
 			readingTS: readingTS,
-			p01:       lP01,
-			p99:       lP99,
-			samples:   lSamples,
+			state:     ewmaOf(lSlow, lFast, lVar, lFirst, lUpdated),
 			rule:      conditions.RuleFor(conditions.KindLoad, ""),
 		})
 	}
@@ -177,19 +175,33 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 
 // deviationInput is one subject's reading and everything needed to judge it.
 //
-// Pointers throughout, because every one of them is a LEFT JOIN away from
-// being absent and the three absences mean different things: no reading is a
-// subject that did not report, no baseline is a subject not yet calibrated,
-// and a NULL column is a kernel that does not publish the metric. Collapsing
-// any of them to a zero would judge a host against a number nobody measured.
+// Pointers where absence is a fact, because each absence means something
+// different: no reading is a subject that did not report, an unseeded state is
+// a subject not yet watched, and a NULL column is a kernel that does not
+// publish the metric. Collapsing any of them to a zero would judge a host
+// against a number nobody measured.
 type deviationInput struct {
 	value     *float64
 	readingTS *time.Time
-	p01, p99  *float64
-	samples   *int
+	state     conditions.EWMA
 	rule      conditions.FamilyRule
 	limits    conditions.Limits
 	detail    map[string]any
+}
+
+// ewmaOf rebuilds one subject's state from its LEFT JOINed columns.
+//
+// All five are NULL together or none are -- they come from one row -- so a
+// single nil check is enough, and a subject with no row comes back as the zero
+// EWMA, which reports Seeded() false and is handled as "not watched yet".
+func ewmaOf(slow, fast, variance *float64, firstTS, updatedTS *time.Time) conditions.EWMA {
+	if slow == nil || fast == nil || variance == nil || firstTS == nil || updatedTS == nil {
+		return conditions.EWMA{}
+	}
+	return conditions.EWMA{
+		Slow: *slow, Fast: *fast, Var: *variance,
+		FirstTS: *firstTS, UpdatedTS: *updatedTS,
+	}
 }
 
 // judgeDeviation applies the rule to one subject and files it under Seen,
@@ -209,33 +221,65 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		return
 	}
 
-	// No baseline, or one drawn from too little history. A subject netra has
-	// not watched long enough is not a subject netra has found to be fine.
-	if in.p99 == nil || in.p01 == nil || in.samples == nil {
-		scan.Unjudged[key] = true
-		return
-	}
-	baseline := conditions.Baseline{P01: *in.p01, P99: *in.p99, Samples: *in.samples}
-	if !baseline.Ready(in.rule.MinSamples) {
+	// Not watched long enough. A subject netra has only just started averaging
+	// is not a subject netra has found to be fine.
+	//
+	// A SPAN, not a sample count, and the difference is the point of the
+	// change: it tolerates gaps completely, so a host that drops scrapes is
+	// judged on the same footing as one that never does, and the constant says
+	// what it means. See FamilyRule.MinSpan.
+	if !in.state.Seeded() || in.state.Span() < in.rule.MinSpan {
 		scan.Unjudged[key] = true
 		return
 	}
 
 	scan.Seen[key] = true
 
-	bounds := conditions.DeviationThresholds(baseline, in.rule.Floor, in.limits, in.rule.Ceilings)
-	severity := conditions.DeviationSeverity(*in.value, bounds)
+	warn, crit := in.state.Band(in.rule.Floor)
+	bounds := conditions.DeviationThresholds(warn, crit, in.limits, in.rule.Ceilings)
+
+	// Fast, not the raw reading: the smoothing keeps sensor jitter and a single
+	// odd sample out of the judgement.
+	severity := conditions.DeviationSeverity(in.state.Fast, bounds)
 	if severity == "" {
 		return
 	}
 
+	// Outside the band, but not for long enough to mean anything yet.
+	//
+	// UNJUDGED RATHER THAN SEEN, and the distinction is the one the old
+	// in-memory counter had to be told about explicitly. Filing a brief
+	// excursion as healthy would count as a MISS against any condition already
+	// open on this subject, and two misses close it -- so a subject genuinely
+	// in trouble would be opened, closed and reopened forever, losing its onset
+	// each time. "Not for long enough to say" is exactly the third state.
+	//
+	// A new subject simply does not open, which is the point: a nightly cron
+	// burst writes nothing at all.
+	// The IsZero check is not redundant with the comparison beside it, and
+	// leaving it out is a silent failure rather than a loud one: Sub against a
+	// zero timestamp is an enormous duration, which passes OpenFor and opens
+	// the condition on its very first reading with no suppression whatever.
+	// Fail closed, so a state the fold has not marked cannot be raised.
+	if in.state.ExcursionSince.IsZero() ||
+		in.readingTS.Sub(in.state.ExcursionSince) < conditions.OpenFor {
+		scan.Unjudged[key] = true
+		delete(scan.Seen, key)
+		return
+	}
+
 	detail := map[string]any{
-		"value":       *in.value,
-		"warn":        bounds.Warn,
-		"crit":        bounds.Crit,
-		"p99":         baseline.P99,
-		"source":      bounds.Source,
-		"window_days": int(conditions.BaselineWindow / (24 * time.Hour)),
+		// The raw reading, because that is the number an operator will check
+		// against `uptime` or `sensors` and has to recognise. `fast` is what
+		// was judged, and saying so separately keeps the row honest without
+		// making the headline a figure that appears nowhere else.
+		"value":     *in.value,
+		"smoothed":  in.state.Fast,
+		"warn":      bounds.Warn,
+		"crit":      bounds.Crit,
+		"normal":    in.state.Slow,
+		"source":    bounds.Source,
+		"span_days": int(in.state.Span() / (24 * time.Hour)),
 		// When this reading was taken, which is what the API serves as
 		// measured_ts for a temperature condition.
 		//
@@ -261,12 +305,13 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		// a host three minutes behind on ingest must not record the onset as
 		// the moment the hub noticed.
 		//
-		// No walk back through the series, unlike the disk onset: the open
-		// delay means a deviation has been true for at least OpenAfter passes
-		// before it opens at all, and the baseline it is measured against is
-		// rebuilt daily -- so "when did this first cross" cannot be answered
-		// from history without asking which day's threshold to ask it about.
-		// A floor that is honest beats a number that looks precise.
+		// No walk back through the series, unlike the disk onset, and now for a
+		// stronger reason than before: the threshold is a moving average, so it
+		// was a different number at every past instant. "When did this first
+		// cross" has no answer without also asking which minute's threshold to
+		// ask it against, and reconstructing that would mean replaying the
+		// average backwards. A floor that is honest beats a number that looks
+		// precise.
 		OpenedTS:      *in.readingTS,
 		OpenedAtLeast: true,
 	}

@@ -492,7 +492,7 @@ function conditionMessage(
     const against =
       text(f, "source") === "device"
         ? `its own limit of ${reading(f, "crit")}`
-        : `a normal under ${reading(f, "p99")}`;
+        : `a normal under ${reading(f, "normal")}`;
     return `${named} — ${value}, against ${against}`;
   }
 
@@ -501,7 +501,7 @@ function conditionMessage(
 
 /** One deviation figure with its unit, or "" when the detail did not carry it.
  *
- * Rounded to one decimal for the reason the fleet list rounds: a p99 arrives as
+ * Rounded to one decimal for the reason the fleet list rounds: an average arrives as
  * 46.039215686274510 and printing that suggests the threshold is known to
  * fifteen figures, when it is a percentile over a week of 60-second samples. */
 function reading(fields: Record<string, unknown>, key: string): string {

@@ -22,6 +22,8 @@ type fakeStore struct {
 	applied  []conditions.Action
 	applyErr error
 	passes   int
+	folds    int
+	foldErr  error
 	// scannedOpen is what the last pass handed the scan, so a test can assert
 	// the onset walk is told which conditions already have one.
 	scannedOpen map[conditions.Key]bool
@@ -38,6 +40,22 @@ func (f *fakeStore) ScanConditions(_ context.Context, _ time.Time,
 	f.scannedOpen = open
 	f.scannedSince = since
 	return f.scan, f.scanErr
+}
+
+// FoldSamples records that it was called and, when foldErr is set, that a fold
+// failure does not cost the pass: the five kinds that owe the moving average
+// nothing must still be evaluated.
+func (f *fakeStore) FoldSamples(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.folds++
+	return f.foldErr
+}
+
+func (f *fakeStore) foldCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.folds
 }
 
 func (f *fakeStore) OpenConditions(context.Context) ([]conditions.Open, error) {

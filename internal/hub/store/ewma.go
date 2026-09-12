@@ -1,0 +1,236 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/trick77/netra/internal/hub/conditions"
+)
+
+// FoldSamples brings every subject's moving average up to date.
+//
+// ON THE EVALUATOR TICK, NOT ON INGEST, and that was a real choice. Updating
+// inside InsertHostSamples / InsertSensorSamples would be a read-modify-write
+// per subject per scrape inside the ingest transaction, against inserts that
+// are batched -- the expensive shape, on the one path that has to stay cheap.
+// Reading forward on the tick costs one range scan per family over the current
+// chunk, once a minute, and touches no hot path at all.
+//
+// What made the tick viable is that the fold reads forward from each row's OWN
+// updated_ts rather than taking the latest sample. A tick-driven update that
+// looked only at the newest row would absorb one reading per minute, so an
+// agent reconnecting with a buffered hour would have fifty-nine of its sixty
+// samples ignored and the average would track how often the hub looked rather
+// than what the host did. Folding from the high-water mark makes the two
+// identical.
+//
+// foldLimit bounds one pass. A host restored from a long outage, or a sensor
+// whose row was just created, can have days of samples waiting; folding all of
+// them in one statement would hold a transaction open across chunks while the
+// tick that needs the result waits. The remainder is folded on the next tick,
+// and the arithmetic is identical either way because the decay is computed from
+// each reading's own timestamp.
+const foldLimit = 20000
+
+// foldSource is one metric family the fold knows how to read.
+//
+// A table rather than three near-identical methods: the three differ only in
+// which rows to read and how to name the subject, and that is data. Adding
+// r_await_ms or io_util_pct later is a row here, which is the whole point of
+// moving to a primitive any metric can share.
+type foldSource struct {
+	kind string
+	// query returns (host_id, subject, value, ts) for every sample newer than
+	// the subject's own high-water mark, oldest first. $1 is the row limit.
+	query string
+}
+
+func foldSources() []foldSource {
+	return []foldSource{
+		{
+			kind: conditions.KindTemperature,
+			// Joined to sensors for the identity, and LEFT JOINed to the state
+			// so a sensor with no row yet still yields its samples -- that is
+			// how a new subject gets seeded.
+			query: `
+				SELECT s.host_id,
+				       netra_sensor_subject(sen.chip, sen.label, sen.instance) AS subject,
+				       sen.chip, s.temp, s.ts
+				  FROM sensor_samples s
+				  JOIN sensors sen
+				    ON sen.id = s.sensor_id AND sen.host_id = s.host_id
+				  LEFT JOIN metric_ewma e
+				    ON e.host_id = s.host_id
+				   AND e.kind    = 'temperature'
+				   AND e.subject = netra_sensor_subject(sen.chip, sen.label, sen.instance)
+				 WHERE sen.kind = 'temperature'
+				   AND s.temp IS NOT NULL
+				   AND (e.updated_ts IS NULL OR s.ts > e.updated_ts)
+				 ORDER BY s.ts
+				 LIMIT $1`,
+		},
+		{
+			kind: conditions.KindProcesses,
+			query: `
+				SELECT h.host_id, '', '', h.processes_total::double precision, h.ts
+				  FROM host_samples h
+				  LEFT JOIN metric_ewma e
+				    ON e.host_id = h.host_id AND e.kind = 'processes' AND e.subject = ''
+				 WHERE h.processes_total IS NOT NULL
+				   AND (e.updated_ts IS NULL OR h.ts > e.updated_ts)
+				 ORDER BY h.ts
+				 LIMIT $1`,
+		},
+		{
+			kind: conditions.KindLoad,
+			query: `
+				SELECT h.host_id, '', '', h.load5, h.ts
+				  FROM host_samples h
+				  LEFT JOIN metric_ewma e
+				    ON e.host_id = h.host_id AND e.kind = 'load' AND e.subject = ''
+				 WHERE h.load5 IS NOT NULL
+				   AND (e.updated_ts IS NULL OR h.ts > e.updated_ts)
+				 ORDER BY h.ts
+				 LIMIT $1`,
+		},
+	}
+}
+
+// FoldSamples advances every subject's state over the samples that have landed.
+func (s *Store) FoldSamples(ctx context.Context) error {
+	for _, src := range foldSources() {
+		if err := s.foldFamily(ctx, src); err != nil {
+			// Named, so a failure says which family stopped advancing rather
+			// than that "the fold" did.
+			return fmt.Errorf("fold %s: %w", src.kind, err)
+		}
+	}
+	return nil
+}
+
+// ewmaKey is one subject's identity within a family.
+type ewmaKey struct {
+	hostID  int32
+	subject string
+}
+
+func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
+	// Current state for every subject this family knows about, read once. The
+	// alternative -- a SELECT per subject as its samples arrive -- is a query
+	// per sensor per tick, which is the shape this whole change is getting rid
+	// of.
+	state, err := s.loadEWMA(ctx, src.kind)
+	if err != nil {
+		return err
+	}
+
+	rows, err := s.pool.Query(ctx, src.query, foldLimit)
+	if err != nil {
+		return fmt.Errorf("query samples: %w", err)
+	}
+	defer rows.Close()
+
+	touched := make(map[ewmaKey]bool)
+	for rows.Next() {
+		var key ewmaKey
+		var chip string
+		var value *float64
+		var ts time.Time
+		if err := rows.Scan(&key.hostID, &key.subject, &chip, &value, &ts); err != nil {
+			return fmt.Errorf("scan sample: %w", err)
+		}
+		if value == nil {
+			continue
+		}
+
+		// THE CHIP IS CARRIED THROUGH SO THIS FLOOR MATCHES THE JUDGEMENT'S.
+		//
+		// The floor decides the band's width, the band decides whether `fast`
+		// counts as outside it, and excursion_since is stamped from that -- so
+		// if the fold used a wider band than judgeDeviation does, a departure
+		// the judge can see would have no excursion recorded against it. Then
+		// the OpenFor check compares against a zero timestamp, which is an
+		// enormous duration, and the condition opens on its first reading with
+		// no suppression at all. Selecting sen.chip is cheaper than that class
+		// of bug, and the host kinds pass an empty string because they have no
+		// per-chip rule to disagree about.
+		floor := conditions.RuleFor(src.kind, chip).Floor
+		state[key] = state[key].Update(*value, ts, floor)
+		touched[key] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(touched) == 0 {
+		return nil
+	}
+
+	return s.saveEWMA(ctx, src.kind, state, touched)
+}
+
+func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditions.EWMA, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT host_id, subject, slow, fast, var, first_ts, updated_ts, excursion_since
+		  FROM metric_ewma WHERE kind = $1`, kind)
+	if err != nil {
+		return nil, fmt.Errorf("query state: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[ewmaKey]conditions.EWMA)
+	for rows.Next() {
+		var key ewmaKey
+		var e conditions.EWMA
+		var excursion *time.Time
+		if err := rows.Scan(&key.hostID, &key.subject, &e.Slow, &e.Fast, &e.Var,
+			&e.FirstTS, &e.UpdatedTS, &excursion); err != nil {
+			return nil, fmt.Errorf("scan state: %w", err)
+		}
+		if excursion != nil {
+			e.ExcursionSince = *excursion
+		}
+		out[key] = e
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) saveEWMA(ctx context.Context, kind string,
+	state map[ewmaKey]conditions.EWMA, touched map[ewmaKey]bool) error {
+	batch := &pgx.Batch{}
+	for key := range touched {
+		e := state[key]
+		var excursion *time.Time
+		if !e.ExcursionSince.IsZero() {
+			ex := e.ExcursionSince
+			excursion = &ex
+		}
+		batch.Queue(`
+			INSERT INTO metric_ewma
+			    (host_id, kind, subject, slow, fast, var, first_ts, updated_ts, excursion_since)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			ON CONFLICT (host_id, kind, subject) DO UPDATE
+			   SET slow = excluded.slow,
+			       fast = excluded.fast,
+			       var  = excluded.var,
+			       updated_ts = excluded.updated_ts,
+			       excursion_since = excluded.excursion_since`,
+			key.hostID, kind, key.subject, e.Slow, e.Fast, e.Var,
+			e.FirstTS, e.UpdatedTS, excursion)
+	}
+
+	// first_ts is deliberately NOT in the DO UPDATE list: it is the oldest
+	// reading ever folded in, which is what the warm-up is measured against,
+	// and rewriting it on every pass would keep the span at zero forever and
+	// leave every subject permanently unjudged.
+	results := s.pool.SendBatch(ctx, batch)
+	defer results.Close()
+	for range touched {
+		if _, err := results.Exec(); err != nil {
+			return fmt.Errorf("upsert state: %w", err)
+		}
+	}
+	return nil
+}

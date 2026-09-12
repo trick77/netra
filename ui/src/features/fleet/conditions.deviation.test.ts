@@ -63,11 +63,11 @@ describe("the deviation conditions", () => {
             value: 61,
             warn: 52,
             crit: 58,
-            p99: 46,
+            normal: 46,
             source: "baseline",
             unit: "C",
             chip: "drivetemp",
-            window_days: 7,
+            span_days: 12,
           },
           "drivetemp/temp1/sda",
         ),
@@ -84,7 +84,7 @@ describe("the deviation conditions", () => {
           value: 1842,
           warn: 1400,
           crit: 1600,
-          p99: 1210,
+          normal: 1210,
           source: "baseline",
         }),
       ]),
@@ -100,7 +100,7 @@ describe("the deviation conditions", () => {
             value: 86,
             warn: 80,
             crit: 85,
-            p99: 78,
+            normal: 78,
             source: "device",
             unit: "C",
             chip: "nvme",
@@ -120,7 +120,7 @@ describe("the deviation conditions", () => {
         value: 14.2,
         warn: 8,
         crit: 10,
-        p99: 6.1,
+        normal: 6.1,
         source: "baseline",
       }),
     ];
@@ -138,7 +138,7 @@ describe("the deviation conditions", () => {
       [
         deviationRow("load", {
           value: 14.2,
-          p99: 6.1,
+          normal: 6.1,
           source: "baseline",
         }),
       ],
@@ -156,7 +156,7 @@ describe("the deviation conditions", () => {
   // not run for it either, and the host would read clean on the fleet page
   // while the hub had a condition open on it.
   it("still shows a row carrying no reading, named by the catalogue", () => {
-    expect(sentence([deviationRow("load", { p99: 6.1 })])).toBe(
+    expect(sentence([deviationRow("load", { normal: 6.1 })])).toBe(
       "Load above normal",
     );
   });
@@ -168,17 +168,17 @@ describe("the deviation conditions", () => {
     const rows = [
       deviationRow(
         "temperature",
-        { value: 61, p99: 46, source: "baseline", unit: "C" },
+        { value: 61, normal: 46, source: "baseline", unit: "C" },
         "drivetemp/temp1/sda",
       ),
       deviationRow(
         "temperature",
-        { value: 57, p99: 45, source: "baseline", unit: "C" },
+        { value: 57, normal: 45, source: "baseline", unit: "C" },
         "drivetemp/temp1/sdb",
       ),
       deviationRow(
         "temperature",
-        { value: 55, p99: 44, source: "baseline", unit: "C" },
+        { value: 55, normal: 44, source: "baseline", unit: "C" },
         "drivetemp/temp1/sdc",
       ),
     ];
