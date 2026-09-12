@@ -289,11 +289,16 @@ func TestIntegrationHostKindsWaitLongerThanTemperature(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	seedHostCurrent(t, ctx, s, host, now)
 
-	// Two days: past temperature's warm-up, well inside the host kinds'.
-	const twoDays = 2 * 24 * 60
+	// Three days: past temperature's warm-up, well inside the host kinds'.
+	//
+	// Three rather than two because a subject is judged in one HOUR's bucket,
+	// and a bucket needs about two and a half days of its own hour before its
+	// band is trusted (conditions.WarmWeight). The subject-level MinSpan of a
+	// day is a floor that the bucket's own warm-up now sits above.
+	const warmed = 3 * 24 * 60
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, twoDays, 44)
-	seedHostSeries(t, ctx, s, host, now, twoDays, 300, 1.5)
+	seedSensorSeries(t, ctx, s, host, sensorID, now, warmed, 44)
+	seedHostSeries(t, ctx, s, host, now, warmed, 300, 1.5)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
@@ -336,7 +341,7 @@ func TestIntegrationADepartureFromNormalIsRaised(t *testing.T) {
 
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
 	// Two days at 44, then fifteen minutes at 61 -- past OpenFor.
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-15*time.Minute), 2*24*60, 44)
+	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-15*time.Minute), 3*24*60, 44)
 	seedSensorSeries(t, ctx, s, host, sensorID, now, 15, 61)
 
 	if err := s.FoldSamples(ctx); err != nil {
@@ -394,7 +399,7 @@ func TestIntegrationABriefExcursionIsUnjudgedNotRaised(t *testing.T) {
 	seedHostCurrent(t, ctx, s, host, now)
 
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-4*time.Minute), 2*24*60, 44)
+	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-4*time.Minute), 3*24*60, 44)
 	// Four minutes at 70. `fast` needs about two of them to cross the band, so
 	// the EXCURSION is only about two minutes old against OpenFor's three --
 	// which is the window this test is about.
@@ -437,7 +442,7 @@ func TestIntegrationABusyNVMeIsNotRaisedAgainstItsOwnNormal(t *testing.T) {
 
 	high, crit := 80.0, 85.0
 	sensorID := seedSensorLimits(t, ctx, s, host, "nvme", "Composite", "nvme0n1", &high, &crit)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 2*24*60, 65)
+	seedSensorSeries(t, ctx, s, host, sensorID, now, 3*24*60, 65)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
