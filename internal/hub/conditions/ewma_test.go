@@ -124,7 +124,7 @@ func TestTheExcursionIsDecidedAgainstTheCappedBand(t *testing.T) {
 	// it, so a reading of 61 is critical to the judge and inside the uncapped
 	// band to anything that forgot the cap.
 	e := EWMA{Fast: 50, FirstTS: epoch, UpdatedTS: epoch}
-	e.Hour[HourOf(epoch)] = Bucket{Slow: 50, Var: 16, UpdatedTS: epoch}
+	e.Hour[HourOf(epoch)] = Bucket{Slow: 50, Var: 16, Weight: 1}
 
 	uncappedWarn, uncappedCrit := now(e).Band(rule.Floor)
 	capped := DeviationThresholds(uncappedWarn, uncappedCrit, Limits{}, rule.Ceilings)

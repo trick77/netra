@@ -37,13 +37,21 @@ import (
 // sustained fault walks the variance up until the band overtakes the reading and
 // the hub reports a recovery for a drive that never cooled.
 //
-// Twenty-four buckets dissolve the conflict instead of trading it off. Each
-// bucket only ever sees ONE mode, because a host that is busy at noon is busy at
-// noon every day: the 23:00 bucket sees idle, the 12:00 bucket sees busy, and
-// neither is ever outside its own band, so neither ever freezes. Measured the
-// same way, 29 and 23 firing minutes over thirty days -- three orders of
-// magnitude, and what is left is the minute either side of a mode change while
-// `fast` catches up, which OpenFor swallows.
+// Twenty-four buckets dissolve the conflict instead of trading it off. A host
+// that is busy at noon is busy at noon every day, so the 23:00 bucket sees idle,
+// the 12:00 bucket sees busy, and neither is ever outside its own band. Measured
+// the same way, 29 and 23 firing minutes over thirty days -- three orders of
+// magnitude.
+//
+// That first cut only held for a day that begins on the hour, and review caught
+// it: a busy period starting at 08:15 put 1,305 minutes back, because the 08:00
+// bucket seeded on its idle quarter, froze the moment `fast` crossed into the
+// busy three quarters, and never learned them. Two more pieces make a MIXED hour
+// work -- a per-bucket warm-up during which nothing freezes (WarmWeight), and a
+// running fraction of visits spent outside the band that tells a recurring mode
+// from a fault (ModeFraction). Measured across mode changes at :00, :15, :30 and
+// :45: 29, 29, 42 and 89 firing minutes. What is left is the minute either side
+// of a mode change while `fast` catches up, which OpenFor swallows.
 //
 // WHAT STILL DOES NOT GO AWAY, because it would be easy to imply otherwise:
 //
@@ -76,11 +84,10 @@ const (
 	// therefore how long a persistent excursion takes to be accepted as the new
 	// normal.
 	//
-	// Seven days, so each bucket carries about a week of its own hour. Note
-	// that this is a week of WALL CLOCK either way: a bucket is advanced once
-	// per scrape like everything else, and the decay is computed from the gap
-	// since that bucket last saw a reading -- about a minute within an hour,
-	// about a day across the gap between one day's hour and the next.
+	// Seven days, so each bucket carries about a week of its own hour. Within
+	// a bucket that week is counted in observations rather than in wall clock
+	// -- see BucketAlpha for why -- but a full daily visit still weighs what a
+	// day of wall clock would, so the constant means the same thing in both.
 	TauSlow = 7 * 24 * time.Hour
 )
 
@@ -115,21 +122,107 @@ const OpenFor = 3 * time.Minute
 // Buckets is how many hour-of-day buckets each subject carries.
 const Buckets = 24
 
-// Bucket is what one hour of the day normally looks like for one subject.
+// BucketAlpha is the weight ONE READING carries in its hour's bucket, and it is
+// a constant rather than a function of elapsed time.
 //
-// UpdatedTS is per bucket and not a copy of the subject's, because the decay
-// has to be measured from the last reading THIS bucket saw. Within an hour that
-// is a minute ago; across the day boundary it is twenty-three hours ago, and
-// using the subject's own high-water mark would weight the first reading of each
-// hour as though no time had passed.
+// This is the one place the moving average deliberately does not decay by wall
+// clock, and the reason was measured. A bucket sees its hour once a day: sixty
+// readings a minute apart, then a twenty-three-hour gap. Time-based decay gave
+// the first reading after the gap alpha(23h, 7d) = 0.128 and the other fifty-nine
+// together about 0.006 -- so the :00 sample carried twenty-two times the rest of
+// the hour combined, the bucket was an average of one reading per day rather
+// than of the hour, and its variance was the day-to-day spread of that single
+// reading. A glitchy 64 C at 12:00:00 on a 44 C drive moved that hour's normal
+// by 2.6 C and its sd to 7 for the following week; a subject that swings within
+// the hour but is steady at :00 kept sd at the floor and fired.
+//
+// Every reading of an hour is instead one observation of that hour, weighted as
+// a sixtieth of a day against TauSlow. A full visit still totals about 0.13 --
+// the same daily decay as before, spread across the hour rather than dropped on
+// its first minute. A reconnecting agent's buffered hour folds in as sixty
+// observations exactly as a live hour does, because the fold advances from its
+// high-water mark and every reading reaches here.
+var BucketAlpha = alpha(24*ScrapeInterval, TauSlow)
+
+// WarmWeight is how much observation a bucket needs before its band is trusted,
+// either to judge against or to freeze on.
+//
+// About two and a half days of visits. Below it the bucket learns everything
+// unconditionally, because a band drawn from a day's worth of one hour is not a
+// basis for calling anything a fault -- and a mixed hour, one where the busy
+// period starts at 08:30, would otherwise seed on its idle half, freeze the
+// moment `fast` crossed into its busy half, and never learn the busy half at
+// all. Measured: 1,305 firing minutes over thirty days for a mode change at
+// 08:15, against 29 for one at 08:00 -- the every-morning condition returning
+// for any host whose day does not begin on the hour.
+const WarmWeight = 0.30
+
+// ModeFraction is the share of a bucket's observations that may fall outside
+// its band before the excursion is taken to be a MODE of that hour rather than
+// a fault, and learning resumes.
+//
+// This is the recurring-pattern half of the fault-versus-new-normal decision.
+// The per-subject rule -- an excursion that lasts longer than TauSlow is the
+// new normal -- only sees CONTINUOUS excursions, and a recurring one never is:
+// a cron job at 03:15 is outside the 03:00 band for thirty minutes and back
+// inside for the rest of the day, so the subject's clock resets every morning
+// and the bucket freezes on it forever. Counted as a fraction of the bucket's
+// own visits it is 50%, a fault is 100%, and an ordinary hour is 0%.
+//
+// A tenth, because a mode has to be allowed to be small. A busy period starting
+// at 08:45 occupies a quarter of the 08:00 bucket; a threshold of a quarter had
+// that bucket converging to exactly the line and never crossing it, measured at
+// 378 firing minutes. At a tenth, 89. The cost is that a genuine fault stops
+// being frozen out once it has been present for about a tenth of the window --
+// three quarters of a day -- after which the mean absorbs it over TauSlow as it
+// would have anyway, and the hardware limit and family ceiling hold a subject
+// that is absolutely too hot regardless.
+const ModeFraction = 0.10
+
+// ModeMaxLength is how long a single continuous excursion may run and still be
+// taken for a recurring mode rather than a fault.
+//
+// THE DISCRIMINATOR THE FRACTION ALONE DOES NOT HAVE. A fault crosses
+// ModeFraction after about three quarters of a day exactly as a mode does, and
+// once it did the bucket learned it: measured, a drive that went from 44 C to
+// 58 C and stayed had its band overtake the reading inside three days -- the
+// self-erasing failure again, at a slower rate. But a mode and a fault differ in
+// SHAPE, not only in share. A mode is bucket-local: the busy quarter of the
+// 08:00 hour lasts thirty minutes and then the 09:00 bucket, whose whole visit
+// is busy, takes over and reads the same level as inside its own band. A fault
+// is subject-global: it runs through every bucket for hours or days. So the
+// subject's continuous excursion clock -- which resets the moment any bucket
+// reads the level as normal -- is short for a mode and long for a fault, and a
+// bucket may only learn its recurring excursion while that clock is short.
+//
+// Ninety minutes: longer than any excursion a mixed hour can produce, since the
+// next bucket resolves it at the hour boundary, and far shorter than the day it
+// takes a fault to cross ModeFraction. A fault is then frozen out until the
+// subject-level TauSlow escape, which is the seven days the design promises.
+const ModeMaxLength = 90 * time.Minute
+
+// Bucket is what one hour of the day normally looks like for one subject.
 type Bucket struct {
-	Slow      float64
-	Var       float64
-	UpdatedTS time.Time
+	Slow float64
+	Var  float64
+
+	// Weight is how much observation this bucket rests on, approaching one.
+	// It is the bucket's own warm-up, and also its seed flag: zero is a bucket
+	// no reading has reached.
+	Weight float64
+
+	// Exc is the fraction of this bucket's observations that found `fast`
+	// outside the bucket's band, decayed at the same rate as everything else.
+	// See ModeFraction.
+	Exc float64
 }
 
 // Seeded reports whether this bucket has any reading in it.
-func (b Bucket) Seeded() bool { return !b.UpdatedTS.IsZero() }
+func (b Bucket) Seeded() bool { return b.Weight > 0 }
+
+// Ready reports whether this bucket has enough history for its band to mean
+// anything, which gates both judging against it and freezing on it.
+func (b Bucket) Ready() bool { return b.Weight >= WarmWeight }
 
 // Scale is the size of a meaningful departure, in the metric's own unit.
 //
@@ -220,10 +313,10 @@ func (e EWMA) Update(x float64, ts time.Time, rule FamilyRule, lim Limits) EWMA 
 	if !e.Seeded() {
 		// The first reading seeds the subject and its own hour, and no other:
 		// nothing is yet known about the twenty-three hours not seen. Var stays
-		// zero, so Scale falls back to the floor, and the warm-up is what keeps
-		// anything from being judged on it.
+		// zero, so Scale falls back to the floor, and the bucket's own warm-up
+		// is what keeps anything from being judged on it.
 		next := EWMA{Fast: x, FirstTS: ts, UpdatedTS: ts}
-		next.Hour[hour] = Bucket{Slow: x, UpdatedTS: ts}
+		next.Hour[hour] = Bucket{Slow: x, Weight: BucketAlpha}
 		return next
 	}
 
@@ -246,7 +339,16 @@ func (e EWMA) Update(x float64, ts time.Time, rule FamilyRule, lim Limits) EWMA 
 		// reading rather than from a neighbouring bucket: borrowing would import
 		// the wrong mode exactly at the boundary where the modes differ, which
 		// is the whole thing the buckets exist to separate.
-		next.Hour[hour] = Bucket{Slow: x, UpdatedTS: ts}
+		//
+		// The subject-level excursion is NOT cleared here, and that is the fix
+		// for a real bug: a drive at 61 C with a condition open, on a host
+		// normally off overnight, gets booted at 03:00. The 03:00 bucket seeds
+		// at 61, and if the excursion were reset the next scan would find `fast`
+		// inside a band centred on the fault and file the subject healthy --
+		// a miss against the open condition, and a second such hour closes it
+		// as a recovery. Left as it was, the judge sees an unready bucket and
+		// files the subject unjudged, which leaves the condition alone.
+		next.Hour[hour] = Bucket{Slow: x, Weight: BucketAlpha}
 		return next
 	}
 
@@ -274,40 +376,76 @@ func (e EWMA) Update(x float64, ts time.Time, rule FamilyRule, lim Limits) EWMA 
 	// excursion was recorded, and every condition the ceilings and the published
 	// limits exist to raise could not be raised at all.
 	w, c := b.Band(rule.Floor)
-	if next.Fast > DeviationThresholds(w, c, lim, rule.Ceilings).Warn {
+	outside := next.Fast > DeviationThresholds(w, c, lim, rule.Ceilings).Warn
+	if outside {
 		if next.ExcursionSince.IsZero() {
 			next.ExcursionSince = ts
-		}
-		// ...but an excursion that has outlasted the averaging window itself is
-		// not an excursion any more, whatever anyone thinks of it. Seven days at
-		// a level IS that level. Learning resumes, the band follows, and the
-		// condition clears on its own -- the same ruling the window design spelt
-		// as `opened_ts > cutoff`, in one comparison instead of a join.
-		//
-		// What keeps that safe for a subject genuinely in trouble is the other
-		// tier: a drive whose normal has crept to 58 C still meets its published
-		// limit, or its family ceiling, and stays critical on that.
-		if ts.Sub(next.ExcursionSince) < TauSlow {
-			return next
 		}
 	} else {
 		next.ExcursionSince = time.Time{}
 	}
 
-	a := alpha(ts.Sub(b.UpdatedTS), TauSlow)
-	d := x - b.Slow
-	nb := Bucket{
-		Slow:      b.Slow + a*d,
-		Var:       b.Var + a*(d*d-b.Var),
-		UpdatedTS: ts,
+	// WHEN THE BUCKET LEARNS, and it is four conditions rather than one
+	// because four different things have to be allowed through the freeze.
+	//
+	//  1. A bucket that is not yet Ready learns everything. Its band is drawn
+	//     from too little to call anything a fault, and a bucket seeded on the
+	//     idle half of a mixed hour would otherwise freeze the moment `fast`
+	//     crossed into the busy half, and never learn it. See WarmWeight.
+	//
+	//  2. A RECURRING excursion is a mode of that hour, not a fault, and the
+	//     bucket learns it. Recurring means two things at once: outside its
+	//     band for more than ModeFraction of its visits -- a cron job at 03:15
+	//     is outside for half of every 03:00 visit, forever -- AND the
+	//     subject's current continuous excursion is shorter than
+	//     ModeMaxLength, because a mode is resolved by the next bucket at the
+	//     hour boundary while a fault runs on for days. Either alone is wrong:
+	//     the fraction alone let a sustained fault through after three quarters
+	//     of a day, and the subject-level clock alone resets every morning and
+	//     never sees a recurring pattern at all. Measured: a new 03:15 job is
+	//     learned in three days; a drive that went to 58 C and stayed is held.
+	//
+	//  3. An excursion that has outlasted TauSlow is the new normal, whatever
+	//     anyone thinks of it. Seven days at a level IS that level, and the
+	//     condition clears on its own -- the same ruling the window design spelt
+	//     as `opened_ts > cutoff`, in one comparison instead of a join. What
+	//     keeps that safe for a subject genuinely in trouble is the other tier:
+	//     a drive whose normal has crept to 58 C still meets its published limit
+	//     or its family ceiling, and stays critical on that.
+	//
+	//  4. Inside the band, it simply learns.
+	//
+	// A continuous fault fails all four for as long as it has to: it is
+	// outside, the bucket is ready, its excursion is hours old rather than
+	// minutes, and it is younger than a week. It is frozen out for that week.
+	nb := b
+	excursion := ts.Sub(next.ExcursionSince)
+	recurring := b.Exc > ModeFraction && excursion < ModeMaxLength
+	accepted := excursion >= TauSlow
+	if !b.Ready() || recurring || accepted || !outside {
+		d := x - b.Slow
+		nb.Slow += BucketAlpha * d
+		nb.Var += BucketAlpha * (d*d - b.Var)
+		if nb.Var < 0 {
+			// Arithmetic only, not a reachable state: alpha is in (0,1) so the
+			// update cannot go negative mathematically. Floored anyway because
+			// Var feeds a square root, and a NaN threshold would judge every
+			// reading as healthy -- failing silent, the one direction this
+			// must not fail.
+			nb.Var = 0
+		}
 	}
-	if nb.Var < 0 {
-		// Arithmetic only, not a reachable state: a is in (0,1) so the update
-		// cannot go negative mathematically. Floored anyway because Var feeds a
-		// square root, and a NaN threshold would judge every reading as healthy
-		// -- failing silent, which is the one direction this must not fail.
-		nb.Var = 0
+
+	// The fraction and the weight advance on EVERY observation, learned or
+	// frozen. The fraction has to keep counting while frozen or it could never
+	// reach the threshold that unfreezes it; the weight is how much the bucket
+	// has seen, which a frozen reading still is.
+	seen := 0.0
+	if outside {
+		seen = 1
 	}
+	nb.Exc += BucketAlpha * (seen - b.Exc)
+	nb.Weight += BucketAlpha * (1 - b.Weight)
 	next.Hour[hour] = nb
 	return next
 }

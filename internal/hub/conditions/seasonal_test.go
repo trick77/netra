@@ -21,10 +21,18 @@ import (
 // test is arithmetic: whether the band converges to contain ordinary behaviour.
 // The store tests cover the fold and the scan actually carrying it.
 
-// bimodal is a subject that is idle at night and busy by day, every day.
-func bimodal(idle, busy float64, busyHours int) func(int) float64 {
+// bimodal is a subject that is idle at night and busy by day, every day, with
+// the busy period starting `offset` minutes past 08:00.
+//
+// THE OFFSET IS THE POINT. The first cut of this test only used schedules that
+// switched on the hour, and passed, while a switch at 08:15 measured 1,305
+// firing minutes: the 08:00 bucket seeded on its idle quarter, froze the moment
+// the reading crossed into the busy three quarters, and never learned them.
+// Real hosts do not begin their day on the hour.
+func bimodal(idle, busy float64, offset, busyHours int) func(int) float64 {
 	return func(min int) float64 {
-		if h := (min / 60) % 24; h >= 8 && h < 8+busyHours {
+		d := min % (24 * 60)
+		if start := 8*60 + offset; d >= start && d < start+busyHours*60 {
 			return busy
 		}
 		return idle
@@ -55,7 +63,7 @@ func firingMinutes(t *testing.T, kind, chip string, at func(int) float64, days i
 			continue
 		}
 		b := e.Bucket(HourOf(ts))
-		if !b.Seeded() {
+		if !b.Ready() {
 			continue
 		}
 		w, c := b.Band(rule.Floor)
@@ -67,26 +75,31 @@ func firingMinutes(t *testing.T, kind, chip string, at func(int) float64, days i
 }
 
 // A host that does more work by day than by night is not a host with a problem,
-// and must not read as one.
+// and must not read as one -- whatever minute its day begins on.
 func TestASeasonalSubjectDoesNotFireEveryMorning(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		kind, chip string
 		at         func(int) float64
-		// The single-average design's measured count, for the record.
+		// What an earlier design measured on this shape, for the record.
 		wasFiring int
 	}{
-		{"cpu 40/70 C busy 16h", KindTemperature, "coretemp", bimodal(40, 70, 16), 27840},
-		{"load5 0.2/3.0 busy 12h", KindLoad, "", bimodal(0.2, 3.0, 12), 16560},
-		{"procs 300/600 busy 12h", KindProcesses, "", bimodal(300, 600, 12), 16560},
+		{"cpu 40/70 C busy 16h @08:00", KindTemperature, "coretemp", bimodal(40, 70, 0, 16), 27840},
+		{"cpu 40/70 C busy 16h @08:15", KindTemperature, "coretemp", bimodal(40, 70, 15, 16), 1305},
+		{"cpu 40/70 C busy 16h @08:30", KindTemperature, "coretemp", bimodal(40, 70, 30, 16), 870},
+		{"cpu 40/70 C busy 16h @08:45", KindTemperature, "coretemp", bimodal(40, 70, 45, 16), 435},
+		{"load5 0.2/3.0 busy 12h @08:00", KindLoad, "", bimodal(0.2, 3.0, 0, 12), 16560},
+		{"load5 0.2/3.0 busy 12h @08:30", KindLoad, "", bimodal(0.2, 3.0, 30, 12), 0},
+		{"procs 300/600 busy 12h @08:20", KindProcesses, "", bimodal(300, 600, 20, 12), 0},
 	} {
 		firing, e := firingMinutes(t, tc.kind, tc.chip, tc.at, 30)
 
-		// Generous against the measured 23-29, and still three orders of
-		// magnitude under the single-average design. A regression that
-		// reintroduced one average per subject fails this by a factor of 200.
+		// Generous against the measured 23-89, and still well under the worst
+		// case any earlier design produced. A regression to one average per
+		// subject fails this by two orders of magnitude; a regression to
+		// hour-aligned-only fails the offset rows by a factor of two to six.
 		if firing > 200 {
-			t.Errorf("%s: %d firing minutes over 30 days (one average measured %d) -- "+
+			t.Errorf("%s: %d firing minutes over 30 days (an earlier design measured %d) -- "+
 				"a seasonal subject is being reported as abnormal",
 				tc.name, firing, tc.wasFiring)
 		}
@@ -99,9 +112,63 @@ func TestASeasonalSubjectDoesNotFireEveryMorning(t *testing.T) {
 			t.Errorf("%s: midday normal %.2f is not above the small-hours normal %.2f",
 				tc.name, busy.Slow, idle.Slow)
 		}
-		fmt.Printf("%-26s firing=%4d  midday normal=%.2f  night normal=%.2f\n",
+		fmt.Printf("%-30s firing=%4d  midday normal=%.2f  night normal=%.2f\n",
 			tc.name, firing, busy.Slow, idle.Slow)
 	}
+}
+
+// A recurring pattern that appears AFTER the subject has warmed up -- a new
+// cron job -- must be learned within days, not fired on forever.
+//
+// This is the case the subject-level TauSlow escape cannot see: the excursion
+// lasts thirty minutes and then the reading is back inside its band, so the
+// continuous clock resets every morning. Only the bucket's own running fraction
+// of visits spent outside can notice that the 03:00 hour has changed.
+func TestANewRecurringPatternIsLearnedWithinDays(t *testing.T) {
+	rule := RuleFor(KindTemperature, "coretemp")
+	base := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+
+	newJob := func(min int) float64 {
+		day, d := min/(24*60), min%(24*60)
+		if day >= 12 && d >= 3*60+15 && d < 3*60+45 {
+			return 70
+		}
+		return 40
+	}
+
+	e := EWMA{}
+	perDay := map[int]int{}
+	for min := range 30 * 24 * 60 {
+		ts := base.Add(time.Duration(min) * time.Minute)
+		e = e.Update(newJob(min), ts, rule, Limits{})
+		if e.Span() < rule.MinSpan {
+			continue
+		}
+		b := e.Bucket(HourOf(ts))
+		if !b.Ready() {
+			continue
+		}
+		w, c := b.Band(rule.Floor)
+		if DeviationSeverity(e.Fast, DeviationThresholds(w, c, Limits{}, rule.Ceilings)) != "" {
+			perDay[min/(24*60)]++
+		}
+	}
+
+	// It fires on the first days, which is right: nobody told netra about the
+	// job, and thirty minutes at 70 C on a 40 C host IS a departure until it
+	// has recurred. It must then stop.
+	if perDay[12] == 0 {
+		t.Error("the new job was not noticed on its first day")
+	}
+	if perDay[19] != 0 || perDay[25] != 0 {
+		t.Errorf("still firing a week later: day 19 = %d, day 25 = %d minutes -- "+
+			"the recurring pattern was never learned", perDay[19], perDay[25])
+	}
+	fmt.Printf("new 03:15 job from day 12, firing minutes per day:")
+	for d := 12; d < 20; d++ {
+		fmt.Printf(" d%d=%d", d, perDay[d])
+	}
+	fmt.Println()
 }
 
 // A subject with no daily rhythm must not be made worse by the bucketing: every
@@ -124,8 +191,9 @@ func TestAFlatSubjectIsUnaffectedByBucketing(t *testing.T) {
 }
 
 // The buckets must not cost fault detection. A drive that goes hot and stays
-// hot is caught in the hour it happens and stays caught, because every bucket
-// it then passes through sees the excursion.
+// hot is caught in the hour it happens and stays caught for the week the design
+// promises, because a fault is subject-global -- it runs through every bucket
+// for hours -- and ModeMaxLength tells that from a recurring mode.
 func TestASustainedFaultIsStillCaughtAcrossEveryHour(t *testing.T) {
 	rule := RuleFor(KindTemperature, ChipDriveTemp)
 	base := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
@@ -136,12 +204,13 @@ func TestASustainedFaultIsStillCaughtAcrossEveryHour(t *testing.T) {
 		e = e.Update(44, base.Add(time.Duration(min)*time.Minute), rule, Limits{})
 	}
 
-	// Then three days at 61, spanning every hour of the day.
+	// Then five days at 58 -- under the 60 C ceiling, so only the baseline tier
+	// can hold it -- spanning every hour of the day.
 	start := 10 * 24 * 60
 	caught, total := 0, 0
-	for min := start; min < start+3*24*60; min++ {
+	for min := start; min < start+5*24*60; min++ {
 		ts := base.Add(time.Duration(min) * time.Minute)
-		e = e.Update(61, ts, rule, Limits{})
+		e = e.Update(58, ts, rule, Limits{})
 		b := e.Bucket(HourOf(ts))
 		w, c := b.Band(rule.Floor)
 		total++
@@ -152,7 +221,7 @@ func TestASustainedFaultIsStillCaughtAcrossEveryHour(t *testing.T) {
 
 	// Everything but the couple of minutes `fast` takes to climb.
 	if caught < total-5 {
-		t.Errorf("caught %d of %d minutes: the fault is being lost at hour boundaries",
-			caught, total)
+		t.Errorf("caught %d of %d minutes: the baseline tier let a sustained fault "+
+			"through before its week was up", caught, total)
 	}
 }

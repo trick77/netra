@@ -57,7 +57,7 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		       sen.limit_high, sen.limit_high_crit,
 		       l.temp, l.ts,
 		       eh.slow, e.fast, eh.var, e.first_ts, e.updated_ts,
-		       eh.updated_ts, e.excursion_since
+		       eh.weight, eh.exc, e.excursion_since
 		  FROM sensors sen
 		  LEFT JOIN latest l
 		         ON l.sensor_id = sen.id AND l.host_id = sen.host_id
@@ -86,12 +86,12 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 	for rows.Next() {
 		var hostID int32
 		var subject, chip string
-		var limitHigh, limitCrit, temp, slow, fast, variance *float64
-		var readingTS, firstTS, updatedTS, bucketTS, excursion *time.Time
+		var limitHigh, limitCrit, temp, slow, fast, variance, weight, exc *float64
+		var readingTS, firstTS, updatedTS, excursion *time.Time
 
 		if err := rows.Scan(&hostID, &subject, &chip, &limitHigh, &limitCrit,
 			&temp, &readingTS, &slow, &fast, &variance, &firstTS, &updatedTS,
-			&bucketTS, &excursion); err != nil {
+			&weight, &exc, &excursion); err != nil {
 			return fmt.Errorf("scan sensor: %w", err)
 		}
 
@@ -100,7 +100,7 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		judgeDeviation(scan, key, deviationInput{
 			value:     temp,
 			readingTS: readingTS,
-			state:     ewmaOf(hourOf(readingTS), slow, fast, variance, firstTS, updatedTS, bucketTS, excursion),
+			state:     ewmaOf(hourOf(readingTS), slow, fast, variance, weight, exc, firstTS, updatedTS, excursion),
 			isOpen:    open[key],
 			rule:      conditions.RuleFor(conditions.KindTemperature, chip),
 			limits:    conditions.Limits{High: limitHigh, HighCrit: limitCrit},
@@ -130,9 +130,9 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		SELECT h.id,
 		       l.processes_total, l.load5, l.ts,
 		       ehp.slow, ep.fast, ehp.var, ep.first_ts, ep.updated_ts,
-		       ehp.updated_ts, ep.excursion_since,
+		       ehp.weight, ehp.exc, ep.excursion_since,
 		       ehl.slow, el.fast, ehl.var, el.first_ts, el.updated_ts,
-		       ehl.updated_ts, el.excursion_since
+		       ehl.weight, ehl.exc, el.excursion_since
 		  FROM hosts h
 		  LEFT JOIN latest l ON l.host_id = h.id
 		  LEFT JOIN metric_ewma ep
@@ -157,13 +157,13 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		var procs *int
 		var load *float64
 		var readingTS *time.Time
-		var pSlow, pFast, pVar, lSlow, lFast, lVar *float64
-		var pFirst, pUpdated, pBucket, pExcursion *time.Time
-		var lFirst, lUpdated, lBucket, lExcursion *time.Time
+		var pSlow, pFast, pVar, pWeight, pExc, lSlow, lFast, lVar, lWeight, lExc *float64
+		var pFirst, pUpdated, pExcursion *time.Time
+		var lFirst, lUpdated, lExcursion *time.Time
 
 		if err := rows.Scan(&hostID, &procs, &load, &readingTS,
-			&pSlow, &pFast, &pVar, &pFirst, &pUpdated, &pBucket, &pExcursion,
-			&lSlow, &lFast, &lVar, &lFirst, &lUpdated, &lBucket, &lExcursion); err != nil {
+			&pSlow, &pFast, &pVar, &pFirst, &pUpdated, &pWeight, &pExc, &pExcursion,
+			&lSlow, &lFast, &lVar, &lFirst, &lUpdated, &lWeight, &lExc, &lExcursion); err != nil {
 			return fmt.Errorf("scan host gauge: %w", err)
 		}
 
@@ -177,7 +177,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		judgeDeviation(scan, procKey, deviationInput{
 			value:     procValue,
 			readingTS: readingTS,
-			state:     ewmaOf(hourOf(readingTS), pSlow, pFast, pVar, pFirst, pUpdated, pBucket, pExcursion),
+			state:     ewmaOf(hourOf(readingTS), pSlow, pFast, pVar, pWeight, pExc, pFirst, pUpdated, pExcursion),
 			isOpen:    open[procKey],
 			rule:      conditions.RuleFor(conditions.KindProcesses, ""),
 		})
@@ -186,7 +186,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		judgeDeviation(scan, loadKey, deviationInput{
 			value:     load,
 			readingTS: readingTS,
-			state:     ewmaOf(hourOf(readingTS), lSlow, lFast, lVar, lFirst, lUpdated, lBucket, lExcursion),
+			state:     ewmaOf(hourOf(readingTS), lSlow, lFast, lVar, lWeight, lExc, lFirst, lUpdated, lExcursion),
 			isOpen:    open[loadKey],
 			rule:      conditions.RuleFor(conditions.KindLoad, ""),
 		})
@@ -235,12 +235,12 @@ type deviationInput struct {
 // suppression in judgeDeviation is measured from it, so a zero value makes
 // every departure look either brand new or infinitely old depending on which
 // way the comparison falls. The CI failure that found this had both.
-func ewmaOf(hour int, slow, fast, variance *float64,
-	firstTS, updatedTS, bucketTS, excursion *time.Time) conditions.EWMA {
+func ewmaOf(hour int, slow, fast, variance, weight, exc *float64,
+	firstTS, updatedTS, excursion *time.Time) conditions.EWMA {
 	if fast == nil || firstTS == nil || updatedTS == nil {
 		return conditions.EWMA{}
 	}
-	if slow == nil || variance == nil || bucketTS == nil {
+	if slow == nil || variance == nil || weight == nil || exc == nil {
 		// The subject is watched but this HOUR is not: a state seeded less than
 		// a day ago has most of its buckets empty. Returned with the
 		// per-subject half intact so the span gate still sees the real history,
@@ -255,7 +255,7 @@ func ewmaOf(hour int, slow, fast, variance *float64,
 	// that one is judged against. Its index is not stored on the bucket, so the
 	// caller passes it and the slot is filled directly.
 	if hour >= 0 && hour < conditions.Buckets {
-		e.Hour[hour] = conditions.Bucket{Slow: *slow, Var: *variance, UpdatedTS: *bucketTS}
+		e.Hour[hour] = conditions.Bucket{Slow: *slow, Var: *variance, Weight: *weight, Exc: *exc}
 	}
 	if excursion != nil {
 		e.ExcursionSince = *excursion
@@ -324,7 +324,14 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 	// afternoon knows nothing about this morning, and judging against an empty
 	// bucket would compare the reading against zero.
 	bucket := in.state.Bucket(conditions.HourOf(*in.readingTS))
-	if !bucket.Seeded() {
+	if !bucket.Ready() {
+		// Unseeded, or seeded on too little. An hour the subject has not been
+		// observed through enough is not one it can be judged in -- and this is
+		// also what keeps a bucket that was seeded ON a fault from clearing the
+		// condition: a drive at 61 C on a host booted at 03:00 for the first
+		// time seeds the 03:00 bucket at 61, and judging against that band
+		// would file the subject healthy, which is a miss against its open
+		// condition. Unjudged leaves the condition alone.
 		scan.Unjudged[key] = true
 		return
 	}

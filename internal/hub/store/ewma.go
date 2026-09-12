@@ -304,7 +304,7 @@ func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditio
 	}
 
 	buckets, err := s.pool.Query(ctx, `
-		SELECT host_id, subject, hour, slow, var, updated_ts
+		SELECT host_id, subject, hour, slow, var, weight, exc
 		  FROM metric_ewma_hour WHERE kind = $1`, kind)
 	if err != nil {
 		return nil, fmt.Errorf("query buckets: %w", err)
@@ -316,7 +316,7 @@ func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditio
 		var hour int16
 		var b conditions.Bucket
 		if err := buckets.Scan(&key.hostID, &key.subject, &hour,
-			&b.Slow, &b.Var, &b.UpdatedTS); err != nil {
+			&b.Slow, &b.Var, &b.Weight, &b.Exc); err != nil {
 			return nil, fmt.Errorf("scan bucket: %w", err)
 		}
 		// A bucket whose subject row is missing is skipped rather than
@@ -371,13 +371,14 @@ func (s *Store) saveEWMA(ctx context.Context, kind string,
 			b := e.Hour[hour]
 			batch.Queue(`
 				INSERT INTO metric_ewma_hour
-				    (host_id, kind, subject, hour, slow, var, updated_ts)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
+				    (host_id, kind, subject, hour, slow, var, weight, exc)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				ON CONFLICT (host_id, kind, subject, hour) DO UPDATE
-				   SET slow = excluded.slow,
-				       var  = excluded.var,
-				       updated_ts = excluded.updated_ts`,
-				key.hostID, kind, key.subject, hour, b.Slow, b.Var, b.UpdatedTS)
+				   SET slow   = excluded.slow,
+				       var    = excluded.var,
+				       weight = excluded.weight,
+				       exc    = excluded.exc`,
+				key.hostID, kind, key.subject, hour, b.Slow, b.Var, b.Weight, b.Exc)
 			queued++
 		}
 	}

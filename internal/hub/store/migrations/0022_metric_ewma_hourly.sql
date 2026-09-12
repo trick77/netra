@@ -24,10 +24,18 @@
 -- the reading and the hub reports a recovery for a drive that never cooled.
 --
 -- Twenty-four buckets dissolve that instead of trading it off. A host busy at
--- noon is busy at noon every day, so each bucket sees ONE mode and is never
--- outside its own band. Measured the same way: 29 and 23 firing minutes over
--- thirty days, and what remains is the minute either side of a mode change while
--- `fast` catches up, which OpenFor swallows.
+-- noon is busy at noon every day, so the 23:00 bucket sees idle, the 12:00
+-- bucket sees busy, and neither is ever outside its own band. Measured the same
+-- way: 29 and 23 firing minutes over thirty days.
+--
+-- That first cut only held for a day that begins on the hour, and review caught
+-- it: a busy period starting at 08:15 put 1,305 minutes back, because the 08:00
+-- bucket seeded on its idle quarter, froze the moment the reading crossed into
+-- the busy three quarters, and never learned them. The `weight` and `exc`
+-- columns below are what make a MIXED hour work. Measured across mode changes at
+-- :00, :15, :30 and :45: 29, 29, 42 and 89 firing minutes, and what remains is
+-- the minute either side of a mode change while `fast` catches up, which OpenFor
+-- swallows.
 
 -- The seasonal half, one row per subject per hour of day.
 CREATE TABLE IF NOT EXISTS metric_ewma_hour (
@@ -45,13 +53,33 @@ CREATE TABLE IF NOT EXISTS metric_ewma_hour (
     slow DOUBLE PRECISION NOT NULL,
     var  DOUBLE PRECISION NOT NULL DEFAULT 0,
 
-    -- Per bucket, and NOT a copy of the subject's high-water mark. The decay has
-    -- to be measured from the last reading THIS bucket saw: a minute ago within
-    -- an hour, twenty-three hours ago across the day boundary. Using the
-    -- subject's mark would weight the first reading of each hour as though no
-    -- time had passed, and the bucket would then track the last few minutes of
-    -- its hour rather than the hour.
-    updated_ts TIMESTAMPTZ NOT NULL,
+    -- How much observation this bucket rests on, approaching one. It is the
+    -- bucket's own warm-up -- below WarmWeight its band is trusted neither to
+    -- judge against nor to freeze on -- and its seed flag, since a bucket no
+    -- reading has reached is zero.
+    --
+    -- NO updated_ts, and the omission is deliberate. A bucket sees its hour
+    -- once a day: sixty readings a minute apart, then a twenty-three-hour gap.
+    -- Decaying by the gap since the bucket's own last reading gave the first
+    -- reading after the gap 0.128 of the weight and the other fifty-nine about
+    -- 0.006 between them, so the bucket averaged one reading per day rather
+    -- than the hour. Every reading is instead one observation of the hour at a
+    -- constant weight (conditions.BucketAlpha), and a full visit still totals
+    -- what a day of wall clock would. Ordering and de-duplication are the
+    -- subject row's job, against its own updated_ts.
+    weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+
+    -- The fraction of this bucket's observations that found the subject
+    -- outside the bucket's band, decayed at the same rate as everything else.
+    --
+    -- This is how a recurring pattern is told from a fault. The subject-level
+    -- rule accepts an excursion as the new normal once it has lasted TauSlow,
+    -- but only a CONTINUOUS one: a cron job at 03:15 is outside the 03:00 band
+    -- for thirty minutes and back inside for the rest of the day, so that clock
+    -- resets every morning and the bucket would freeze on it forever. As a
+    -- share of the bucket's own visits it is 50%, a fault is 100%, an ordinary
+    -- hour is 0%, and past ModeFraction the bucket learns it.
+    exc DOUBLE PRECISION NOT NULL DEFAULT 0,
 
     PRIMARY KEY (host_id, kind, subject, hour)
 );
