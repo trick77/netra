@@ -42,6 +42,16 @@ type Store interface {
 	ScanConditions(ctx context.Context, now time.Time, open map[Key]bool, since time.Time) (Scan, error)
 	OpenConditions(ctx context.Context) ([]Open, error)
 	ApplyConditions(ctx context.Context, actions []Action, now time.Time) error
+
+	// FoldSamples brings every subject's moving average up to date with the
+	// samples that have landed since it was last advanced.
+	//
+	// Before the scan, always, or a subject would be judged against an average
+	// that stops one reading short of the one being judged. It reads forward
+	// from each row's own updated_ts rather than over a fixed window, which is
+	// what makes a reconnecting agent's buffered hour fold in as sixty readings
+	// a minute apart instead of as a single jump.
+	FoldSamples(ctx context.Context) error
 }
 
 // Evaluator keeps host_conditions in step with what the hub can see.
@@ -57,9 +67,6 @@ type Evaluator struct {
 	// same escape hatch the agent's client keeps for its own ticker. Nothing
 	// mutates it after construction.
 	interval time.Duration
-	// delay is the open-side hysteresis for the deviation kinds, and the one
-	// piece of state this loop carries between passes. See conditions.Delay.
-	delay *Delay
 }
 
 // New builds an Evaluator that began running at startedAt.
@@ -69,7 +76,6 @@ func New(store Store, startedAt time.Time) *Evaluator {
 		now:       time.Now,
 		startedAt: startedAt,
 		interval:  Interval,
-		delay:     NewDelay(),
 	}
 }
 
@@ -144,6 +150,16 @@ func (e *Evaluator) Once(ctx context.Context) error {
 		openKeys[o.Key] = true
 	}
 
+	// The moving averages first, so the scan judges each subject against an
+	// average that already includes the reading it is about to judge.
+	//
+	// Logged and swallowed rather than returned: a fold that failed costs the
+	// deviation kinds one tick of freshness, and the five kinds that owe the
+	// moving average nothing should not lose a whole pass over it.
+	if err := e.store.FoldSamples(ctx); err != nil {
+		slog.Error("condition evaluation: fold samples", "err", err)
+	}
+
 	scan, err := e.store.ScanConditions(ctx, now, openKeys, e.startedAt)
 	if err != nil {
 		return err
@@ -169,11 +185,6 @@ func (e *Evaluator) Once(ctx context.Context) error {
 			}
 		}
 	}
-
-	// The open-side delay, after the warm-up guard and before Diff: a
-	// deviation finding has to survive OpenAfter consecutive passes before the
-	// state machine is told about it at all.
-	e.delay.Apply(scan, open)
 
 	actions := Diff(open, scan, now)
 	if len(actions) == 0 {

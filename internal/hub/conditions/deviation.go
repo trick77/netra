@@ -22,143 +22,6 @@ import (
 // cannot tell a spinning disk from an NVMe. Each covers the other's blind spot,
 // which is why both are here and neither alone would do.
 
-// How wide a subject's normal range has to be exceeded before it is notable.
-//
-// Two margins, and the answer is the larger, because either one alone fails on
-// a real sensor. The RANGE margin is the honest reading for a subject that
-// swings: a CPU between 35 and 75 C says its own tolerance is wide, and half
-// that span is a meaningful step beyond it. It collapses to nothing on a sensor
-// that never moves -- a drive in a climate-controlled rack holding 38.0 to 38.4
-// C for a week gets a margin of 0.2 C and alarms on the first warm afternoon.
-// The MAGNITUDE margin exists for exactly that subject: five per cent of a
-// reading is a step that scales with the unit, so it is 2 C on a drive and 0.3
-// on a load average without either being written down separately.
-const (
-	MarginRangePct     = 0.50
-	MarginMagnitudePct = 0.05
-)
-
-// BaselineWindow is how much history a baseline is measured over.
-//
-// Seven days, matching raw retention exactly -- so no continuous aggregate is
-// needed and nothing is measured over buckets that have already been rolled up.
-// It is also the widest window available for free, and width is what makes the
-// percentile robust: at the 60 s scrape cadence a week is 10,080 samples, so
-// p99 is the top hundred or so. A 24-hour window is 1,440 samples, where p99 is
-// the fourteenth-highest reading -- about fourteen minutes of the day, which a
-// single nightly backup sets on its own. A week also contains the weekly cycle,
-// and weekday load is not weekend load on anything that serves people.
-const BaselineWindow = 7 * 24 * time.Hour
-
-// BaselineMinSamples is the floor for STORING a baseline at all, and the least
-// history any kind may judge on.
-//
-// ~34 h at the 60 s cadence. Below it the subject is UNJUDGED rather than
-// healthy -- a new host must not be declared fine by a rule that has not
-// watched it yet, and must not be declared broken by percentiles drawn from one
-// afternoon.
-//
-// It is also the number the recompute's own gate uses
-// (0020_metric_baselines.sql), and the two are deliberately not the same
-// question. The SQL asks "is this worth storing"; the per-kind gates below ask
-// "is this enough to judge THIS kind on". Keeping the storage floor at the
-// lowest of them means a subject's row is already sitting there, accumulating,
-// while the kind that needs a longer history waits for it.
-const BaselineMinSamples = 2000
-
-// BaselineWeeklySamples is enough history to have seen a whole weekly cycle.
-//
-// A full week at the 60 s cadence is 10,080 samples, and THE GATE MUST SIT
-// BELOW THAT RATHER THAN AT IT. Raw retention is 7 days, so the window can
-// never hold more than a perfect week -- a gate at 10,080 would require a host
-// that has not missed a single scrape since it was installed, and any host that
-// ever drops one would never be judged at all. 8,000 leaves room for the 20 %
-// loss that SporadicMissRatio tolerates before the host is flagged as sporadic
-// on its own account, so a host netra considers to be reporting normally can
-// always reach it.
-const BaselineWeeklySamples = 8000
-
-// OpenAfter is how many consecutive ticks must find a reading over the line
-// before the condition opens.
-//
-// Observium calls this the alert delay, and it is the other half of the
-// hysteresis clearAfter provides. clearAfter smooths only the CLOSING side: a
-// condition still opens on the first observation, so a nightly cron burst that
-// lifts load5 for ninety seconds writes a critical event every night. Three
-// ticks is three minutes, which is shorter than any incident worth paging about
-// and longer than every scheduled spike that is not one.
-//
-// Asymmetric against clearAfter = 2 on purpose, and in the opposite direction
-// to it. For the five older kinds you want to know QUICKLY and can wait for the
-// all-clear, because their predicates do not flap. A deviation predicate flaps
-// by nature -- it is a continuous quantity sitting near a line -- so it pays
-// the delay on the way in as well.
-const OpenAfter = 3
-
-// Delay holds the open-side hysteresis: how many consecutive passes have found
-// each not-yet-open subject over its line.
-//
-// DELIBERATELY NOT INSIDE Diff, and the reason is that it is not a property of
-// the diff. A finding that has been over the line once is not a condition the
-// state machine should know about yet -- it is a reading. So the delay filters
-// the scan BEFORE Diff sees it, Diff keeps the single meaning of Scan.Bad it
-// has always had, and its whole state machine stays pure and untouched.
-//
-// In memory rather than in a column, because the count is worth exactly one
-// hub process. A restart forgetting that load5 was high for two of the last
-// three minutes costs three more minutes before the condition opens; persisting
-// it would buy that back in exchange for a write per subject per tick, forever.
-type Delay struct {
-	seen map[Key]int
-}
-
-// NewDelay builds an empty delay tracker.
-func NewDelay() *Delay { return &Delay{seen: make(map[Key]int)} }
-
-// Apply removes findings that have not yet been over the line often enough,
-// and forgets subjects that have recovered.
-//
-// ONLY FOR SUBJECTS WITH NO OPEN CONDITION. Withholding a finding whose
-// condition is already open would read to Diff as a MISS, and two misses close
-// it -- so a drive genuinely over its limit would have its condition opened,
-// closed, reopened and closed again forever, writing a transition pair every
-// few minutes and losing its onset each time. The delay decides when to start
-// looking, never whether to keep looking.
-//
-// The other five kinds pass through untouched: a host that has stopped
-// reporting or a drive with a reallocated sector should be raised on the first
-// observation, and those predicates do not flap the way a continuous
-// measurement near a threshold does.
-func (d *Delay) Apply(scan Scan, open []Open) {
-	isOpen := make(map[Key]bool, len(open))
-	for _, o := range open {
-		isOpen[o.Key] = true
-	}
-
-	// Forget any subject that is no longer bad, so the count means CONSECUTIVE
-	// passes. Without this a host that crosses the line for one tick a day
-	// would accumulate a crossing every day and open on the third, three days
-	// later, describing nothing that happened at the time.
-	for key := range d.seen {
-		if _, bad := scan.Bad[key]; !bad {
-			delete(d.seen, key)
-		}
-	}
-
-	for key := range scan.Bad {
-		if !DeviationKinds[key.Kind] || isOpen[key] {
-			// Not delayed, and not counted either: a kind that opens
-			// immediately must not leave entries behind in this map.
-			delete(d.seen, key)
-			continue
-		}
-		d.seen[key]++
-		if d.seen[key] < OpenAfter {
-			delete(scan.Bad, key)
-		}
-	}
-}
-
 // Limits are what the hardware says about itself, where it says anything.
 //
 // Both nil for a chip that publishes nothing, for a host running an agent
@@ -193,30 +56,6 @@ type Ceilings struct {
 	Crit float64
 }
 
-// Baseline is what a subject's own history measured.
-//
-// P01 and P99 rather than min and max: a single reboot, one backup window or
-// one bad reading would otherwise set the threshold for the week, which is the
-// whole reason percentiles are used at all.
-type Baseline struct {
-	P01     float64
-	P99     float64
-	Samples int
-}
-
-// Ready reports whether this baseline rests on enough history to judge with.
-//
-// The bar is the KIND's, not one number for all of them -- see
-// FamilyRule.MinSamples.
-func (b Baseline) Ready(minSamples int) bool { return b.Samples >= minSamples }
-
-// Margin is how far past p99 a reading has to be to count as a departure.
-func (b Baseline) Margin(floor float64) float64 {
-	byRange := MarginRangePct * (b.P99 - b.P01)
-	byMagnitude := MarginMagnitudePct * math.Abs(b.P99)
-	return math.Max(math.Max(byRange, byMagnitude), floor)
-}
-
 // Bounds is the pair a reading is actually compared against, and where
 // each half came from.
 type Bounds struct {
@@ -238,17 +77,22 @@ const (
 	SourceBaseline = "baseline"
 )
 
-// DeviationThresholds resolves the two numbers a reading is judged against.
+// DeviationThresholds caps a subject's own band by whatever hard limit applies.
 //
-// The calibrated pair sits underneath whichever hard limit applies, so the
+// The band comes from the moving average (EWMA.Band); this decides how far it is
+// allowed to drift. The calibrated pair sits underneath whichever hard limit applies, so the
 // EARLY warning survives -- a drive that normally runs at 44 C should be
 // noticed at 52, not held silent until its 80 C vendor limit. The hard limit is
 // a ceiling on how far calibration may drift, which is what stops a subject
 // that has been too hot all week from quietly calibrating its way past the
 // point the hardware calls critical.
-func DeviationThresholds(b Baseline, floor float64, lim Limits, ceil Ceilings) Bounds {
-	margin := b.Margin(floor)
-	warn, crit := b.P99+margin/2, b.P99+margin
+func DeviationThresholds(warn, crit float64, lim Limits, ceil Ceilings) Bounds {
+	// The band's own width, captured before either cap narrows it. The
+	// step-back at the bottom of this function needs it, and by then warn has
+	// already been pulled up to or past crit -- so measuring the width there
+	// yields zero or a negative number, and the step silently collapsed to the
+	// 1 in the Max.
+	width := crit - warn
 
 	// The DEVICE's own pair caps both halves, because the chip publishes one
 	// value for each: tempN_max is "warn here" and tempN_crit is "stop here".
@@ -286,7 +130,12 @@ func DeviationThresholds(b Baseline, floor float64, lim Limits, ceil Ceilings) B
 	// over it is already critical. Stepping warn back below crit keeps the two
 	// severities distinguishable.
 	if warn >= crit {
-		warn = math.Min(warn, crit-math.Max(margin/2, 1))
+		// A share of the band's ORIGINAL width, so the step is in the metric's
+		// unit rather than a constant that means one thing for a temperature
+		// and another for a load average. The 1 is the floor for a band so
+		// narrow that a proportional step would round the two together.
+		step := math.Max(width/2, 1)
+		warn = math.Min(warn, crit-step)
 	}
 
 	return Bounds{Warn: warn, Crit: crit, Source: source}
@@ -315,32 +164,35 @@ type FamilyRule struct {
 	Ceilings Ceilings
 	// Unit is what the number is in, for the sentence the UI writes.
 	Unit string
-	// MinSamples is how much history this kind needs before it may judge.
+	// MinSpan is how much history this kind needs before it may judge.
+	//
+	// A DURATION, NOT A SAMPLE COUNT, and that distinction is the whole reason
+	// this field was rewritten. It used to be 2000 for temperature and 8000 for
+	// the host kinds: a scrape cadence multiplied by a calendar requirement,
+	// readable as neither. Nobody looks at 8000 and thinks "five and a half
+	// days", and the number silently meant something else if the cadence ever
+	// changed. It also had to sit below a perfect week's worth of samples, or a
+	// host that ever missed a scrape could never be judged at all -- a coupling
+	// to packet loss that says nothing about whether the history is any good.
+	// A span has none of that: it tolerates gaps completely, and it says what
+	// it means.
 	//
 	// PER KIND BECAUSE THE CYCLE THEY MUST HAVE SEEN IS DIFFERENT, and getting
 	// this wrong is visible on every fresh install. `processes` and `load` are
-	// driven by what people ask the machine to do, so they have a weekly shape:
-	// a netra installed on a Saturday has, by Sunday evening, cleared a 34-hour
-	// gate against a baseline built entirely from a quiet weekend. Monday
-	// morning is then a departure from normal on every host at once.
+	// driven by what people ask of the machine, so they have a weekly shape: a
+	// netra installed on a Saturday, judging after a day, has calibrated
+	// entirely against a quiet weekend. Monday morning is then a departure from
+	// normal on every host at once.
 	//
-	// It does not even correct itself quickly, because the recompute excludes
-	// samples taken while a condition is open: Monday's legitimate load is
-	// excluded as evidence, the baseline stays weekend-shaped, and the row
-	// stands until `opened_ts` ages out of the window about a week later. The
-	// cure for a false positive must not be a week of waiting.
+	// Temperature keeps the short span. A drive has no weekday, its load-driven
+	// swing is what the variance already measures, and it has the second tier
+	// -- the chip's own published limit -- which owes nothing to history.
 	//
-	// Temperature keeps the short gate. A drive has no weekday, its load-driven
-	// swing is already what the range margin is measured over, and it has the
-	// second tier -- the chip's own published limit -- which owes nothing to
-	// history at all.
-	//
-	// The cost is honest and worth paying: these two kinds say nothing for the
-	// first five and a half days a host reports. Nobody can know a machine's
-	// weekly rhythm in thirty-four hours, and a rule that pretends otherwise
-	// spends its first Monday crying wolf, which is how a fleet learns to
-	// ignore its own attention list.
-	MinSamples int
+	// The cost is honest and worth paying: the host kinds say nothing for the
+	// first week a host reports. Nobody can know a machine's weekly rhythm in a
+	// day, and a rule that pretends otherwise spends its first Monday crying
+	// wolf, which is how a fleet learns to ignore its own attention list.
+	MinSpan time.Duration
 }
 
 // Chip families, named by the hwmon driver that registers them.
@@ -349,22 +201,22 @@ const (
 	ChipDriveTemp = "drivetemp"
 )
 
-// temperatureRules are the per-chip margin floors and fallback ceilings.
+// temperatureRules are the per-chip scale floors and fallback ceilings.
 //
 // Only consulted when the chip published no limit of its own, which on modern
 // hardware is mostly k10temp and acpitz. The two storage entries are here for
 // the older drives that predate SCT limit reporting, not as a second opinion on
 // the ones that have them.
 var temperatureRules = map[string]FamilyRule{
-	ChipNVMe:      {Floor: 4, Ceilings: Ceilings{Crit: 80}, Unit: "C", MinSamples: BaselineMinSamples},
-	ChipDriveTemp: {Floor: 4, Ceilings: Ceilings{Crit: 60}, Unit: "C", MinSamples: BaselineMinSamples},
+	ChipNVMe:      {Floor: 4, Ceilings: Ceilings{Crit: 80}, Unit: "C", MinSpan: 24 * time.Hour},
+	ChipDriveTemp: {Floor: 4, Ceilings: Ceilings{Crit: 60}, Unit: "C", MinSpan: 24 * time.Hour},
 }
 
 // defaultTemperatureRule covers every chip that is not a disk: packages, cores,
 // the board. 85/95 C is where a CPU throttles and where it shuts down, which is
 // the same pair the kernel itself acts on.
 var defaultTemperatureRule = FamilyRule{
-	Floor: 6, Ceilings: Ceilings{Crit: 95}, Unit: "C", MinSamples: BaselineMinSamples,
+	Floor: 6, Ceilings: Ceilings{Crit: 95}, Unit: "C", MinSpan: 24 * time.Hour,
 }
 
 // RuleFor returns the family rule for one kind and, for temperatures, one chip.
@@ -380,9 +232,9 @@ func RuleFor(kind, chip string) FamilyRule {
 		}
 		return defaultTemperatureRule
 	case KindProcesses:
-		return FamilyRule{Floor: 50, MinSamples: BaselineWeeklySamples}
+		return FamilyRule{Floor: 50, MinSpan: TauSlow}
 	case KindLoad:
-		return FamilyRule{Floor: 0.5, MinSamples: BaselineWeeklySamples}
+		return FamilyRule{Floor: 0.5, MinSpan: TauSlow}
 	}
 	return FamilyRule{}
 }

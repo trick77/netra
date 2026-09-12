@@ -486,9 +486,9 @@ function str(v: unknown): string | null {
  * One deviation reading, in the unit it was measured in.
  *
  * Rounded to one decimal and no further, because the precision the hub sends
- * is not precision a reader can use: a baseline p99 arrives as 46.03921568...
+ * is not precision a reader can use: a moving average arrives as 46.03921568...
  * and printing it would suggest the threshold is known to eight figures when
- * it is a percentile over a week of 60-second samples. One decimal is the
+ * it is a moving average over 60-second samples. One decimal is the
  * resolution a temperature sensor and a load average actually carry.
  *
  * Trailing ".0" is dropped so a process count reads "1842" rather than
@@ -759,7 +759,7 @@ export function hostConditions(
     // carries, for the same reason.
     const more = all.length - 1;
     const subject = kind === "temperature" ? `${row.subject} ` : "";
-    const normally = num(detail.p99);
+    const normally = num(detail.normal);
 
     // The vendor's own limit is a different sentence from a calibrated one,
     // and an operator deciding whether to act reads them differently: past the

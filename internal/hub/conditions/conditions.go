@@ -35,7 +35,8 @@ const (
 	KindLoad        = "load"
 )
 
-// DeviationKinds are the kinds whose threshold comes from metric_baselines.
+// DeviationKinds are the kinds judged against a moving average of their own
+// history (metric_ewma) rather than against a constant.
 //
 // Named as a set because three separate places need the same answer: the
 // evaluator applies the open delay only to these, the catalogue orders them
