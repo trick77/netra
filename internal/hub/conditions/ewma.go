@@ -149,7 +149,21 @@ func (e EWMA) Band(floor float64) (warn, crit float64) {
 // wall-clock, which they are, or as one tick, which is what a naive
 // tick-driven update does -- and then the average tracks how often the hub
 // looked rather than what the host did.
-func (e EWMA) Update(x float64, ts time.Time, floor float64) EWMA {
+// THE RULE AND THE LIMITS, NOT JUST A FLOOR, and that signature is the fix for
+// a bug that disabled a whole tier of the design.
+//
+// The excursion below has to be decided against the SAME band judgeDeviation
+// judges against, and that band is the capped one: DeviationThresholds lowers
+// crit to the chip's published limit or the family ceiling, and lowers warn
+// beneath it. Deciding here against the uncapped band made the two disagree
+// exactly where the cap bites -- a drivetemp subject whose normal is 50 with an
+// sd of 4 gets an uncapped warn of 62, while the judge caps crit to the 60
+// ceiling and calls a reading of 61 critical. The judge saw a severity the fold
+// had recorded no excursion for, ExcursionSince stayed zero, and the subject was
+// filed unjudged forever: every condition the ceiling and the published limits
+// exist to raise could never be raised at all. The freeze failed with it, so
+// that drive went on folding 61 C into its own idea of normal.
+func (e EWMA) Update(x float64, ts time.Time, rule FamilyRule, lim Limits) EWMA {
 	if !e.Seeded() {
 		// The first reading IS the normal, with no spread yet. Var stays zero,
 		// so Scale falls back to the floor and the warm-up below is what keeps
@@ -193,8 +207,11 @@ func (e EWMA) Update(x float64, ts time.Time, floor float64) EWMA {
 	// minutes it takes to come back, and nothing is lost: a single sample moves
 	// Slow by alpha x deviation, which for a 20-unit spike at this Tau is
 	// 0.002.
-	warn, _ := e.Band(floor)
-	if next.Fast > warn {
+	// The capped band, computed the way the judge computes it, from the state
+	// as it stood BEFORE this reading -- so a sample cannot move the goalposts
+	// it is being measured against.
+	w, c := e.Band(rule.Floor)
+	if next.Fast > DeviationThresholds(w, c, lim, rule.Ceilings).Warn {
 		if next.ExcursionSince.IsZero() {
 			next.ExcursionSince = ts
 		}

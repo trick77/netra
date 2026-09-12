@@ -12,7 +12,7 @@ var epoch = time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
 func steady(x float64, n int, floor float64) EWMA {
 	e := EWMA{}
 	for i := range n {
-		e = e.Update(x, epoch.Add(time.Duration(i)*ScrapeInterval), floor)
+		e = e.Update(x, epoch.Add(time.Duration(i)*ScrapeInterval), FamilyRule{Floor: floor}, Limits{})
 	}
 	return e
 }
@@ -36,7 +36,7 @@ func TestAFlatSeriesStaysQuiet(t *testing.T) {
 // The first reading is the normal, with no spread. Nothing may be judged on it,
 // which is the span gate's job rather than this one's.
 func TestTheFirstReadingSeedsTheState(t *testing.T) {
-	e := EWMA{}.Update(44, epoch, 4)
+	e := EWMA{}.Update(44, epoch, FamilyRule{Floor: 4}, Limits{})
 
 	if e.Slow != 44 || e.Fast != 44 || e.Var != 0 {
 		t.Errorf("seed = %+v, want slow=fast=44 var=0", e)
@@ -56,13 +56,13 @@ func TestDecayFollowsElapsedTimeNotCallCount(t *testing.T) {
 	const floor = 0.5
 
 	// One reading an hour later.
-	oneJump := EWMA{}.Update(1.0, epoch, floor)
-	oneJump = oneJump.Update(5.0, epoch.Add(time.Hour), floor)
+	oneJump := EWMA{}.Update(1.0, epoch, FamilyRule{Floor: floor}, Limits{})
+	oneJump = oneJump.Update(5.0, epoch.Add(time.Hour), FamilyRule{Floor: floor}, Limits{})
 
 	// Sixty readings a minute apart, covering the same hour.
-	buffered := EWMA{}.Update(1.0, epoch, floor)
+	buffered := EWMA{}.Update(1.0, epoch, FamilyRule{Floor: floor}, Limits{})
 	for i := 1; i <= 60; i++ {
-		buffered = buffered.Update(5.0, epoch.Add(time.Duration(i)*time.Minute), floor)
+		buffered = buffered.Update(5.0, epoch.Add(time.Duration(i)*time.Minute), FamilyRule{Floor: floor}, Limits{})
 	}
 
 	// Slow has the same total elapsed weight either way, so the two land in the
@@ -93,13 +93,58 @@ func TestAReplayedSampleIsIgnored(t *testing.T) {
 	e := steady(44, 100, floor)
 	last := e.UpdatedTS
 
-	again := e.Update(44, last, floor)
+	again := e.Update(44, last, FamilyRule{Floor: floor}, Limits{})
 	if again != e {
 		t.Error("a sample at the high-water mark changed the state")
 	}
-	backwards := e.Update(99, last.Add(-time.Hour), floor)
+	backwards := e.Update(99, last.Add(-time.Hour), FamilyRule{Floor: floor}, Limits{})
 	if backwards != e {
 		t.Error("an out-of-order sample changed the state")
+	}
+}
+
+// THE FOLD AND THE JUDGE MUST AGREE ON WHERE THE BAND IS, and for a while they
+// did not: the fold decided excursions against the UNCAPPED band while
+// judgeDeviation judges against the capped one.
+//
+// Wherever a cap bites, the judge sees a severity the fold recorded no excursion
+// for, ExcursionSince stays zero, and the subject is filed unjudged for as long
+// as it lasts -- so every condition the family ceiling and the published limits
+// exist to raise could never be raised. The freeze failed with it, so the
+// subject went on folding the excursion into its own normal.
+func TestTheExcursionIsDecidedAgainstTheCappedBand(t *testing.T) {
+	rule := RuleFor(KindTemperature, ChipDriveTemp)
+
+	// A drive whose normal has crept to 50 with a 4-degree spread. The uncapped
+	// band is 62/66; the 60 C family ceiling pulls crit to 60 and warn beneath
+	// it, so a reading of 61 is critical to the judge and inside the uncapped
+	// band to anything that forgot the cap.
+	e := EWMA{Slow: 50, Fast: 50, Var: 16, FirstTS: epoch, UpdatedTS: epoch}
+
+	uncappedWarn, uncappedCrit := e.Band(rule.Floor)
+	capped := DeviationThresholds(uncappedWarn, uncappedCrit, Limits{}, rule.Ceilings)
+	if 61 <= capped.Warn || 61 >= uncappedWarn {
+		t.Fatalf("precondition: 61 must be over the capped warn %v and under the "+
+			"uncapped warn %v", capped.Warn, uncappedWarn)
+	}
+	if DeviationSeverity(61, capped) == "" {
+		t.Fatal("precondition: 61 must be a severity to the judge")
+	}
+
+	// Five minutes at 61 carries `fast` to about 60: over the capped warn of 58,
+	// and still under the uncapped 62. So this is exactly the window in which
+	// the two disagreed.
+	next := e
+	for k := 1; k <= 5; k++ {
+		next = next.Update(61, epoch.Add(time.Duration(k)*time.Minute), rule, Limits{})
+	}
+	if next.Fast <= capped.Warn || next.Fast >= uncappedWarn {
+		t.Fatalf("precondition: fast %v must sit between the capped warn %v and "+
+			"the uncapped %v", next.Fast, capped.Warn, uncappedWarn)
+	}
+	if next.ExcursionSince.IsZero() {
+		t.Error("no excursion recorded for a reading the judge calls critical: " +
+			"the ceiling and the published limits can never raise anything")
 	}
 }
 
@@ -122,7 +167,7 @@ func TestASustainedFaultDoesNotWidenItsOwnBandPastItself(t *testing.T) {
 	ts := e.UpdatedTS
 	for range 3 * 24 * 60 {
 		ts = ts.Add(ScrapeInterval)
-		e = e.Update(58, ts, floor)
+		e = e.Update(58, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 
 	w, c := e.Band(floor)
@@ -151,7 +196,7 @@ func TestAnExcursionOutlastingTauSlowBecomesTheNewNormal(t *testing.T) {
 	ts := e.UpdatedTS
 	for range 10 * 24 * 60 {
 		ts = ts.Add(ScrapeInterval)
-		e = e.Update(6.0, ts, floor)
+		e = e.Update(6.0, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 
 	if e.Slow <= before+0.5 {
@@ -175,11 +220,11 @@ func TestABriefSpikeDoesNotMoveTheNormal(t *testing.T) {
 	ts := e.UpdatedTS
 	for range 3 {
 		ts = ts.Add(ScrapeInterval)
-		e = e.Update(80, ts, floor)
+		e = e.Update(80, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 	for range 30 {
 		ts = ts.Add(ScrapeInterval)
-		e = e.Update(44, ts, floor)
+		e = e.Update(44, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 
 	if math.Abs(e.Slow-before) > 0.05 {
@@ -207,7 +252,7 @@ func TestAShortBurstIsSmoothedButStillCrossesTheBand(t *testing.T) {
 	ts := e.UpdatedTS
 	for range 2 {
 		ts = ts.Add(ScrapeInterval)
-		e = e.Update(30.0, ts, floor)
+		e = e.Update(30.0, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 
 	if e.Fast <= warn {
@@ -233,7 +278,7 @@ func TestVarianceNeverGoesNegative(t *testing.T) {
 	ts := e.UpdatedTS
 	for i := range 500 {
 		ts = ts.Add(ScrapeInterval)
-		e = e.Update(44+float64(i%7)-3, ts, floor)
+		e = e.Update(44+float64(i%7)-3, ts, FamilyRule{Floor: floor}, Limits{})
 		if e.Var < 0 {
 			t.Fatalf("var = %v", e.Var)
 		}

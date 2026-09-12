@@ -488,7 +488,7 @@ function str(v: unknown): string | null {
  * Rounded to one decimal and no further, because the precision the hub sends
  * is not precision a reader can use: a moving average arrives as 46.03921568...
  * and printing it would suggest the threshold is known to eight figures when
- * it is a percentile over a week of 60-second samples. One decimal is the
+ * it is a moving average over 60-second samples. One decimal is the
  * resolution a temperature sensor and a load average actually carry.
  *
  * Trailing ".0" is dropped so a process count reads "1842" rather than

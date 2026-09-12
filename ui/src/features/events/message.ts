@@ -503,7 +503,7 @@ function conditionMessage(
  *
  * Rounded to one decimal for the reason the fleet list rounds: an average arrives as
  * 46.039215686274510 and printing that suggests the threshold is known to
- * fifteen figures, when it is a percentile over a week of 60-second samples. */
+ * fifteen figures, when it is a moving average over 60-second samples. */
 function reading(fields: Record<string, unknown>, key: string): string {
   const value = fields[key];
   if (typeof value !== "number" || !Number.isFinite(value)) return "";

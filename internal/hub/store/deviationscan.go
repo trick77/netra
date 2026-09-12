@@ -40,7 +40,8 @@ const currentWindow = 5 * conditions.ScrapeInterval
 // a genuinely removed sensor leaves a stale condition open until someone
 // dismisses it, rather than a wedged one being silently called recovered. The
 // first is visible and wrong; the second is invisible and is a lie.
-func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
+func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
+	open map[conditions.Key]bool) error {
 	rows, err := s.pool.Query(ctx, `
 		WITH latest AS (
 			SELECT DISTINCT ON (host_id, sensor_id)
@@ -88,14 +89,10 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
 			value:     temp,
 			readingTS: readingTS,
 			state:     ewmaOf(slow, fast, variance, firstTS, updatedTS, excursion),
-			// The chip's own rule, which the fold could not know: it sees a
-			// subject as a string, so it uses the kind's default floor. The
-			// judgement is where the real floor, the family ceiling and the
-			// published limits all enter, so no threshold a reader sees rests
-			// on the fold's approximation.
-			rule:   conditions.RuleFor(conditions.KindTemperature, chip),
-			limits: conditions.Limits{High: limitHigh, HighCrit: limitCrit},
-			detail: map[string]any{"chip": chip},
+			isOpen:    open[key],
+			rule:      conditions.RuleFor(conditions.KindTemperature, chip),
+			limits:    conditions.Limits{High: limitHigh, HighCrit: limitCrit},
+			detail:    map[string]any{"chip": chip},
 		})
 	}
 	return rows.Err()
@@ -108,7 +105,8 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
 // judgements: a kernel that reports a process count and no load average must
 // have the first judged and the second left alone, never both suppressed
 // because one column was NULL.
-func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error {
+func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
+	open map[conditions.Key]bool) error {
 	rows, err := s.pool.Query(ctx, `
 		WITH latest AS (
 			SELECT DISTINCT ON (host_id)
@@ -153,21 +151,21 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 			procValue = &v
 		}
 
-		judgeDeviation(scan, conditions.Key{
-			HostID: hostID, Kind: conditions.KindProcesses,
-		}, deviationInput{
+		procKey := conditions.Key{HostID: hostID, Kind: conditions.KindProcesses}
+		judgeDeviation(scan, procKey, deviationInput{
 			value:     procValue,
 			readingTS: readingTS,
 			state:     ewmaOf(pSlow, pFast, pVar, pFirst, pUpdated, pExcursion),
+			isOpen:    open[procKey],
 			rule:      conditions.RuleFor(conditions.KindProcesses, ""),
 		})
 
-		judgeDeviation(scan, conditions.Key{
-			HostID: hostID, Kind: conditions.KindLoad,
-		}, deviationInput{
+		loadKey := conditions.Key{HostID: hostID, Kind: conditions.KindLoad}
+		judgeDeviation(scan, loadKey, deviationInput{
 			value:     load,
 			readingTS: readingTS,
 			state:     ewmaOf(lSlow, lFast, lVar, lFirst, lUpdated, lExcursion),
+			isOpen:    open[loadKey],
 			rule:      conditions.RuleFor(conditions.KindLoad, ""),
 		})
 	}
@@ -185,9 +183,22 @@ type deviationInput struct {
 	value     *float64
 	readingTS *time.Time
 	state     conditions.EWMA
-	rule      conditions.FamilyRule
-	limits    conditions.Limits
-	detail    map[string]any
+	// isOpen is whether this subject already has a condition open.
+	//
+	// The OpenFor gate below must not apply to it. The in-memory counter this
+	// replaced skipped open keys explicitly -- it decided when to start
+	// looking, never whether to keep looking -- and without that a signal
+	// flapping around its warn line resolves and reopens forever: a tick
+	// inside the band counts one miss, the tick back outside restamps
+	// excursion_since and files the subject unjudged for three minutes, and
+	// Diff leaves the miss counter untouched through all of it. So the next dip
+	// reaches clearAfter, the condition closes, and it reopens minutes later
+	// with a fresh onset -- the transition-pair spam this whole engine exists
+	// to avoid.
+	isOpen bool
+	rule   conditions.FamilyRule
+	limits conditions.Limits
+	detail map[string]any
 }
 
 // ewmaOf rebuilds one subject's state from its LEFT JOINed columns.
@@ -245,6 +256,20 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		return
 	}
 
+	// The average has to be as current as the reading being judged against it.
+	//
+	// foldLimit bounds one pass, so a fleet catching up after the migration --
+	// or after a long outage -- has state that lags the newest sample by hours.
+	// Judging then compares today's reading against last week's normal and
+	// stamps the finding OpenedTS = now, so a week-old excursion is reported as
+	// having just started, with a `value` from today and a `smoothed` from
+	// whenever the fold last reached. Unjudged until the fold catches up, which
+	// is the honest answer and self-clearing.
+	if in.readingTS.Sub(in.state.UpdatedTS) > conditions.OpenFor {
+		scan.Unjudged[key] = true
+		return
+	}
+
 	scan.Seen[key] = true
 
 	warn, crit := in.state.Band(in.rule.Floor)
@@ -268,13 +293,18 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 	//
 	// A new subject simply does not open, which is the point: a nightly cron
 	// burst writes nothing at all.
+	//
+	// NOT FOR A SUBJECT ALREADY OPEN: this decides when to start looking, never
+	// whether to keep looking. See deviationInput.isOpen for what applying it
+	// to an open condition costs.
+	//
 	// The IsZero check is not redundant with the comparison beside it, and
 	// leaving it out is a silent failure rather than a loud one: Sub against a
 	// zero timestamp is an enormous duration, which passes OpenFor and opens
 	// the condition on its very first reading with no suppression whatever.
 	// Fail closed, so a state the fold has not marked cannot be raised.
-	if in.state.ExcursionSince.IsZero() ||
-		in.readingTS.Sub(in.state.ExcursionSince) < conditions.OpenFor {
+	if !in.isOpen && (in.state.ExcursionSince.IsZero() ||
+		in.readingTS.Sub(in.state.ExcursionSince) < conditions.OpenFor) {
 		scan.Unjudged[key] = true
 		delete(scan.Seen, key)
 		return

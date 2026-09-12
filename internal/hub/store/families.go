@@ -465,10 +465,10 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 		// the previous drive's judgement. Sensor identity is chip/label/
 		// instance and the instance is the block device name, so a new disk at
 		// sda reuses this row -- keeping the old drive's limits through the
-		// COALESCE above, and its metric_baselines row too, since the
-		// baseline cleanup only removes subjects whose whole HOST has gone
-		// quiet. The new drive is judged against another device's week until
-		// the next recompute moves the percentiles.
+		// COALESCE above, and its metric_ewma row too, since the state is only
+		// pruned for a subject that has stopped reporting altogether and this
+		// one never does. The new drive is judged against another device's
+		// history until the average decays off it, which takes about TauSlow.
 		//
 		// Fixing it needs identity to carry something the slot does not --
 		// the serial, which `devices` already holds and `sensors` does not --

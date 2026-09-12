@@ -58,7 +58,7 @@ func foldSources() []foldSource {
 			query: `
 				SELECT s.host_id,
 				       netra_sensor_subject(sen.chip, sen.label, sen.instance) AS subject,
-				       sen.chip, s.temp, s.ts
+				       sen.chip, sen.limit_high, sen.limit_high_crit, s.temp, s.ts
 				  FROM sensor_samples s
 				  JOIN sensors sen
 				    ON sen.id = s.sensor_id AND sen.host_id = s.host_id
@@ -68,6 +68,7 @@ func foldSources() []foldSource {
 				   AND e.subject = netra_sensor_subject(sen.chip, sen.label, sen.instance)
 				 WHERE sen.kind = 'temperature'
 				   AND s.temp IS NOT NULL
+				   AND s.ts > $2
 				   AND (e.updated_ts IS NULL OR s.ts > e.updated_ts)
 				 ORDER BY s.ts
 				 LIMIT $1`,
@@ -75,11 +76,13 @@ func foldSources() []foldSource {
 		{
 			kind: conditions.KindProcesses,
 			query: `
-				SELECT h.host_id, '', '', h.processes_total::double precision, h.ts
+				SELECT h.host_id, '', '', NULL::double precision, NULL::double precision,
+				       h.processes_total::double precision, h.ts
 				  FROM host_samples h
 				  LEFT JOIN metric_ewma e
 				    ON e.host_id = h.host_id AND e.kind = 'processes' AND e.subject = ''
 				 WHERE h.processes_total IS NOT NULL
+				   AND h.ts > $2
 				   AND (e.updated_ts IS NULL OR h.ts > e.updated_ts)
 				 ORDER BY h.ts
 				 LIMIT $1`,
@@ -87,11 +90,13 @@ func foldSources() []foldSource {
 		{
 			kind: conditions.KindLoad,
 			query: `
-				SELECT h.host_id, '', '', h.load5, h.ts
+				SELECT h.host_id, '', '', NULL::double precision, NULL::double precision,
+				       h.load5, h.ts
 				  FROM host_samples h
 				  LEFT JOIN metric_ewma e
 				    ON e.host_id = h.host_id AND e.kind = 'load' AND e.subject = ''
 				 WHERE h.load5 IS NOT NULL
+				   AND h.ts > $2
 				   AND (e.updated_ts IS NULL OR h.ts > e.updated_ts)
 				 ORDER BY h.ts
 				 LIMIT $1`,
@@ -108,7 +113,7 @@ func (s *Store) FoldSamples(ctx context.Context) error {
 			return fmt.Errorf("fold %s: %w", src.kind, err)
 		}
 	}
-	return nil
+	return s.pruneEWMA(ctx)
 }
 
 // ewmaKey is one subject's identity within a family.
@@ -127,7 +132,24 @@ func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
 		return err
 	}
 
-	rows, err := s.pool.Query(ctx, src.query, foldLimit)
+	// The oldest high-water mark, which bounds the sample scan.
+	//
+	// WITHOUT IT NOTHING BOUNDS THE TIME RANGE. `s.ts > e.updated_ts` is
+	// correlated through the LEFT JOIN, so the planner cannot exclude a chunk
+	// from it, and with ORDER BY ts ASC the rows that qualify in steady state
+	// are the NEWEST ones -- so every pass walked all seven days of chunks to
+	// find the last minute's worth, three times a minute. The design this
+	// replaced paid a full-week scan once a night; doing it 4,320 times a day
+	// instead would not have been an improvement.
+	//
+	// A subject with no row yet has no mark, so the floor falls back to raw
+	// retention: there is nothing older than that to seed from anyway.
+	since, err := s.foldFloor(ctx, src.kind)
+	if err != nil {
+		return err
+	}
+
+	rows, err := s.pool.Query(ctx, src.query, foldLimit, since)
 	if err != nil {
 		return fmt.Errorf("query samples: %w", err)
 	}
@@ -137,28 +159,31 @@ func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
 	for rows.Next() {
 		var key ewmaKey
 		var chip string
-		var value *float64
+		var limitHigh, limitCrit, value *float64
 		var ts time.Time
-		if err := rows.Scan(&key.hostID, &key.subject, &chip, &value, &ts); err != nil {
+		if err := rows.Scan(&key.hostID, &key.subject, &chip,
+			&limitHigh, &limitCrit, &value, &ts); err != nil {
 			return fmt.Errorf("scan sample: %w", err)
 		}
 		if value == nil {
 			continue
 		}
 
-		// THE CHIP IS CARRIED THROUGH SO THIS FLOOR MATCHES THE JUDGEMENT'S.
+		// THE CHIP AND THE PUBLISHED LIMITS ARE CARRIED THROUGH SO THIS BAND
+		// MATCHES THE JUDGEMENT'S, EXACTLY.
 		//
-		// The floor decides the band's width, the band decides whether `fast`
-		// counts as outside it, and excursion_since is stamped from that -- so
-		// if the fold used a wider band than judgeDeviation does, a departure
-		// the judge can see would have no excursion recorded against it. Then
-		// the OpenFor check compares against a zero timestamp, which is an
-		// enormous duration, and the condition opens on its first reading with
-		// no suppression at all. Selecting sen.chip is cheaper than that class
-		// of bug, and the host kinds pass an empty string because they have no
-		// per-chip rule to disagree about.
-		floor := conditions.RuleFor(src.kind, chip).Floor
-		state[key] = state[key].Update(*value, ts, floor)
+		// The band decides whether `fast` counts as outside it, and
+		// excursion_since is stamped from that -- so a band any wider here than
+		// judgeDeviation's leaves a departure the judge can see with no
+		// excursion recorded against it, and the subject is filed unjudged for
+		// as long as it lasts. Getting the floor right is not enough: the caps
+		// move the band much further, and a drivetemp subject capped to its 60 C
+		// ceiling is judged against a warn of 59 where the uncapped band says
+		// 62. The host kinds pass no chip and no limits because they have
+		// neither.
+		state[key] = state[key].Update(*value, ts,
+			conditions.RuleFor(src.kind, chip),
+			conditions.Limits{High: limitHigh, HighCrit: limitCrit})
 		touched[key] = true
 	}
 	if err := rows.Err(); err != nil {
@@ -169,6 +194,45 @@ func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
 	}
 
 	return s.saveEWMA(ctx, src.kind, state, touched)
+}
+
+// foldFloor is the oldest instant any subject of this kind still needs samples
+// from, and therefore how far back the scan has to reach.
+//
+// Clamped to raw retention. A subject whose mark is older than that -- a host
+// off for a fortnight -- has no samples left to fold from the missing stretch,
+// so reaching further back only widens the scan.
+func (s *Store) foldFloor(ctx context.Context, kind string) (time.Time, error) {
+	retention := time.Now().UTC().Add(-conditions.TauSlow)
+
+	var oldest *time.Time
+	if err := s.pool.QueryRow(ctx,
+		`SELECT min(updated_ts) FROM metric_ewma WHERE kind = $1`, kind).Scan(&oldest); err != nil {
+		return time.Time{}, fmt.Errorf("fold floor: %w", err)
+	}
+	if oldest == nil || oldest.Before(retention) {
+		return retention, nil
+	}
+	return *oldest, nil
+}
+
+// pruneEWMA drops subjects that have stopped reporting entirely.
+//
+// 0020's recompute carried the same cleanup and nothing replaced it, so a
+// removed sensor left its row behind for good -- and loadEWMA reads every row
+// of the kind on every tick, so the cost is paid forever.
+//
+// Keyed on updated_ts against raw retention, which means the subject has had no
+// sample at all for a week. Deleting it cannot strand an open condition: with no
+// current reading, scanSensors files that subject Unjudged either way, which
+// leaves its condition exactly as it is. If it comes back, it re-warms.
+func (s *Store) pruneEWMA(ctx context.Context) error {
+	if _, err := s.pool.Exec(ctx,
+		`DELETE FROM metric_ewma WHERE updated_ts < now() - $1::interval`,
+		conditions.TauSlow); err != nil {
+		return fmt.Errorf("prune state: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditions.EWMA, error) {

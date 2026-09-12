@@ -315,9 +315,15 @@ func TestIntegrationABriefExcursionIsUnjudgedNotRaised(t *testing.T) {
 	seedHostCurrent(t, ctx, s, host, now)
 
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-time.Minute), 2*24*60, 44)
-	// One minute over the line, against OpenFor's three.
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 1, 70)
+	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-4*time.Minute), 2*24*60, 44)
+	// Four minutes at 70. `fast` needs about two of them to cross the band, so
+	// the EXCURSION is only about two minutes old against OpenFor's three --
+	// which is the window this test is about.
+	//
+	// A single sample would not do: fast only reaches 54 from 44 in one minute,
+	// under the 56 warn, so the subject reads healthy and the suppression is
+	// never exercised at all. CI caught exactly that.
+	seedSensorSeries(t, ctx, s, host, sensorID, now, 4, 70)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)

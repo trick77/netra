@@ -87,6 +87,12 @@ const (
 // that has been too hot all week from quietly calibrating its way past the
 // point the hardware calls critical.
 func DeviationThresholds(warn, crit float64, lim Limits, ceil Ceilings) Bounds {
+	// The band's own width, captured before either cap narrows it. The
+	// step-back at the bottom of this function needs it, and by then warn has
+	// already been pulled up to or past crit -- so measuring the width there
+	// yields zero or a negative number, and the step silently collapsed to the
+	// 1 in the Max.
+	width := crit - warn
 
 	// The DEVICE's own pair caps both halves, because the chip publishes one
 	// value for each: tempN_max is "warn here" and tempN_crit is "stop here".
@@ -124,11 +130,11 @@ func DeviationThresholds(warn, crit float64, lim Limits, ceil Ceilings) Bounds {
 	// over it is already critical. Stepping warn back below crit keeps the two
 	// severities distinguishable.
 	if warn >= crit {
-		// A share of the band's own width, so the step is in the metric's unit
-		// rather than a constant that means one thing for a temperature and
-		// another for a load average. The 1 is the floor for a band so narrow
-		// that a proportional step would round the two together.
-		step := math.Max((crit-warn)/2, 1)
+		// A share of the band's ORIGINAL width, so the step is in the metric's
+		// unit rather than a constant that means one thing for a temperature
+		// and another for a load average. The 1 is the floor for a band so
+		// narrow that a proportional step would round the two together.
+		step := math.Max(width/2, 1)
 		warn = math.Min(warn, crit-step)
 	}
 

@@ -196,7 +196,7 @@ func TestTheSpanGateIgnoresMissedScrapes(t *testing.T) {
 	// sample-count gate would ever have passed.
 	state := EWMA{}
 	for i := range 40 {
-		state = state.Update(1.5, start.Add(time.Duration(i)*5*time.Hour), rule.Floor)
+		state = state.Update(1.5, start.Add(time.Duration(i)*5*time.Hour), rule, Limits{})
 	}
 
 	if state.Span() < rule.MinSpan {
