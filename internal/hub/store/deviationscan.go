@@ -56,7 +56,8 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		       sen.chip,
 		       sen.limit_high, sen.limit_high_crit,
 		       l.temp, l.ts,
-		       e.slow, e.fast, e.var, e.first_ts, e.updated_ts, e.excursion_since
+		       eh.slow, e.fast, eh.var, e.first_ts, e.updated_ts,
+		       eh.updated_ts, e.excursion_since
 		  FROM sensors sen
 		  LEFT JOIN latest l
 		         ON l.sensor_id = sen.id AND l.host_id = sen.host_id
@@ -64,6 +65,17 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		         ON e.host_id = sen.host_id
 		        AND e.kind    = $2
 		        AND e.subject = netra_sensor_subject(sen.chip, sen.label, sen.instance)
+		  -- Only the bucket for the hour the current reading was taken in,
+		  -- which is the only one this pass judges against. AT TIME ZONE 'UTC'
+		  -- rather than a bare EXTRACT, because EXTRACT on a timestamptz reads
+		  -- the session's TimeZone and the fold stamps the hour in UTC -- a
+		  -- server running in CET would otherwise look up a bucket two hours
+		  -- from the one that was written.
+		  LEFT JOIN metric_ewma_hour eh
+		         ON eh.host_id = e.host_id
+		        AND eh.kind    = e.kind
+		        AND eh.subject = e.subject
+		        AND eh.hour    = EXTRACT(HOUR FROM l.ts AT TIME ZONE 'UTC')::smallint
 		 WHERE sen.kind = 'temperature'`,
 		currentWindow, conditions.KindTemperature)
 	if err != nil {
@@ -75,11 +87,11 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		var hostID int32
 		var subject, chip string
 		var limitHigh, limitCrit, temp, slow, fast, variance *float64
-		var readingTS, firstTS, updatedTS, excursion *time.Time
+		var readingTS, firstTS, updatedTS, bucketTS, excursion *time.Time
 
 		if err := rows.Scan(&hostID, &subject, &chip, &limitHigh, &limitCrit,
 			&temp, &readingTS, &slow, &fast, &variance, &firstTS, &updatedTS,
-			&excursion); err != nil {
+			&bucketTS, &excursion); err != nil {
 			return fmt.Errorf("scan sensor: %w", err)
 		}
 
@@ -88,7 +100,7 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		judgeDeviation(scan, key, deviationInput{
 			value:     temp,
 			readingTS: readingTS,
-			state:     ewmaOf(slow, fast, variance, firstTS, updatedTS, excursion),
+			state:     ewmaOf(hourOf(readingTS), slow, fast, variance, firstTS, updatedTS, bucketTS, excursion),
 			isOpen:    open[key],
 			rule:      conditions.RuleFor(conditions.KindTemperature, chip),
 			limits:    conditions.Limits{High: limitHigh, HighCrit: limitCrit},
@@ -117,14 +129,23 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		)
 		SELECT h.id,
 		       l.processes_total, l.load5, l.ts,
-		       ep.slow, ep.fast, ep.var, ep.first_ts, ep.updated_ts, ep.excursion_since,
-		       el.slow, el.fast, el.var, el.first_ts, el.updated_ts, el.excursion_since
+		       ehp.slow, ep.fast, ehp.var, ep.first_ts, ep.updated_ts,
+		       ehp.updated_ts, ep.excursion_since,
+		       ehl.slow, el.fast, ehl.var, el.first_ts, el.updated_ts,
+		       ehl.updated_ts, el.excursion_since
 		  FROM hosts h
 		  LEFT JOIN latest l ON l.host_id = h.id
 		  LEFT JOIN metric_ewma ep
 		         ON ep.host_id = h.id AND ep.kind = $2 AND ep.subject = ''
 		  LEFT JOIN metric_ewma el
-		         ON el.host_id = h.id AND el.kind = $3 AND el.subject = ''`,
+		         ON el.host_id = h.id AND el.kind = $3 AND el.subject = ''
+		  -- See the note in scanSensors on AT TIME ZONE 'UTC'.
+		  LEFT JOIN metric_ewma_hour ehp
+		         ON ehp.host_id = h.id AND ehp.kind = $2 AND ehp.subject = ''
+		        AND ehp.hour = EXTRACT(HOUR FROM l.ts AT TIME ZONE 'UTC')::smallint
+		  LEFT JOIN metric_ewma_hour ehl
+		         ON ehl.host_id = h.id AND ehl.kind = $3 AND ehl.subject = ''
+		        AND ehl.hour = EXTRACT(HOUR FROM l.ts AT TIME ZONE 'UTC')::smallint`,
 		currentWindow, conditions.KindProcesses, conditions.KindLoad)
 	if err != nil {
 		return fmt.Errorf("query host gauges: %w", err)
@@ -137,11 +158,12 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		var load *float64
 		var readingTS *time.Time
 		var pSlow, pFast, pVar, lSlow, lFast, lVar *float64
-		var pFirst, pUpdated, pExcursion, lFirst, lUpdated, lExcursion *time.Time
+		var pFirst, pUpdated, pBucket, pExcursion *time.Time
+		var lFirst, lUpdated, lBucket, lExcursion *time.Time
 
 		if err := rows.Scan(&hostID, &procs, &load, &readingTS,
-			&pSlow, &pFast, &pVar, &pFirst, &pUpdated, &pExcursion,
-			&lSlow, &lFast, &lVar, &lFirst, &lUpdated, &lExcursion); err != nil {
+			&pSlow, &pFast, &pVar, &pFirst, &pUpdated, &pBucket, &pExcursion,
+			&lSlow, &lFast, &lVar, &lFirst, &lUpdated, &lBucket, &lExcursion); err != nil {
 			return fmt.Errorf("scan host gauge: %w", err)
 		}
 
@@ -155,7 +177,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		judgeDeviation(scan, procKey, deviationInput{
 			value:     procValue,
 			readingTS: readingTS,
-			state:     ewmaOf(pSlow, pFast, pVar, pFirst, pUpdated, pExcursion),
+			state:     ewmaOf(hourOf(readingTS), pSlow, pFast, pVar, pFirst, pUpdated, pBucket, pExcursion),
 			isOpen:    open[procKey],
 			rule:      conditions.RuleFor(conditions.KindProcesses, ""),
 		})
@@ -164,7 +186,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		judgeDeviation(scan, loadKey, deviationInput{
 			value:     load,
 			readingTS: readingTS,
-			state:     ewmaOf(lSlow, lFast, lVar, lFirst, lUpdated, lExcursion),
+			state:     ewmaOf(hourOf(readingTS), lSlow, lFast, lVar, lFirst, lUpdated, lBucket, lExcursion),
 			isOpen:    open[loadKey],
 			rule:      conditions.RuleFor(conditions.KindLoad, ""),
 		})
@@ -213,18 +235,45 @@ type deviationInput struct {
 // suppression in judgeDeviation is measured from it, so a zero value makes
 // every departure look either brand new or infinitely old depending on which
 // way the comparison falls. The CI failure that found this had both.
-func ewmaOf(slow, fast, variance *float64, firstTS, updatedTS, excursion *time.Time) conditions.EWMA {
-	if slow == nil || fast == nil || variance == nil || firstTS == nil || updatedTS == nil {
+func ewmaOf(hour int, slow, fast, variance *float64,
+	firstTS, updatedTS, bucketTS, excursion *time.Time) conditions.EWMA {
+	if fast == nil || firstTS == nil || updatedTS == nil {
 		return conditions.EWMA{}
 	}
+	if slow == nil || variance == nil || bucketTS == nil {
+		// The subject is watched but this HOUR is not: a state seeded less than
+		// a day ago has most of its buckets empty. Returned with the
+		// per-subject half intact so the span gate still sees the real history,
+		// and with the bucket unseeded so judgeDeviation files it unjudged --
+		// not healthy, because nothing is known about this hour yet.
+		return conditions.EWMA{Fast: *fast, FirstTS: *firstTS, UpdatedTS: *updatedTS}
+	}
 	e := conditions.EWMA{
-		Slow: *slow, Fast: *fast, Var: *variance,
-		FirstTS: *firstTS, UpdatedTS: *updatedTS,
+		Fast: *fast, FirstTS: *firstTS, UpdatedTS: *updatedTS,
+	}
+	// Only the bucket for the reading's own hour is read back, because only
+	// that one is judged against. Its index is not stored on the bucket, so the
+	// caller passes it and the slot is filled directly.
+	if hour >= 0 && hour < conditions.Buckets {
+		e.Hour[hour] = conditions.Bucket{Slow: *slow, Var: *variance, UpdatedTS: *bucketTS}
 	}
 	if excursion != nil {
 		e.ExcursionSince = *excursion
 	}
 	return e
+}
+
+// hourOf is the bucket index for a reading, or -1 when there is no reading.
+//
+// -1 rather than 0, because 0 is midnight: a subject that did not report would
+// otherwise be given midnight's bucket and judged against it. judgeDeviation
+// files a subject with no reading as unjudged before the bucket is consulted, so
+// this only has to be a value that cannot be mistaken for an hour.
+func hourOf(ts *time.Time) int {
+	if ts == nil {
+		return -1
+	}
+	return conditions.HourOf(*ts)
 }
 
 // judgeDeviation applies the rule to one subject and files it under Seen,
@@ -270,9 +319,19 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		return
 	}
 
+	// The bucket for the hour this reading was taken in. An hour the subject
+	// has not been observed through yet is UNJUDGED: a state seeded yesterday
+	// afternoon knows nothing about this morning, and judging against an empty
+	// bucket would compare the reading against zero.
+	bucket := in.state.Bucket(conditions.HourOf(*in.readingTS))
+	if !bucket.Seeded() {
+		scan.Unjudged[key] = true
+		return
+	}
+
 	scan.Seen[key] = true
 
-	warn, crit := in.state.Band(in.rule.Floor)
+	warn, crit := bucket.Band(in.rule.Floor)
 	bounds := conditions.DeviationThresholds(warn, crit, in.limits, in.rule.Ceilings)
 
 	// Fast, not the raw reading: the smoothing keeps sensor jitter and a single
@@ -319,7 +378,8 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		"smoothed":  in.state.Fast,
 		"warn":      bounds.Warn,
 		"crit":      bounds.Crit,
-		"normal":    in.state.Slow,
+		"normal":    bucket.Slow,
+		"hour":      conditions.HourOf(*in.readingTS),
 		"source":    bounds.Source,
 		"span_days": int(in.state.Span() / (24 * time.Hour)),
 		// When this reading was taken, which is what the API serves as

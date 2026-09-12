@@ -504,12 +504,17 @@ function conditionMessage(
     // the host kinds -- and any condition still open across that window keeps
     // the detail it opened with.
     const normal = reading(f, "normal") || reading(f, "p99");
+    // "for that hour", because the normal is the hour's, and an event log that
+    // shows the same sensor raised against 46 C at 09:00 and 62 C at 14:00
+    // needs to say why. Only when the detail carries an hour -- an event
+    // written under the single-average design has none and must not claim one.
+    const hourly = text(f, "hour") === "" ? "" : " for that hour";
     const against =
       text(f, "source") === "device"
         ? `its own limit of ${reading(f, "crit")}`
         : normal === ""
           ? ""
-          : `a normal under ${normal}`;
+          : `a normal under ${normal}${hourly}`;
     if (against === "") return `${named} — ${value}`;
     return `${named} — ${value}, against ${against}`;
   }

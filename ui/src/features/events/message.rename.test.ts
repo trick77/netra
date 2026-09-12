@@ -71,4 +71,24 @@ describe("messageOf, the p99 to normal rename", () => {
     expect(out).not.toMatch(/under\s*$/);
     expect(out).not.toMatch(/against\s*$/);
   });
+
+  // The normal is the HOUR's normal once the state is bucketed, and a log that
+  // raises the same sensor against 46 C at 09:00 and 62 C at 14:00 has to say
+  // so. An event without an hour predates the buckets and must not claim one.
+  it("says the normal is for that hour when the detail carries one", () => {
+    expect(
+      messageOf(
+        deviation({
+          transition: "opened",
+          value: 54.2,
+          normal: 46,
+          hour: 9,
+          source: "baseline",
+          unit: "C",
+        }),
+      ),
+    ).toBe(
+      "Temperature above normal — 54.2 C, against a normal under 46 C for that hour",
+    );
+  });
 });

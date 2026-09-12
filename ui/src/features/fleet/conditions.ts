@@ -770,12 +770,18 @@ export function hostConditions(
     // and an operator deciding whether to act reads them differently: past the
     // drive's stated limit is a fact about the hardware, above its usual range
     // is a fact about the week.
+    // "at this hour", because the normal is now the normal for the hour the
+    // reading was taken in, and without saying so the threshold appears to
+    // wander through the day for no reason a reader can see. Only when the
+    // detail carries an hour: a row raised under the un-bucketed design has
+    // no hour and its sentence must not claim one.
+    const hourly = num(detail.hour) === null ? "" : " at this hour";
     const because =
       str(detail.source) === "device"
         ? `past its ${deviationValue(num(detail.crit), unit)} limit`
         : normally === null
           ? ""
-          : `normally under ${deviationValue(normally, unit)}`;
+          : `normally under ${deviationValue(normally, unit)}${hourly}`;
 
     out.push({
       ...common(row),
