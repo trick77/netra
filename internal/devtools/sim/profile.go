@@ -175,6 +175,10 @@ type DriveSpec struct {
 	Failing bool
 	// PowerOnHours at the start of the simulated window.
 	PowerOnHours int64
+	// SizeBytes is the capacity smartctl would report as user_capacity.
+	// Decimal, as on the box: a 16 TB drive is 16_000_900_661_248 bytes.
+	// 0 leaves the drive unsized, the way a smartctl that cannot size it does.
+	SizeBytes uint64
 }
 
 // NetSpec is one interface's traffic baseline, in bytes per second.

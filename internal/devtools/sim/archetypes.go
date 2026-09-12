@@ -51,6 +51,9 @@ func ByName(names []string) ([]*Profile, error) {
 const (
 	gib = 1 << 30
 	mib = 1 << 20
+	// st16000 is what smartctl reports as user_capacity for a 16 TB Exos:
+	// decimal terabytes, as on the box, not 16 TiB.
+	st16000 = 16_000_900_661_248
 )
 
 // rpi5 is a Raspberry Pi 5 on a home connection: arm64, no swap, one thermal
@@ -271,12 +274,12 @@ func smartBaremetal() *Profile {
 		FileMax: 1048576,
 
 		Drives: []DriveSpec{
-			{Device: "sda", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1M0K", PowerOnHours: 21400},
-			{Device: "sdb", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1N7C", PowerOnHours: 21398},
+			{Device: "sda", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1M0K", PowerOnHours: 21400, SizeBytes: st16000},
+			{Device: "sdb", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1N7C", PowerOnHours: 21398, SizeBytes: st16000},
 			// The one that goes bad. Everything else on this host is healthy,
 			// so a "which drive is dying" query has exactly one answer.
-			{Device: "sdc", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1PQ2", PowerOnHours: 21402, Failing: true},
-			{Device: "sdd", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1RB8", PowerOnHours: 21391},
+			{Device: "sdc", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1PQ2", PowerOnHours: 21402, Failing: true, SizeBytes: st16000},
+			{Device: "sdd", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1RB8", PowerOnHours: 21391, SizeBytes: st16000},
 			// NVMe, so the fleet exercises both attribute id spaces. ATA
 			// numbers 1-255 out of the drive's own table; NVMe has no ids at
 			// all, so the collector maps its health log onto synthetic ones
@@ -288,7 +291,7 @@ func smartBaremetal() *Profile {
 			// smart: no-device-access and runs no smart collector -- a
 			// hypervisor does not pass SMART through, which is the realistic
 			// state and worth keeping.
-			{Device: "nvme0n1", Model: "SAMSUNG MZQL21T9HCJR-00A07", Serial: "S64HNE0T512345", SSD: true, NVMe: true, PowerOnHours: 9120},
+			{Device: "nvme0n1", Model: "SAMSUNG MZQL21T9HCJR-00A07", Serial: "S64HNE0T512345", SSD: true, NVMe: true, PowerOnHours: 9120, SizeBytes: 1_920_383_410_176},
 		},
 		Disks: []DiskSpec{
 			{Device: "sda", ReadBase: 4.2 * 1024 * 1024, WriteBase: 6.8 * 1024 * 1024, AwaitBase: 9.4},

@@ -331,6 +331,9 @@ export type Drive = {
   device: string;
   model: string | null;
   serial: string | null;
+  /** Capacity in bytes as smartctl reports it, null until a reading has
+   * carried one. Format with bytes(): disks are sold decimally. */
+  size_bytes: number | null;
   attributes: DriveAttribute[];
   /** When this drive's newest reading was TAKEN -- devices.last_seen. The
    * same instant the newest attribute carries, but stored rather than

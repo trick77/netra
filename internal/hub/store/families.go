@@ -1140,14 +1140,24 @@ func (s *Store) resolveDeviceIDs(ctx context.Context, hostID int32, rows []*netr
 		// GREATEST, so an out-of-order replay cannot walk last_seen backwards
 		// and hand the prune a drive that looks stale while its newest reading
 		// is current.
+		//
+		// COALESCE on size_bytes: a row without one (an agent predating the
+		// field, a smartctl that could not size the drive) must not null out
+		// a capacity the hub already knows.
+		var size *int64
+		if r.SizeBytes != nil {
+			v := int64(r.GetSizeBytes())
+			size = &v
+		}
 		id, ok, err := s.resolveOne(ctx, "device", name, `
-			INSERT INTO devices (host_id, device, model, serial, last_seen)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO devices (host_id, device, model, serial, last_seen, size_bytes)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (host_id, device) DO UPDATE
 			   SET model = EXCLUDED.model, serial = EXCLUDED.serial,
-			       last_seen = GREATEST(devices.last_seen, EXCLUDED.last_seen)
+			       last_seen = GREATEST(devices.last_seen, EXCLUDED.last_seen),
+			       size_bytes = COALESCE(EXCLUDED.size_bytes, devices.size_bytes)
 			RETURNING id`,
-			hostID, name, r.GetModel(), r.GetSerial(), tsOf(r.GetTsMs()))
+			hostID, name, r.GetModel(), r.GetSerial(), tsOf(r.GetTsMs()), size)
 		if err != nil {
 			return nil, err
 		}

@@ -25,6 +25,7 @@ function drive(
     device: "sda",
     model: "Samsung SSD 870 EVO 1TB",
     serial: "S5Y2NG0R123456",
+    size_bytes: null,
     attributes: Object.entries(attrs).map(([id, raw]) => ({
       id: Number(id),
       raw,

@@ -1622,10 +1622,10 @@ func TestIntegrationDrivesFoldTheNewestReadingPerAttribute(t *testing.T) {
 	// adjacent columns of the same type, and identical fixtures would let a
 	// swapped SELECT pass.
 	exec(t, pool, `
-		INSERT INTO devices (host_id, device, model, serial, first_seen, last_seen)
-		VALUES ($1, 'sda', 'ST16000NM000J', 'ZR5A1M0K',
+		INSERT INTO devices (host_id, device, model, serial, size_bytes, first_seen, last_seen)
+		VALUES ($1, 'sda', 'ST16000NM000J', 'ZR5A1M0K', 16000900661248,
 		        TIMESTAMPTZ '2026-01-05T09:00:00Z', TIMESTAMPTZ '2026-08-23T11:00:00Z'),
-		       ($1, 'nvme0n1', 'SAMSUNG MZQL2', 'S64FNE0R',
+		       ($1, 'nvme0n1', 'SAMSUNG MZQL2', 'S64FNE0R', NULL,
 		        TIMESTAMPTZ '2026-01-05T09:00:00Z', TIMESTAMPTZ '2026-08-23T11:00:00Z')`, id)
 
 	// Two readings of attribute 5 on sda, an hour apart. The later one is the
@@ -1658,6 +1658,13 @@ func TestIntegrationDrivesFoldTheNewestReadingPerAttribute(t *testing.T) {
 
 	if sda.Model == nil || *sda.Model != "ST16000NM000J" {
 		t.Errorf("sda model = %v", sda.Model)
+	}
+	if sda.SizeBytes == nil || *sda.SizeBytes != 16000900661248 {
+		t.Errorf("sda size_bytes = %v, want 16000900661248", sda.SizeBytes)
+	}
+	// Absent rather than 0 for a drive no reading has sized yet.
+	if nvme.SizeBytes != nil {
+		t.Errorf("nvme0n1 size_bytes = %d, want absent", *nvme.SizeBytes)
 	}
 	if len(sda.Attributes) != 2 {
 		t.Fatalf("sda has %d attributes, want 2 (one per id, newest)", len(sda.Attributes))

@@ -864,6 +864,10 @@ message SmartAttribute {
   uint32 attr_id = 5;
   optional int64 raw = 6;
   optional uint32 normalized = 7;
+  // Capacity in bytes, from smartctl's user_capacity. Repeated on every row
+  // like model and serial, because there is no per-drive message. Absent
+  // when smartctl did not size the drive; never 0.
+  optional uint64 size_bytes = 8;
 }
 
 // CollectorSample is one collector's own health for one scrape: how long it

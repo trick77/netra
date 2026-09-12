@@ -593,6 +593,12 @@ a:where(:hover) {
 .tnum {
   font-variant-numeric: tabular-nums;
 }
+/* A figure and its unit are one reading. A cell narrow enough to break
+   "1.9 TB" over two lines turns it into two things; the reading keeps its
+   line and the column widens instead. */
+.nowrap {
+  white-space: nowrap;
+}
 
 /* Text for assistive tech only. Not `display: none` and not `visibility:
    hidden` -- both remove it from the accessibility tree, which is the one

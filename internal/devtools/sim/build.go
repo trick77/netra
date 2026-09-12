@@ -959,6 +959,16 @@ func (g *Generator) filesystems(ts time.Time) []*netrav1.FilesystemSample {
 // compare against.
 const smartFailureOnset = 0.55
 
+// sizeBytes is the capacity the collector would put on every row, or nil for
+// a spec that leaves the drive unsized -- the same nil an unsizable drive
+// gets from a real smartctl.
+func sizeBytes(d DriveSpec) *uint64 {
+	if d.SizeBytes == 0 {
+		return nil
+	}
+	return proto.Uint64(d.SizeBytes)
+}
+
 func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 	var out []*netrav1.SmartAttribute
 	hoursIn := int64(ts.Sub(g.from).Hours())
@@ -975,6 +985,7 @@ func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 				AttrId:     id,
 				Raw:        proto.Int64(raw),
 				Normalized: proto.Uint32(normalized),
+				SizeBytes:  sizeBytes(d),
 			})
 		}
 
@@ -984,12 +995,13 @@ func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 			// scale, so the real collector leaves it unset and so does this.
 			nvme := func(id uint32, raw int64) {
 				out = append(out, &netrav1.SmartAttribute{
-					TsMs:   ts.UnixMilli(),
-					Device: d.Device,
-					Model:  d.Model,
-					Serial: d.Serial,
-					AttrId: id,
-					Raw:    proto.Int64(raw),
+					TsMs:      ts.UnixMilli(),
+					Device:    d.Device,
+					Model:     d.Model,
+					Serial:    d.Serial,
+					AttrId:    id,
+					Raw:       proto.Int64(raw),
+					SizeBytes: sizeBytes(d),
 				})
 			}
 
