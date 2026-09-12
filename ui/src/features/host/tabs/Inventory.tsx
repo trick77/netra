@@ -104,6 +104,9 @@ export interface InventoryProps<T> {
   /** The order this list arrives in. Handed straight to Table; see its
    * note. */
   defaultSort?: TableProps<T>["defaultSort"];
+  /** Rows that stay on top whatever the reader sorts by. Handed straight to
+   * Table; see its note. */
+  pinFirst?: TableProps<T>["pinFirst"];
   /** Print `label` as a visible heading above the toolbar, in the same
    * .grouphead the chart groups below use.
    *
@@ -127,6 +130,7 @@ export function Inventory<T>({
   groupBy,
   rowSeverity,
   defaultSort,
+  pinFirst,
   heading = false,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
@@ -194,6 +198,7 @@ export function Inventory<T>({
           rowSeverity={rowSeverity}
           groupBy={grouping}
           defaultSort={defaultSort}
+          pinFirst={pinFirst}
         />
       )}
     </section>
@@ -774,9 +779,16 @@ export function Mounts({
       rows={joined}
       rowKey={(row) => String(row.id)}
       searchText={(row) => `${row.label} ${row.mountpoint ?? ""}`}
+      // Root first, whatever the sort. It is the mount every reader looks
+      // for, and the hub orders by label, which is whatever the operator
+      // named the marker -- "root" lands under "data" and "media". The
+      // MOUNTPOINT is the stable identity; the label is not.
+      pinFirst={isRoot}
     />
   );
 }
+
+const isRoot = (row: FilesystemRow) => row.mountpoint === "/";
 
 /** The latest non-null value of a column, or null if it never reported. */
 function lastOf(

@@ -39,6 +39,7 @@ export interface Column<T> {
    * a row in the "unknown" group, which always sorts last regardless of
    * direction -- a host with no uptime reading is not the shortest-lived
    * host on the page, and flipping the arrow must not promote it to the top.
+   * (`pinFirst` is the one thing that outranks this -- see its doc.)
    */
   sortValue?: (row: T) => string | number | null;
 }
@@ -205,6 +206,18 @@ export interface TableProps<T> {
    * rather than make every reader sort it by hand on arrival.
    */
   defaultSort?: SortState;
+  /**
+   * Rows that stay at the top whatever the sort.
+   *
+   * The Mounts table is the reason: root is the mount a reader looks for
+   * first on every host, and a list sorted by free bytes or by label buries
+   * it under whichever data volume happens to be larger or spelt earlier.
+   * Pinned rows keep the current sort order among themselves and outrank
+   * even the "unknown sorts last" rule -- a root mount the metrics have not
+   * answered for yet is still the root mount. Applied before grouping, so a
+   * pinned row sits at the top of its group rather than of the whole table.
+   */
+  pinFirst?: (row: T) => boolean;
 }
 
 export type SortState = { key: string; dir: "asc" | "desc" };
@@ -223,6 +236,7 @@ export function Table<T>({
   rowSeverity,
   groupBy,
   defaultSort,
+  pinFirst,
 }: TableProps<T>) {
   // Uncontrolled: every caller wants the same click-to-sort behaviour, and
   // threading identical state through each of them buys nothing. defaultSort
@@ -258,31 +272,15 @@ export function Table<T>({
   const tableId = useId();
 
   const sorted = useMemo(() => {
-    if (sort === null) return rows;
-    const col = columns.find((c) => c.key === sort.key);
-    if (col?.sortValue === undefined) return rows;
-    const read = col.sortValue;
-    const sign = sort.dir === "asc" ? 1 : -1;
-    // Sorting a COPY: mutating the caller's array in place would reorder
-    // state it still owns, and React would not know it had changed.
-    return [...rows].sort((a, b) => {
-      const x = read(a);
-      const y = read(b);
-      // Unknown sorts last in BOTH directions -- see sortValue's doc.
-      if (x === null && y === null) return 0;
-      if (x === null) return 1;
-      if (y === null) return -1;
-      if (typeof x === "string" || typeof y === "string") {
-        // localeCompare with numeric: "host-2" before "host-10", which is
-        // what a reader scanning hostnames expects.
-        return (
-          sign *
-          String(x).localeCompare(String(y), undefined, { numeric: true })
-        );
-      }
-      return sign * (x - y);
-    });
-  }, [rows, columns, sort]);
+    const ordered = sortRows(rows, columns, sort);
+    if (pinFirst === undefined) return ordered;
+    // A stable partition: the pinned rows keep the sort order among
+    // themselves, and so do the rest.
+    return [
+      ...ordered.filter((row) => pinFirst(row)),
+      ...ordered.filter((row) => !pinFirst(row)),
+    ];
+  }, [rows, columns, sort, pinFirst]);
 
   // Partitioning the ALREADY sorted list is what makes "sort within a group"
   // fall out for free: a stable partition of a sorted list leaves every
@@ -572,4 +570,35 @@ export function Table<T>({
  */
 function dimAbsent(cell: ReactNode): ReactNode {
   return cell === ABSENT ? <span className="absent">{ABSENT}</span> : cell;
+}
+
+/** `rows` in the order `sort` asks for, or untouched when nothing is sorted. */
+function sortRows<T>(
+  rows: readonly T[],
+  columns: readonly Column<T>[],
+  sort: SortState | null,
+): readonly T[] {
+  if (sort === null) return rows;
+  const col = columns.find((c) => c.key === sort.key);
+  if (col?.sortValue === undefined) return rows;
+  const read = col.sortValue;
+  const sign = sort.dir === "asc" ? 1 : -1;
+  // Sorting a COPY: mutating the caller's array in place would reorder
+  // state it still owns, and React would not know it had changed.
+  return [...rows].sort((a, b) => {
+    const x = read(a);
+    const y = read(b);
+    // Unknown sorts last in BOTH directions -- see sortValue's doc.
+    if (x === null && y === null) return 0;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    if (typeof x === "string" || typeof y === "string") {
+      // localeCompare with numeric: "host-2" before "host-10", which is
+      // what a reader scanning hostnames expects.
+      return (
+        sign * String(x).localeCompare(String(y), undefined, { numeric: true })
+      );
+    }
+    return sign * (x - y);
+  });
 }

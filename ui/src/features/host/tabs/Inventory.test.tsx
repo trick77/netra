@@ -1107,13 +1107,17 @@ describe("inventory sorting", () => {
   describe("Mounts", () => {
     // The sizes are joined in from the metrics family by label, so a row
     // literal cannot carry them -- see Mounts itself.
+    // Root is pinned to the top whatever the sort (see Mounts), so the
+    // ordering tests need TWO other mounts to have anything to order.
     const mounts = [
       { id: 1, label: "root", mountpoint: "/", device_id: null },
       { id: 2, label: "data", mountpoint: "/data", device_id: null },
+      { id: 3, label: "media", mountpoint: "/media", device_id: null },
     ];
 
     // root: 500 GB, 450 used, 50 free -> 90% of what df counts.
     // data: 8 TB, 800 used, 7200 free -> 10%.
+    // media: 900 GB, 450 used, 450 free -> 50%.
     const sizes = {
       family: "filesystem",
       tier: "raw",
@@ -1135,6 +1139,10 @@ describe("inventory sorting", () => {
           key: { filesystem: "data" },
           points: [[Date.parse("2026-08-10T00:00:00Z"), 8000e9, 800e9, 7200e9]],
         },
+        {
+          key: { filesystem: "media" },
+          points: [[Date.parse("2026-08-10T00:00:00Z"), 900e9, 450e9, 450e9]],
+        },
       ],
       truncated: false,
     } as unknown as MetricsResponse;
@@ -1145,14 +1153,14 @@ describe("inventory sorting", () => {
       await sortByEveryColumn();
     });
 
-    // The cells read "500 GB" and "8 TB", which as strings put the 8 TB mount
+    // The cells read "900 GB" and "8 TB", which as strings put the 8 TB mount
     // first. Sorting on the byte count is the whole point of the column
     // having its own accessor.
     it("orders Size by bytes and not by the formatted string", async () => {
       render(<Mounts rows={mounts} metrics={sizes} />);
       await userEvent.click(header(/size/i));
 
-      expect(firstCells()).toEqual(["root", "data"]);
+      expect(firstCells()).toEqual(["root", "media", "data"]);
     });
 
     // The bigger disk is the emptier one, so Usage and Size must not agree.
@@ -1160,7 +1168,24 @@ describe("inventory sorting", () => {
       render(<Mounts rows={mounts} metrics={sizes} />);
       await userEvent.click(header(/usage/i));
 
-      expect(firstCells()).toEqual(["data", "root"]);
+      expect(firstCells()).toEqual(["root", "data", "media"]);
+    });
+
+    // The hub hands the rows over by label, which is whatever the operator
+    // named the marker, so "root" arrives under "data" and "media". The
+    // mountpoint is what says which one is root, and it stays on top through
+    // a sort that would otherwise bury it -- it is the fullest mount here, so
+    // Usage descending would put it last.
+    it("keeps the root mount first, on arrival and through every sort", async () => {
+      render(<Mounts rows={[...mounts].reverse()} metrics={sizes} />);
+      expect(firstCells()[0]).toBe("root");
+
+      await userEvent.click(header(/usage/i));
+      expect(firstCells()).toEqual(["root", "data", "media"]);
+      await userEvent.click(header(/usage/i));
+      expect(firstCells()).toEqual(["root", "media", "data"]);
+      await userEvent.click(header(/label/i));
+      expect(firstCells()).toEqual(["root", "data", "media"]);
     });
 
     /*
