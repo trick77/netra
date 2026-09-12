@@ -489,10 +489,28 @@ function conditionMessage(
   // carry the figures, nothing does.
   const value = reading(f, "value");
   if (value !== "") {
+    // `normal` first, then `p99`, because the event log is HISTORY and the key
+    // was renamed when the threshold stopped being a percentile.
+    //
+    // Every deviation event written before that rename carries `p99`, and they
+    // do not stop existing: the log's default window is 24 h and its retention
+    // is 90 days, so they are on screen for months. Reading only the new key
+    // renders "54.2 C, against a normal under " -- a sentence that stops in the
+    // middle, which is worse than the terse fallback below because it looks
+    // like the number is missing rather than the key.
+    //
+    // It is not only old rows, either. 0021 starts the state empty, so every
+    // deviation subject re-warms before it can be judged again -- a week for
+    // the host kinds -- and any condition still open across that window keeps
+    // the detail it opened with.
+    const normal = reading(f, "normal") || reading(f, "p99");
     const against =
       text(f, "source") === "device"
         ? `its own limit of ${reading(f, "crit")}`
-        : `a normal under ${reading(f, "normal")}`;
+        : normal === ""
+          ? ""
+          : `a normal under ${normal}`;
+    if (against === "") return `${named} — ${value}`;
     return `${named} — ${value}, against ${against}`;
   }
 

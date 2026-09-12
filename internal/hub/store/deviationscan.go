@@ -339,22 +339,34 @@ func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput
 		detail[k] = v
 	}
 
+	onset, atLeast := *in.readingTS, true
+	if e := in.state.ExcursionSince; !e.IsZero() && e.Before(onset) {
+		onset, atLeast = e, false
+	}
+
 	scan.Bad[key] = conditions.Finding{
 		Key:      key,
 		Severity: severity,
 		Detail:   detail,
-		// The reading's own timestamp as a floor, not now(). A pass that finds
-		// a host three minutes behind on ingest must not record the onset as
-		// the moment the hub noticed.
+		// WHEN THE READING ACTUALLY LEFT THE BAND, which the state already
+		// knows and no walk has to reconstruct.
 		//
-		// No walk back through the series, unlike the disk onset, and now for a
-		// stronger reason than before: the threshold is a moving average, so it
-		// was a different number at every past instant. "When did this first
-		// cross" has no answer without also asking which minute's threshold to
-		// ask it against, and reconstructing that would mean replaying the
-		// average backwards. A floor that is honest beats a number that looks
-		// precise.
-		OpenedTS:      *in.readingTS,
-		OpenedAtLeast: true,
+		// The previous comment here argued that the onset was unknowable
+		// because the threshold is a moving average and was a different number
+		// at every past instant -- true, and beside the point: excursion_since
+		// is stamped at the moment fast crossed, by the fold, at the time it
+		// happened. Using now() instead reported every open at least OpenFor
+		// late, and arbitrarily late behind a fold catching up on a backlog:
+		// an excursion stamped twenty hours ago would open claiming it had just
+		// started.
+		//
+		// Exact rather than a floor when it comes from the state, so
+		// OpenedAtLeast is false there and the UI prints the time instead of
+		// "over". The reading's own timestamp stays the fallback for a subject
+		// whose condition is already open and whose excursion has since been
+		// restamped, and it is a floor because it is the oldest instant this
+		// pass can actually vouch for.
+		OpenedTS:      onset,
+		OpenedAtLeast: atLeast,
 	}
 }

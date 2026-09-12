@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -106,14 +107,31 @@ func foldSources() []foldSource {
 
 // FoldSamples advances every subject's state over the samples that have landed.
 func (s *Store) FoldSamples(ctx context.Context) error {
+	// EVERY FAMILY IS ATTEMPTED, and the errors are joined rather than returned
+	// at the first one.
+	//
+	// Returning early made one family's failure silently stop the other two:
+	// a persistent error in the temperature fold left processes and load never
+	// advancing, and three minutes later the freshness gate in judgeDeviation
+	// filed every host-kind subject as unjudged -- with a log line naming only
+	// `temperature`, so the two kinds that had actually gone blind were the two
+	// nothing mentioned. It skipped the prune as well, so the state grew
+	// without bound for as long as the failure lasted.
+	//
+	// This is the same rule ScanConditions already follows for its five kinds:
+	// one failing costs its own kind and nothing else.
+	var errs []error
 	for _, src := range foldSources() {
 		if err := s.foldFamily(ctx, src); err != nil {
 			// Named, so a failure says which family stopped advancing rather
 			// than that "the fold" did.
-			return fmt.Errorf("fold %s: %w", src.kind, err)
+			errs = append(errs, fmt.Errorf("fold %s: %w", src.kind, err))
 		}
 	}
-	return s.pruneEWMA(ctx)
+	if err := s.pruneEWMA(ctx); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // ewmaKey is one subject's identity within a family.

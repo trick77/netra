@@ -303,6 +303,21 @@ func TestIntegrationADepartureFromNormalIsRaised(t *testing.T) {
 	if !scan.Evaluated[conditions.KindTemperature] {
 		t.Error("the temperature kind was not marked evaluated")
 	}
+
+	// THE ONSET IS WHEN IT LEFT THE BAND, not when the hub looked.
+	//
+	// The state already knows: excursion_since was stamped by the fold at the
+	// moment fast crossed. Reporting now() instead put every open at least
+	// OpenFor late, and arbitrarily late behind a fold working through a
+	// backlog -- an excursion stamped twenty hours ago opening as though it had
+	// just started.
+	if finding.OpenedTS.After(now.Add(-2 * time.Minute)) {
+		t.Errorf("onset = %v against a reading at %v: the excursion began "+
+			"minutes earlier and the state recorded when", finding.OpenedTS, now)
+	}
+	if finding.OpenedAtLeast {
+		t.Error("an onset taken from the state is exact, not a floor")
+	}
 }
 
 // A brief excursion is not raised, and is not filed as healthy either: a
