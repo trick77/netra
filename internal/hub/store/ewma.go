@@ -173,7 +173,7 @@ func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
 	}
 	defer rows.Close()
 
-	touched := make(map[ewmaKey]bool)
+	touched := make(map[ewmaKey]map[int]bool)
 	for rows.Next() {
 		var key ewmaKey
 		var chip string
@@ -202,7 +202,10 @@ func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
 		state[key] = state[key].Update(*value, ts,
 			conditions.RuleFor(src.kind, chip),
 			conditions.Limits{High: limitHigh, HighCrit: limitCrit})
-		touched[key] = true
+		if touched[key] == nil {
+			touched[key] = make(map[int]bool)
+		}
+		touched[key][conditions.HourOf(ts)] = true
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -245,17 +248,37 @@ func (s *Store) foldFloor(ctx context.Context, kind string) (time.Time, error) {
 // current reading, scanSensors files that subject Unjudged either way, which
 // leaves its condition exactly as it is. If it comes back, it re-warms.
 func (s *Store) pruneEWMA(ctx context.Context) error {
+	// The subject row first, then its orphaned buckets. Two statements rather
+	// than a cascade, because metric_ewma_hour is keyed on the same triple
+	// rather than on a surrogate the subject row owns -- there is no foreign key
+	// between them to cascade along, and adding one would buy a constraint check
+	// on every bucket write to save one DELETE a minute.
 	if _, err := s.pool.Exec(ctx,
 		`DELETE FROM metric_ewma WHERE updated_ts < now() - $1::interval`,
 		conditions.TauSlow); err != nil {
 		return fmt.Errorf("prune state: %w", err)
 	}
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM metric_ewma_hour h
+		 WHERE NOT EXISTS (
+		     SELECT 1 FROM metric_ewma e
+		      WHERE e.host_id = h.host_id AND e.kind = h.kind AND e.subject = h.subject
+		 )`); err != nil {
+		return fmt.Errorf("prune buckets: %w", err)
+	}
 	return nil
 }
 
+// loadEWMA reads every subject's state for one kind: the per-subject row and
+// its hour buckets.
+//
+// Two queries rather than a join, because a join would repeat the per-subject
+// columns across up to twenty-four rows and then need de-duplicating in Go. Two
+// full reads of a table sized at twenty-four rows per judged subject is the
+// cheaper and plainer shape.
 func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditions.EWMA, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT host_id, subject, slow, fast, var, first_ts, updated_ts, excursion_since
+		SELECT host_id, subject, fast, first_ts, updated_ts, excursion_since
 		  FROM metric_ewma WHERE kind = $1`, kind)
 	if err != nil {
 		return nil, fmt.Errorf("query state: %w", err)
@@ -267,7 +290,7 @@ func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditio
 		var key ewmaKey
 		var e conditions.EWMA
 		var excursion *time.Time
-		if err := rows.Scan(&key.hostID, &key.subject, &e.Slow, &e.Fast, &e.Var,
+		if err := rows.Scan(&key.hostID, &key.subject, &e.Fast,
 			&e.FirstTS, &e.UpdatedTS, &excursion); err != nil {
 			return nil, fmt.Errorf("scan state: %w", err)
 		}
@@ -276,40 +299,93 @@ func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditio
 		}
 		out[key] = e
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	buckets, err := s.pool.Query(ctx, `
+		SELECT host_id, subject, hour, slow, var, weight, exc
+		  FROM metric_ewma_hour WHERE kind = $1`, kind)
+	if err != nil {
+		return nil, fmt.Errorf("query buckets: %w", err)
+	}
+	defer buckets.Close()
+
+	for buckets.Next() {
+		var key ewmaKey
+		var hour int16
+		var b conditions.Bucket
+		if err := buckets.Scan(&key.hostID, &key.subject, &hour,
+			&b.Slow, &b.Var, &b.Weight, &b.Exc); err != nil {
+			return nil, fmt.Errorf("scan bucket: %w", err)
+		}
+		// A bucket whose subject row is missing is skipped rather than
+		// resurrecting the subject from it: the per-subject row carries the
+		// span the warm-up is measured against, and a state with buckets but no
+		// span would be judged against a MinSpan of zero.
+		e, ok := out[key]
+		if !ok || hour < 0 || hour >= conditions.Buckets {
+			continue
+		}
+		e.Hour[hour] = b
+		out[key] = e
+	}
+	return out, buckets.Err()
 }
 
+// saveEWMA writes back the subjects this pass advanced, and only the hour
+// buckets it actually touched.
+//
+// `touched` carries the hours as well as the subject, because one reading
+// changes exactly one bucket. Writing all twenty-four would be twenty-four times
+// the rows for no new information, and a pass that only ever sees the current
+// hour would keep rewriting twenty-three unchanged rows every minute.
 func (s *Store) saveEWMA(ctx context.Context, kind string,
-	state map[ewmaKey]conditions.EWMA, touched map[ewmaKey]bool) error {
+	state map[ewmaKey]conditions.EWMA, touched map[ewmaKey]map[int]bool) error {
 	batch := &pgx.Batch{}
-	for key := range touched {
+	queued := 0
+	for key, hours := range touched {
 		e := state[key]
 		var excursion *time.Time
 		if !e.ExcursionSince.IsZero() {
 			ex := e.ExcursionSince
 			excursion = &ex
 		}
+
+		// first_ts is deliberately NOT in either DO UPDATE list: it is the
+		// oldest reading ever folded in, which is what the warm-up is measured
+		// against, and rewriting it on every pass would keep the span at zero
+		// forever and leave every subject permanently unjudged.
 		batch.Queue(`
 			INSERT INTO metric_ewma
-			    (host_id, kind, subject, slow, fast, var, first_ts, updated_ts, excursion_since)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			    (host_id, kind, subject, fast, first_ts, updated_ts, excursion_since)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (host_id, kind, subject) DO UPDATE
-			   SET slow = excluded.slow,
-			       fast = excluded.fast,
-			       var  = excluded.var,
+			   SET fast = excluded.fast,
 			       updated_ts = excluded.updated_ts,
 			       excursion_since = excluded.excursion_since`,
-			key.hostID, kind, key.subject, e.Slow, e.Fast, e.Var,
-			e.FirstTS, e.UpdatedTS, excursion)
+			key.hostID, kind, key.subject, e.Fast, e.FirstTS, e.UpdatedTS, excursion)
+		queued++
+
+		for hour := range hours {
+			b := e.Hour[hour]
+			batch.Queue(`
+				INSERT INTO metric_ewma_hour
+				    (host_id, kind, subject, hour, slow, var, weight, exc)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				ON CONFLICT (host_id, kind, subject, hour) DO UPDATE
+				   SET slow   = excluded.slow,
+				       var    = excluded.var,
+				       weight = excluded.weight,
+				       exc    = excluded.exc`,
+				key.hostID, kind, key.subject, hour, b.Slow, b.Var, b.Weight, b.Exc)
+			queued++
+		}
 	}
 
-	// first_ts is deliberately NOT in the DO UPDATE list: it is the oldest
-	// reading ever folded in, which is what the warm-up is measured against,
-	// and rewriting it on every pass would keep the span at zero forever and
-	// leave every subject permanently unjudged.
 	results := s.pool.SendBatch(ctx, batch)
 	defer results.Close()
-	for range touched {
+	for range queued {
 		if _, err := results.Exec(); err != nil {
 			return fmt.Errorf("upsert state: %w", err)
 		}

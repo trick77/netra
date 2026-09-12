@@ -17,6 +17,10 @@ func steady(x float64, n int, floor float64) EWMA {
 	return e
 }
 
+// now is the bucket the state's newest reading landed in, which is the one a
+// judgement would consult.
+func now(e EWMA) Bucket { return e.Bucket(HourOf(e.UpdatedTS)) }
+
 // A flat series must not alarm on its own noise. Its true spread is zero, so a
 // 4-sigma band is zero wide, and the floor is the only thing standing between
 // that and a condition on every reading.
@@ -24,7 +28,7 @@ func TestAFlatSeriesStaysQuiet(t *testing.T) {
 	const floor = 4.0
 	e := steady(44, 3000, floor)
 
-	warn, crit := e.Band(floor)
+	warn, crit := now(e).Band(floor)
 	if warn <= 44 || crit <= warn {
 		t.Fatalf("band = %v/%v, want both above the normal 44 and ordered", warn, crit)
 	}
@@ -38,7 +42,7 @@ func TestAFlatSeriesStaysQuiet(t *testing.T) {
 func TestTheFirstReadingSeedsTheState(t *testing.T) {
 	e := EWMA{}.Update(44, epoch, FamilyRule{Floor: 4}, Limits{})
 
-	if e.Slow != 44 || e.Fast != 44 || e.Var != 0 {
+	if now(e).Slow != 44 || e.Fast != 44 || now(e).Var != 0 {
 		t.Errorf("seed = %+v, want slow=fast=44 var=0", e)
 	}
 	if e.Span() != 0 {
@@ -72,8 +76,8 @@ func TestDecayFollowsElapsedTimeNotCallCount(t *testing.T) {
 	// mark rather than taking the newest sample. A tick-driven update would
 	// absorb one of those sixty readings and the average would track how often
 	// the hub looked.
-	if math.Abs(oneJump.Slow-buffered.Slow) > 1e-6 {
-		t.Errorf("slow diverged: one jump %v, sixty readings %v", oneJump.Slow, buffered.Slow)
+	if math.Abs(now(oneJump).Slow-now(buffered).Slow) > 1e-6 {
+		t.Errorf("slow diverged: one jump %v, sixty readings %v", now(oneJump).Slow, now(buffered).Slow)
 	}
 
 	// Over an hour -- thirty TauFast -- fast has saturated either way, so it
@@ -119,9 +123,10 @@ func TestTheExcursionIsDecidedAgainstTheCappedBand(t *testing.T) {
 	// band is 62/66; the 60 C family ceiling pulls crit to 60 and warn beneath
 	// it, so a reading of 61 is critical to the judge and inside the uncapped
 	// band to anything that forgot the cap.
-	e := EWMA{Slow: 50, Fast: 50, Var: 16, FirstTS: epoch, UpdatedTS: epoch}
+	e := EWMA{Fast: 50, FirstTS: epoch, UpdatedTS: epoch}
+	e.Hour[HourOf(epoch)] = Bucket{Slow: 50, Var: 16, Weight: 1}
 
-	uncappedWarn, uncappedCrit := e.Band(rule.Floor)
+	uncappedWarn, uncappedCrit := now(e).Band(rule.Floor)
 	capped := DeviationThresholds(uncappedWarn, uncappedCrit, Limits{}, rule.Ceilings)
 	if 61 <= capped.Warn || 61 >= uncappedWarn {
 		t.Fatalf("precondition: 61 must be over the capped warn %v and under the "+
@@ -158,7 +163,7 @@ func TestASustainedFaultDoesNotWidenItsOwnBandPastItself(t *testing.T) {
 	const floor = 4.0
 	e := steady(44, 5000, floor)
 
-	warn, _ := e.Band(floor)
+	warn, _ := now(e).Band(floor)
 	if 58 <= warn {
 		t.Fatalf("precondition: 58 must start outside the band at %v", warn)
 	}
@@ -170,7 +175,7 @@ func TestASustainedFaultDoesNotWidenItsOwnBandPastItself(t *testing.T) {
 		e = e.Update(58, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 
-	w, c := e.Band(floor)
+	w, c := now(e).Band(floor)
 	if DeviationSeverity(e.Fast, Bounds{Warn: w, Crit: c}) == "" {
 		t.Errorf("after three days at 58 the band is %v/%v and fast is %v: "+
 			"the fault widened its own band and would be reported as recovered",
@@ -190,7 +195,7 @@ func TestASustainedFaultDoesNotWidenItsOwnBandPastItself(t *testing.T) {
 func TestAnExcursionOutlastingTauSlowBecomesTheNewNormal(t *testing.T) {
 	const floor = 0.5
 	e := steady(2.0, 5000, floor)
-	before := e.Slow
+	before := now(e).Slow
 
 	// Ten days at the new level, comfortably past TauSlow.
 	ts := e.UpdatedTS
@@ -199,11 +204,11 @@ func TestAnExcursionOutlastingTauSlowBecomesTheNewNormal(t *testing.T) {
 		e = e.Update(6.0, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 
-	if e.Slow <= before+0.5 {
+	if now(e).Slow <= before+0.5 {
 		t.Errorf("slow = %v, barely moved from %v: a shift that outlasted TauSlow "+
-			"was never accepted, so the condition could never clear", e.Slow, before)
+			"was never accepted, so the condition could never clear", now(e).Slow, before)
 	}
-	w, c := e.Band(floor)
+	w, c := now(e).Band(floor)
 	if DeviationSeverity(e.Fast, Bounds{Warn: w, Crit: c}) != "" {
 		t.Errorf("after ten days the band is %v/%v against fast %v, still firing",
 			w, c, e.Fast)
@@ -215,7 +220,7 @@ func TestAnExcursionOutlastingTauSlowBecomesTheNewNormal(t *testing.T) {
 func TestABriefSpikeDoesNotMoveTheNormal(t *testing.T) {
 	const floor = 4.0
 	e := steady(44, 5000, floor)
-	before := e.Slow
+	before := now(e).Slow
 
 	ts := e.UpdatedTS
 	for range 3 {
@@ -227,8 +232,8 @@ func TestABriefSpikeDoesNotMoveTheNormal(t *testing.T) {
 		e = e.Update(44, ts, FamilyRule{Floor: floor}, Limits{})
 	}
 
-	if math.Abs(e.Slow-before) > 0.05 {
-		t.Errorf("slow moved from %v to %v on a three-minute spike", before, e.Slow)
+	if math.Abs(now(e).Slow-before) > 0.05 {
+		t.Errorf("slow moved from %v to %v on a three-minute spike", before, now(e).Slow)
 	}
 	if !e.ExcursionSince.IsZero() {
 		t.Error("the excursion was not cleared once the reading came back")
@@ -247,7 +252,7 @@ func TestABriefSpikeDoesNotMoveTheNormal(t *testing.T) {
 func TestAShortBurstIsSmoothedButStillCrossesTheBand(t *testing.T) {
 	const floor = 0.5
 	e := steady(2.0, 5000, floor)
-	warn, _ := e.Band(floor)
+	warn, _ := now(e).Band(floor)
 
 	ts := e.UpdatedTS
 	for range 2 {
@@ -279,10 +284,10 @@ func TestVarianceNeverGoesNegative(t *testing.T) {
 	for i := range 500 {
 		ts = ts.Add(ScrapeInterval)
 		e = e.Update(44+float64(i%7)-3, ts, FamilyRule{Floor: floor}, Limits{})
-		if e.Var < 0 {
-			t.Fatalf("var = %v", e.Var)
+		if now(e).Var < 0 {
+			t.Fatalf("var = %v", now(e).Var)
 		}
-		if math.IsNaN(e.Scale(floor)) {
+		if math.IsNaN(now(e).Scale(floor)) {
 			t.Fatal("scale is NaN")
 		}
 	}

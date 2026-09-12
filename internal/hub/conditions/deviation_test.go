@@ -10,7 +10,7 @@ func ptr(f float64) *float64 { return &f }
 // band is the pair a subject with this normal and this spread is judged against,
 // before any hardware limit caps it.
 func band(normal, sd, floor float64) (warn, crit float64) {
-	return EWMA{Slow: normal, Var: sd * sd}.Band(floor)
+	return Bucket{Slow: normal, Var: sd * sd}.Band(floor)
 }
 
 // THE BUG THIS WHOLE TIER EXISTS FOR. A busy NVMe whose composite temperature

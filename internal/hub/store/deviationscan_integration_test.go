@@ -70,13 +70,31 @@ func ewmaRow(t *testing.T, ctx context.Context, s *store.Store,
 	t.Helper()
 	var first, updated time.Time
 	err := s.Pool().QueryRow(ctx, `
-		SELECT slow, fast, first_ts, updated_ts FROM metric_ewma
-		 WHERE host_id = $1 AND kind = $2 AND subject = $3`,
+		SELECT coalesce(max(eh.slow), 0), e.fast, e.first_ts, e.updated_ts
+		  FROM metric_ewma e
+		  LEFT JOIN metric_ewma_hour eh
+		         ON eh.host_id = e.host_id AND eh.kind = e.kind AND eh.subject = e.subject
+		 WHERE e.host_id = $1 AND e.kind = $2 AND e.subject = $3
+		 GROUP BY e.fast, e.first_ts, e.updated_ts`,
 		host, kind, subject).Scan(&slow, &fast, &first, &updated)
 	if err != nil {
 		return 0, 0, 0, false
 	}
 	return slow, fast, updated.Sub(first), true
+}
+
+// bucketCount is how many hour buckets a subject has learned.
+func bucketCount(t *testing.T, ctx context.Context, s *store.Store,
+	host int32, kind, subject string) int {
+	t.Helper()
+	var n int
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM metric_ewma_hour
+		 WHERE host_id = $1 AND kind = $2 AND subject = $3`,
+		host, kind, subject).Scan(&n); err != nil {
+		t.Fatalf("count buckets: %v", err)
+	}
+	return n
 }
 
 // enoughSpan is comfortably past the temperature warm-up.
@@ -110,6 +128,38 @@ func TestIntegrationFoldBuildsTheMovingAverage(t *testing.T) {
 	if span < 24*time.Hour {
 		t.Errorf("span = %v, want at least a day from %d samples", span, enoughSpan)
 	}
+
+	// The seasonal half landed too, and only for the hours the series actually
+	// covered: enoughSpan minutes is about 33 h, so every hour is touched, but
+	// a shorter series must not conjure buckets it never observed.
+	if n := bucketCount(t, ctx, s, host, conditions.KindTemperature, "drivetemp/temp1/sda"); n == 0 {
+		t.Error("no metric_ewma_hour rows: the seasonal half was not written")
+	}
+}
+
+// A series shorter than a day leaves the hours it never covered unlearned, and
+// a reading in one of them is UNJUDGED rather than judged against nothing.
+//
+// The alternative -- seeding an unseen bucket from a neighbour -- would import
+// the wrong mode at exactly the boundary where the modes differ, which is the
+// thing the buckets exist to separate.
+func TestIntegrationOnlyObservedHoursAreLearned(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(t, ctx, s, "ewma-partial-day")
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	// Three hours of history: three or four buckets, not twenty-four.
+	seedSensorSeries(t, ctx, s, host, sensorID, now, 3*60, 44)
+
+	if err := s.FoldSamples(ctx); err != nil {
+		t.Fatalf("FoldSamples: %v", err)
+	}
+
+	n := bucketCount(t, ctx, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
+	if n == 0 || n > 4 {
+		t.Errorf("buckets = %d, want the three or four hours the series covered", n)
+	}
 }
 
 // The old design was dropped, not left alongside. A migration that added the
@@ -136,6 +186,20 @@ func TestIntegrationTheBaselineWindowIsGone(t *testing.T) {
 	}
 	if jobs != 0 {
 		t.Errorf("%d recompute jobs still registered", jobs)
+	}
+
+	// 0022 moved the seasonal half out, so the single-average columns must be
+	// gone from metric_ewma as well: leaving them would let a reader take the
+	// value that sits between a subject's two modes for its normal.
+	var cols int
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		 WHERE table_name = 'metric_ewma' AND column_name IN ('slow', 'var')`).
+		Scan(&cols); err != nil {
+		t.Fatalf("query columns: %v", err)
+	}
+	if cols != 0 {
+		t.Errorf("metric_ewma still carries %d of the un-bucketed columns", cols)
 	}
 }
 
@@ -225,11 +289,16 @@ func TestIntegrationHostKindsWaitLongerThanTemperature(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	seedHostCurrent(t, ctx, s, host, now)
 
-	// Two days: past temperature's warm-up, well inside the host kinds'.
-	const twoDays = 2 * 24 * 60
+	// Three days: past temperature's warm-up, well inside the host kinds'.
+	//
+	// Three rather than two because a subject is judged in one HOUR's bucket,
+	// and a bucket needs about two and a half days of its own hour before its
+	// band is trusted (conditions.WarmWeight). The subject-level MinSpan of a
+	// day is a floor that the bucket's own warm-up now sits above.
+	const warmed = 3 * 24 * 60
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, twoDays, 44)
-	seedHostSeries(t, ctx, s, host, now, twoDays, 300, 1.5)
+	seedSensorSeries(t, ctx, s, host, sensorID, now, warmed, 44)
+	seedHostSeries(t, ctx, s, host, now, warmed, 300, 1.5)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
@@ -272,7 +341,7 @@ func TestIntegrationADepartureFromNormalIsRaised(t *testing.T) {
 
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
 	// Two days at 44, then fifteen minutes at 61 -- past OpenFor.
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-15*time.Minute), 2*24*60, 44)
+	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-15*time.Minute), 3*24*60, 44)
 	seedSensorSeries(t, ctx, s, host, sensorID, now, 15, 61)
 
 	if err := s.FoldSamples(ctx); err != nil {
@@ -330,7 +399,7 @@ func TestIntegrationABriefExcursionIsUnjudgedNotRaised(t *testing.T) {
 	seedHostCurrent(t, ctx, s, host, now)
 
 	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-4*time.Minute), 2*24*60, 44)
+	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-4*time.Minute), 3*24*60, 44)
 	// Four minutes at 70. `fast` needs about two of them to cross the band, so
 	// the EXCURSION is only about two minutes old against OpenFor's three --
 	// which is the window this test is about.
@@ -373,7 +442,7 @@ func TestIntegrationABusyNVMeIsNotRaisedAgainstItsOwnNormal(t *testing.T) {
 
 	high, crit := 80.0, 85.0
 	sensorID := seedSensorLimits(t, ctx, s, host, "nvme", "Composite", "nvme0n1", &high, &crit)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 2*24*60, 65)
+	seedSensorSeries(t, ctx, s, host, sensorID, now, 3*24*60, 65)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
