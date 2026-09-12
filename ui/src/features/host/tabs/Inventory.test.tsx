@@ -1177,8 +1177,10 @@ describe("inventory sorting", () => {
     // a sort that would otherwise bury it -- it is the fullest mount here, so
     // Usage descending would put it last.
     it("keeps the root mount first, on arrival and through every sort", async () => {
+      // Reversed, so "media, data" arriving proves the table sorts the rest
+      // by label itself rather than trusting the order the hub sent.
       render(<Mounts rows={[...mounts].reverse()} metrics={sizes} />);
-      expect(firstCells()[0]).toBe("root");
+      expect(firstCells()).toEqual(["root", "data", "media"]);
 
       await userEvent.click(header(/usage/i));
       expect(firstCells()).toEqual(["root", "data", "media"]);

@@ -46,7 +46,12 @@ import { FLAP_THRESHOLD } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
-import { Table, type Column, type TableProps } from "../../../ui/Table";
+import {
+  Table,
+  type Column,
+  type SortState,
+  type TableProps,
+} from "../../../ui/Table";
 import { Meter, SEVERITY_CLASS } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
 import { stateKindLabel } from "../../container/state";
@@ -784,11 +789,16 @@ export function Mounts({
       // named the marker -- "root" lands under "data" and "media". The
       // MOUNTPOINT is the stable identity; the label is not.
       pinFirst={isRoot}
+      // And the rest by label. The hub already hands them over that way,
+      // but said here so the header shows the order and the table does not
+      // depend on a query it cannot see.
+      defaultSort={BY_LABEL}
     />
   );
 }
 
 const isRoot = (row: FilesystemRow) => row.mountpoint === "/";
+const BY_LABEL: SortState = { key: "label", dir: "asc" };
 
 /** The latest non-null value of a column, or null if it never reported. */
 function lastOf(
