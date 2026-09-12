@@ -85,8 +85,13 @@ type smartctlScan struct {
 
 // smartctlDevice is the subset of `smartctl --json --all DEV` netra reads.
 type smartctlDevice struct {
-	ModelName          string `json:"model_name"`
-	SerialNumber       string `json:"serial_number"`
+	ModelName    string `json:"model_name"`
+	SerialNumber string `json:"serial_number"`
+	// Capacity in bytes. smartctl reports it for ATA and NVMe alike; 0 when
+	// it could not size the drive, which sizeBytes turns into "unknown".
+	UserCapacity struct {
+		Bytes uint64 `json:"bytes"`
+	} `json:"user_capacity"`
 	AtaSmartAttributes struct {
 		Table []struct {
 			ID    int    `json:"id"`
@@ -111,6 +116,15 @@ type smartctlDevice struct {
 	Smartctl struct {
 		ExitStatus int `json:"exit_status"`
 	} `json:"smartctl"`
+}
+
+// sizeBytes is the drive's capacity for the wire: nil rather than 0 when
+// smartctl did not report one, so the hub keeps whatever it already knows.
+func (d *smartctlDevice) sizeBytes() *uint64 {
+	if d.UserCapacity.Bytes == 0 {
+		return nil
+	}
+	return ptrTo(d.UserCapacity.Bytes)
 }
 
 // exitNotRead are the smartctl exit bits that mean no reading was obtained:
@@ -449,12 +463,13 @@ func nvmeRows(ts int64, device string, d smartctlDevice) []*netrav1.SmartAttribu
 			continue
 		}
 		rows = append(rows, &netrav1.SmartAttribute{
-			TsMs:   ts,
-			Device: device,
-			Model:  d.ModelName,
-			Serial: d.SerialNumber,
-			AttrId: attr.id,
-			Raw:    ptrTo(v),
+			TsMs:      ts,
+			Device:    device,
+			Model:     d.ModelName,
+			Serial:    d.SerialNumber,
+			AttrId:    attr.id,
+			Raw:       ptrTo(v),
+			SizeBytes: d.sizeBytes(),
 		})
 	}
 	return rows
@@ -608,6 +623,7 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 				AttrId:     uint32(attr.ID),
 				Raw:        ptrTo(attr.Raw.Value),
 				Normalized: ptrTo(uint32(attr.Value)),
+				SizeBytes:  d.sizeBytes(),
 			})
 		}
 		rows = append(rows, nvmeRows(ts, name, d)...)

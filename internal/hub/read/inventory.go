@@ -218,6 +218,9 @@ type Drive struct {
 	Device string  `json:"device"`
 	Model  *string `json:"model"`
 	Serial *string `json:"serial"`
+	// Capacity in bytes as smartctl reports it; null until a reading has
+	// carried one. Decimal on the UI side: disks are sold that way.
+	SizeBytes *int64 `json:"size_bytes"`
 	// Latest reading per attribute, ordered by attr_id. Empty for a device
 	// the hub knows about but has no attributes for -- which is possible:
 	// resolveDeviceIDs upserts the drive before the attribute rows land.
@@ -560,7 +563,7 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 // alternative is two column lists, two scan signatures and then two copies of
 // the fold below.
 const driveSelect = `
-		SELECT d.host_id, d.device, d.model, d.serial, d.last_seen,
+		SELECT d.host_id, d.device, d.model, d.serial, d.size_bytes, d.last_seen,
 		       a.attr_id, a.raw, a.normalized
 		  FROM devices d
 		  LEFT JOIN LATERAL (
@@ -580,6 +583,7 @@ type driveRow struct {
 	device     string
 	model      *string
 	serial     *string
+	sizeBytes  *int64
 	lastSeen   time.Time
 	attrID     *int16
 	raw        *int64
@@ -588,8 +592,8 @@ type driveRow struct {
 
 func scanDriveRow(rows pgx.Rows) (driveRow, error) {
 	var r driveRow
-	if err := rows.Scan(&r.hostID, &r.device, &r.model, &r.serial, &r.lastSeen,
-		&r.attrID, &r.raw, &r.normalized); err != nil {
+	if err := rows.Scan(&r.hostID, &r.device, &r.model, &r.serial, &r.sizeBytes,
+		&r.lastSeen, &r.attrID, &r.raw, &r.normalized); err != nil {
 		return driveRow{}, fmt.Errorf("scan drive: %w", err)
 	}
 	return r, nil
@@ -607,7 +611,7 @@ func foldDriveRow(out *[]Drive, row driveRow) {
 	if len(*out) == 0 || (*out)[len(*out)-1].Device != row.device {
 		*out = append(*out, Drive{
 			Device: row.device, Model: row.model, Serial: row.serial,
-			LastSeen: row.lastSeen,
+			SizeBytes: row.sizeBytes, LastSeen: row.lastSeen,
 			// An empty slice, not nil: nil marshals as `null`, and the UI
 			// reads .length on this to decide between "healthy" and
 			// "not read". The same reason every listing here starts at

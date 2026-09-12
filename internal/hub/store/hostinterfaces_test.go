@@ -578,3 +578,49 @@ func TestIntegrationADriveFromAHostWithASkewedClockSurvives(t *testing.T) {
 			"readings with it", attrs)
 	}
 }
+
+// size_bytes survives a reading that carries none. An agent predating the
+// field, or a smartctl that could not size the drive, sends no capacity, and
+// that must read as "nothing new" rather than "the drive is now sizeless".
+func TestIntegrationDeviceSizeIsKeptWhenAReadingCarriesNone(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	id := seedInterfaceHost(t, s, "sized")
+
+	smart := func(size *uint64) *netrav1.SmartAttribute {
+		return &netrav1.SmartAttribute{
+			TsMs: time.Now().UnixMilli(), Device: "sda",
+			Model: "ST16000NM000J", Serial: "A", AttrId: 5, Raw: proto.Int64(0),
+			SizeBytes: size,
+		}
+	}
+	sized := func() *int64 {
+		var size *int64
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT size_bytes FROM devices WHERE host_id = $1`, id).Scan(&size); err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		return size
+	}
+
+	if _, err := s.InsertSmartAttributes(ctx, id, []*netrav1.SmartAttribute{smart(nil)}); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+	if got := sized(); got != nil {
+		t.Fatalf("size_bytes = %d before any reading carried one, want NULL", *got)
+	}
+
+	if _, err := s.InsertSmartAttributes(ctx, id, []*netrav1.SmartAttribute{smart(proto.Uint64(16000900661248))}); err != nil {
+		t.Fatalf("second insert: %v", err)
+	}
+	if got := sized(); got == nil || *got != 16000900661248 {
+		t.Fatalf("size_bytes = %v after a sized reading, want 16000900661248", got)
+	}
+
+	if _, err := s.InsertSmartAttributes(ctx, id, []*netrav1.SmartAttribute{smart(nil)}); err != nil {
+		t.Fatalf("third insert: %v", err)
+	}
+	if got := sized(); got == nil || *got != 16000900661248 {
+		t.Errorf("size_bytes = %v after an unsized reading, want the 16000900661248 it already knew", got)
+	}
+}

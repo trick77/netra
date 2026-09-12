@@ -1158,6 +1158,25 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
     sortValue: (row) => row.model ?? null,
   },
   {
+    key: "size",
+    header: "Size",
+    align: "right",
+    // Decimal, like the Mounts Size column one card up: a 16 TB drive is
+    // sold as 16 TB, and binaryBytes() would print 14.6 TiB beside it.
+    //
+    // .tnum and a bare ABSENT for the same reasons the package size cell
+    // gives; .nowrap because this column is narrow and at a 1200px viewport
+    // "1.9 TB" broke between figure and unit, which a reading must never do.
+    cell: (row) =>
+      row.size_bytes === null ? (
+        bytes(row.size_bytes)
+      ) : (
+        <span className="tnum nowrap">{bytes(row.size_bytes)}</span>
+      ),
+    // Raw bytes, not the printed string: "2.0 TB" sorts before "500 GB".
+    sortValue: (row) => row.size_bytes,
+  },
+  {
     key: "serial",
     header: "Serial",
     cell: (row) =>

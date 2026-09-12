@@ -19,6 +19,7 @@ const scanJSON = `{"devices":[{"name":"/dev/sda","type":"sat"}]}`
 const deviceJSON = `{
   "model_name": "Samsung SSD 870",
   "serial_number": "S123456",
+  "user_capacity": {"blocks": 1953525168, "bytes": 1000204886016},
   "ata_smart_attributes": {
     "table": [
       {"id": 5,   "name": "Reallocated_Sector_Ct", "value": 100, "raw": {"value": 0}},
@@ -59,6 +60,9 @@ func TestSmartReportsEveryAttributePerDrive(t *testing.T) {
 		}
 		if a.GetModel() != "Samsung SSD 870" {
 			t.Errorf("model = %q", a.GetModel())
+		}
+		if a.SizeBytes == nil || a.GetSizeBytes() != 1000204886016 {
+			t.Errorf("size_bytes = %v, want 1000204886016 from user_capacity", a.SizeBytes)
 		}
 		if a.GetTsMs() == 0 {
 			t.Error("attribute carries no ts_ms")
@@ -975,6 +979,11 @@ func TestSmartReportsTheNvmeHealthLog(t *testing.T) {
 		}
 		if got := r.GetModel(); got != "Samsung SSD 990 PRO 2TB" {
 			t.Errorf("model = %q, want the drive's model", got)
+		}
+		// This fixture carries no user_capacity: the size must be absent,
+		// not 0, so the hub does not overwrite a size it already has.
+		if r.SizeBytes != nil {
+			t.Errorf("size_bytes = %d, want unset when smartctl reports no capacity", r.GetSizeBytes())
 		}
 		// ATA ids are 1-255, so nothing here may collide with a real one --
 		// and the hub's column is SMALLINT, so nothing may approach 32767.

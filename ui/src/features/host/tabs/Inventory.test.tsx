@@ -822,6 +822,7 @@ describe("Drives", () => {
     device: "sdc",
     model: "ST16000NM000J-2TW103",
     serial: "ZR5A1PQ2",
+    size_bytes: 16_000_900_661_248,
     attributes: [
       { id: 5, raw: 238, normalized: 68 },
       { id: 9, raw: 21_402, normalized: 98 },
@@ -835,6 +836,7 @@ describe("Drives", () => {
     device: "nvme0n1",
     model: "SAMSUNG MZQL21T9HCJR-00A07",
     serial: "S64FNE0R512345",
+    size_bytes: 1_920_383_410_176,
     attributes: [
       { id: 1000, raw: 0, normalized: null },
       { id: 1001, raw: 7, normalized: null },
@@ -848,6 +850,7 @@ describe("Drives", () => {
     device: "sdz",
     model: null,
     serial: null,
+    size_bytes: null,
     attributes: [],
     // Its readings aged out under retention; the devices row still dates it.
     last_seen: "2026-08-23T11:00:00Z",
@@ -876,6 +879,16 @@ describe("Drives", () => {
     const notRead = screen.getByRole("row", { name: /sdz/ });
     expect(within(notRead).getByText("not read")).toBeInTheDocument();
     expect(within(notRead).queryByText("healthy")).not.toBeInTheDocument();
+  });
+
+  // Decimal, as the drive is sold, and absent rather than "0 B" for a drive
+  // no reading has sized.
+  it("prints capacity in decimal units and leaves an unsized drive blank", () => {
+    render(<Drives rows={[ata, unread]} />);
+    const sized = screen.getByRole("row", { name: /sdc/ });
+    expect(within(sized).getByText("16 TB")).toBeInTheDocument();
+    const unsized = screen.getByRole("row", { name: /sdz/ });
+    expect(within(unsized).queryByText(/\bB\b/)).not.toBeInTheDocument();
   });
 
   it("reads temperature and power-on hours from whichever id space the drive uses", () => {
@@ -1292,6 +1305,7 @@ describe("inventory sorting", () => {
       device: "sda",
       model: "ST16000NM000J",
       serial: "ZR5A1PQ2",
+      size_bytes: 16_000_900_661_248,
       attributes: [
         { id: 9, raw: 40_000, normalized: 98 },
         { id: 194, raw: 49, normalized: 71 },
@@ -1303,6 +1317,7 @@ describe("inventory sorting", () => {
       device: "sdb",
       model: "WDC WD40EFRX",
       serial: "WD-WCC4E",
+      size_bytes: 4_000_787_030_016,
       attributes: [
         { id: 9, raw: 100, normalized: 99 },
         { id: 194, raw: 30, normalized: 80 },
