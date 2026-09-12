@@ -55,7 +55,7 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
 		       sen.chip,
 		       sen.limit_high, sen.limit_high_crit,
 		       l.temp, l.ts,
-		       e.slow, e.fast, e.var, e.first_ts, e.updated_ts
+		       e.slow, e.fast, e.var, e.first_ts, e.updated_ts, e.excursion_since
 		  FROM sensors sen
 		  LEFT JOIN latest l
 		         ON l.sensor_id = sen.id AND l.host_id = sen.host_id
@@ -74,10 +74,11 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
 		var hostID int32
 		var subject, chip string
 		var limitHigh, limitCrit, temp, slow, fast, variance *float64
-		var readingTS, firstTS, updatedTS *time.Time
+		var readingTS, firstTS, updatedTS, excursion *time.Time
 
 		if err := rows.Scan(&hostID, &subject, &chip, &limitHigh, &limitCrit,
-			&temp, &readingTS, &slow, &fast, &variance, &firstTS, &updatedTS); err != nil {
+			&temp, &readingTS, &slow, &fast, &variance, &firstTS, &updatedTS,
+			&excursion); err != nil {
 			return fmt.Errorf("scan sensor: %w", err)
 		}
 
@@ -86,7 +87,7 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan) error {
 		judgeDeviation(scan, key, deviationInput{
 			value:     temp,
 			readingTS: readingTS,
-			state:     ewmaOf(slow, fast, variance, firstTS, updatedTS),
+			state:     ewmaOf(slow, fast, variance, firstTS, updatedTS, excursion),
 			// The chip's own rule, which the fold could not know: it sees a
 			// subject as a string, so it uses the kind's default floor. The
 			// judgement is where the real floor, the family ceiling and the
@@ -118,8 +119,8 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 		)
 		SELECT h.id,
 		       l.processes_total, l.load5, l.ts,
-		       ep.slow, ep.fast, ep.var, ep.first_ts, ep.updated_ts,
-		       el.slow, el.fast, el.var, el.first_ts, el.updated_ts
+		       ep.slow, ep.fast, ep.var, ep.first_ts, ep.updated_ts, ep.excursion_since,
+		       el.slow, el.fast, el.var, el.first_ts, el.updated_ts, el.excursion_since
 		  FROM hosts h
 		  LEFT JOIN latest l ON l.host_id = h.id
 		  LEFT JOIN metric_ewma ep
@@ -138,11 +139,11 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 		var load *float64
 		var readingTS *time.Time
 		var pSlow, pFast, pVar, lSlow, lFast, lVar *float64
-		var pFirst, pUpdated, lFirst, lUpdated *time.Time
+		var pFirst, pUpdated, pExcursion, lFirst, lUpdated, lExcursion *time.Time
 
 		if err := rows.Scan(&hostID, &procs, &load, &readingTS,
-			&pSlow, &pFast, &pVar, &pFirst, &pUpdated,
-			&lSlow, &lFast, &lVar, &lFirst, &lUpdated); err != nil {
+			&pSlow, &pFast, &pVar, &pFirst, &pUpdated, &pExcursion,
+			&lSlow, &lFast, &lVar, &lFirst, &lUpdated, &lExcursion); err != nil {
 			return fmt.Errorf("scan host gauge: %w", err)
 		}
 
@@ -157,7 +158,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 		}, deviationInput{
 			value:     procValue,
 			readingTS: readingTS,
-			state:     ewmaOf(pSlow, pFast, pVar, pFirst, pUpdated),
+			state:     ewmaOf(pSlow, pFast, pVar, pFirst, pUpdated, pExcursion),
 			rule:      conditions.RuleFor(conditions.KindProcesses, ""),
 		})
 
@@ -166,7 +167,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan) error
 		}, deviationInput{
 			value:     load,
 			readingTS: readingTS,
-			state:     ewmaOf(lSlow, lFast, lVar, lFirst, lUpdated),
+			state:     ewmaOf(lSlow, lFast, lVar, lFirst, lUpdated, lExcursion),
 			rule:      conditions.RuleFor(conditions.KindLoad, ""),
 		})
 	}
@@ -191,17 +192,28 @@ type deviationInput struct {
 
 // ewmaOf rebuilds one subject's state from its LEFT JOINed columns.
 //
-// All five are NULL together or none are -- they come from one row -- so a
-// single nil check is enough, and a subject with no row comes back as the zero
+// The first five are NULL together or none are -- they come from one row -- so a
+// single nil check covers them, and a subject with no row comes back as the zero
 // EWMA, which reports Seeded() false and is handled as "not watched yet".
-func ewmaOf(slow, fast, variance *float64, firstTS, updatedTS *time.Time) conditions.EWMA {
+//
+// excursion is the exception: it is nullable IN the row, because a subject
+// sitting inside its band has no excursion to record. It also has to be read
+// and passed here, which is easy to leave out and silent when you do -- the
+// suppression in judgeDeviation is measured from it, so a zero value makes
+// every departure look either brand new or infinitely old depending on which
+// way the comparison falls. The CI failure that found this had both.
+func ewmaOf(slow, fast, variance *float64, firstTS, updatedTS, excursion *time.Time) conditions.EWMA {
 	if slow == nil || fast == nil || variance == nil || firstTS == nil || updatedTS == nil {
 		return conditions.EWMA{}
 	}
-	return conditions.EWMA{
+	e := conditions.EWMA{
 		Slow: *slow, Fast: *fast, Var: *variance,
 		FirstTS: *firstTS, UpdatedTS: *updatedTS,
 	}
+	if excursion != nil {
+		e.ExcursionSince = *excursion
+	}
+	return e
 }
 
 // judgeDeviation applies the rule to one subject and files it under Seen,
