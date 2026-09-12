@@ -759,7 +759,12 @@ export function hostConditions(
     // carries, for the same reason.
     const more = all.length - 1;
     const subject = kind === "temperature" ? `${row.subject} ` : "";
-    const normally = num(detail.normal);
+    // `normal` first, then `p99`: an open condition keeps the detail it opened
+    // with, and 0021 starts the moving average empty, so a row raised under the
+    // old percentile threshold survives its subject's whole re-warm -- a week
+    // for the host kinds. This one degrades gracefully without the fallback
+    // (the clause is simply dropped) but it degrades to LESS than it knows.
+    const normally = num(detail.normal) ?? num(detail.p99);
 
     // The vendor's own limit is a different sentence from a calibrated one,
     // and an operator deciding whether to act reads them differently: past the
