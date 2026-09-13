@@ -1,0 +1,47 @@
+version: 2
+updates:
+  # Go (hub and agent share one module at the root)
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # React frontend
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    groups:
+      # First matching group wins, so the specific group comes first and the
+      # catch-all stays last. vite, its react plugin, vitest and its coverage
+      # provider are one dependency family: vitest pins a vite major range and
+      # @vitest/coverage-v8 pins vitest's exact version, so bumping any one
+      # alone fails npm ci on ERESOLVE (or nests a second vite). They always
+      # travel together.
+      vite-and-vitest:
+        patterns: ["vite", "@vitejs/*", "vitest", "@vitest/*"]
+      npm-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images in build/Containerfile.hub and build/Containerfile.agent
+  - package-ecosystem: docker
+    directory: /build
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
