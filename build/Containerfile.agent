@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 
 # Both are mandatory for a release image. The Makefile derives COMMIT from
 # `git rev-parse`, but the build context carries no .git (see .dockerignore)
@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # Digest-pinned so the runtime contents are reproducible across rebuilds; the
 # tag alone moves. This is a multi-arch index, so amd64 and arm64 both resolve.
-FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # ARG does not cross a FROM boundary, so these are re-declared purely to feed
 # the labels below.
