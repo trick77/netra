@@ -130,7 +130,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           # The version lives in ui/.nvmrc so the runner, the hub image's
           # node stage and a developer's `nvm use` cannot drift apart.
@@ -264,7 +264,7 @@ jobs:
       # tests would be asserting against a binary nobody ships. The agent
       # matrix leg pays ~20s for a build it does not need; splitting the
       # matrix to avoid that costs more in duplicated yaml than it saves.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ui/.nvmrc
           cache: npm
