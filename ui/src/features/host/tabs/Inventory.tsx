@@ -1398,16 +1398,22 @@ function LinkStatePill({ state }: { state: string | null }) {
 }
 
 /**
- * A muted "virtual" beside the link state, on a bond, bridge or VLAN the
- * kernel made up. Nothing on a NIC: physical is the default a reader assumes,
- * and it is the made-up one that needs pointing out next to the NICs under
- * it. Nothing either when the agent could not say (older than the field, or
- * a host without sysfs) -- that reads the same as a NIC, which is the price
- * of a pill over a column, and was chosen with it.
+ * A muted "physical" or "virtual" beside the link state: a NIC on a bus, or
+ * a bond, bridge or VLAN the kernel made up. Both words, not only the
+ * virtual one: a host whose links are all NICs would otherwise show nothing,
+ * and a reader cannot tell "all physical" from "not reported". Nothing only
+ * when the agent could not say -- older than the field, or a host without
+ * sysfs.
  */
-function VirtualPill({ physical }: { physical: boolean | null }) {
-  if (physical !== false) return null;
-  return <span className="badge link link-virtual">virtual</span>;
+function LinkTypePill({ physical }: { physical: boolean | null }) {
+  const word = linkType(physical);
+  if (word === null) return null;
+  return <span className="badge link link-type">{word}</span>;
+}
+
+function linkType(physical: boolean | null): string | null {
+  if (physical === null) return null;
+  return physical ? "physical" : "virtual";
 }
 
 const INTERFACE_COLUMNS: Column<Iface>[] = [
@@ -1422,7 +1428,7 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
       <span className="addr-cell">
         <span className="ident">{row.iface}</span>
         <LinkStatePill state={row.oper_state} />
-        <VirtualPill physical={row.physical} />
+        <LinkTypePill physical={row.physical} />
       </span>
     ),
     // The name, not the link state riding on it. Ordering this column by
@@ -1518,7 +1524,7 @@ export function Interfaces({ rows }: { rows: readonly Iface[] }) {
         [
           row.iface,
           row.oper_state,
-          row.physical === false ? "virtual" : null,
+          linkType(row.physical),
           row.duplex,
           row.mac,
           row.description,
