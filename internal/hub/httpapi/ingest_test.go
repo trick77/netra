@@ -946,9 +946,10 @@ func TestIntegrationIngestStoresInterfaceInventory(t *testing.T) {
 				Duplex:    "full",
 				Mtu:       proto.Uint32(1500),
 				Mac:       "52:54:00:3a:1c:07",
+				Physical:  proto.Bool(true),
 			},
 			// No address anywhere in this request.
-			{Iface: "bond0", OperState: "lowerlayerdown", Mtu: proto.Uint32(9000)},
+			{Iface: "bond0", OperState: "lowerlayerdown", Mtu: proto.Uint32(9000), Physical: proto.Bool(false)},
 		},
 	}
 
@@ -975,5 +976,14 @@ func TestIntegrationIngestStoresInterfaceInventory(t *testing.T) {
 	}
 	if speed != nil {
 		t.Errorf("bond0 speed_mbps = %d, want NULL", *speed)
+	}
+
+	var physical *bool
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT physical FROM host_interfaces WHERE iface = 'bond0'`).Scan(&physical); err != nil {
+		t.Fatalf("query bond0 physical: %v", err)
+	}
+	if physical == nil || *physical {
+		t.Errorf("bond0 physical = %v, want false", physical)
 	}
 }

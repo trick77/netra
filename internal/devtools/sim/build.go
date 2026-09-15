@@ -1142,21 +1142,35 @@ func (g *Generator) interfaces() []*netrav1.HostInterface {
 			// reports its operstate as "unknown" rather than "up".
 			link.OperState = "unknown"
 			link.Mtu = proto.Uint32(65536)
+			link.Physical = proto.Bool(false)
 		case strings.HasPrefix(a.Iface, "wg"), strings.HasPrefix(a.Iface, "tun"):
 			link.OperState = "unknown"
 			link.Mtu = proto.Uint32(1420)
+			link.Physical = proto.Bool(false)
 		case strings.HasPrefix(a.Iface, "docker"), strings.HasPrefix(a.Iface, "br"):
 			// A bridge with nothing plugged into it is down, which is both
 			// the common real state and the one worth being able to see.
 			link.OperState = "down"
 			link.Mtu = proto.Uint32(1500)
 			link.Mac = simMAC(a.Iface, 0x02)
+			link.Physical = proto.Bool(false)
+		case strings.HasPrefix(a.Iface, "bond"):
+			// A bond is up at the speed of its members and has a MAC (the
+			// first member's), and is the virtual device that looks most
+			// like a NIC in every other column.
+			link.OperState = "up"
+			link.SpeedMbps = proto.Uint64(2000)
+			link.Duplex = "full"
+			link.Mtu = proto.Uint32(1500)
+			link.Mac = simMAC(a.Iface, 0x52)
+			link.Physical = proto.Bool(false)
 		default:
 			link.OperState = "up"
 			link.SpeedMbps = proto.Uint64(1000)
 			link.Duplex = "full"
 			link.Mtu = proto.Uint32(1500)
 			link.Mac = simMAC(a.Iface, 0x52)
+			link.Physical = proto.Bool(true)
 		}
 		seen[a.Iface] = link
 	}

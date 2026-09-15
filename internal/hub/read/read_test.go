@@ -1490,10 +1490,11 @@ func TestIntegrationInterfacesListLinksWithoutAddresses(t *testing.T) {
 
 	exec(t, pool, `
 		INSERT INTO host_interfaces (
-			host_id, iface, if_index, oper_state, speed_mbps, duplex, mtu, mac, description)
-		VALUES ($1, 'eth0', 2, 'up', 1000, 'full', 1500, '52:54:00:3a:1c:07', 'uplink'),
-		       ($1, 'bond0', 3, 'lowerlayerdown', NULL, NULL, 9000, '52:54:00:3a:1c:09', NULL),
-		       ($1, 'lo', 1, 'unknown', NULL, NULL, 65536, NULL, NULL)`, id)
+			host_id, iface, if_index, oper_state, speed_mbps, duplex, mtu, mac, description,
+			physical)
+		VALUES ($1, 'eth0', 2, 'up', 1000, 'full', 1500, '52:54:00:3a:1c:07', 'uplink', true),
+		       ($1, 'bond0', 3, 'lowerlayerdown', NULL, NULL, 9000, '52:54:00:3a:1c:09', NULL, false),
+		       ($1, 'lo', 1, 'unknown', NULL, NULL, 65536, NULL, NULL, NULL)`, id)
 	// One address, on one of the three interfaces.
 	exec(t, pool, `
 		INSERT INTO host_addresses (host_id, iface, if_index, address, family, scope)
@@ -1527,8 +1528,14 @@ func TestIntegrationInterfacesListLinksWithoutAddresses(t *testing.T) {
 	if bond.Duplex != nil {
 		t.Errorf("bond0 duplex = %v, want absent", *bond.Duplex)
 	}
+	if bond.Physical == nil || *bond.Physical {
+		t.Errorf("bond0 physical = %v, want false", bond.Physical)
+	}
 
 	eth := byName["eth0"]
+	if eth.Physical == nil || !*eth.Physical {
+		t.Errorf("eth0 physical = %v, want true", eth.Physical)
+	}
 	if eth.SpeedMbps == nil || *eth.SpeedMbps != 1000 {
 		t.Errorf("eth0 speed_mbps = %v, want 1000", eth.SpeedMbps)
 	}
@@ -1547,6 +1554,11 @@ func TestIntegrationInterfacesListLinksWithoutAddresses(t *testing.T) {
 	// string that every `?? ABSENT` downstream would treat as a measurement.
 	if lo := byName["lo"]; lo.MAC != nil {
 		t.Errorf("lo mac = %v, want absent", *lo.MAC)
+	}
+	// An agent older than the field, or a host without sysfs, is unknown
+	// rather than virtual.
+	if lo := byName["lo"]; lo.Physical != nil {
+		t.Errorf("lo physical = %v, want absent", *lo.Physical)
 	}
 }
 

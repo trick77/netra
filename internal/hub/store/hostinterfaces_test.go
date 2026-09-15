@@ -187,6 +187,54 @@ func TestIntegrationUpsertHostInterfacesStoresEmptyStringsAsNull(t *testing.T) {
 	}
 }
 
+// The physical flag is stored as the agent sent it, absent included: an agent
+// older than the field must not turn every interface it reports into a
+// virtual one, and a NIC that becomes a bond of the same name must not stay
+// physical.
+func TestIntegrationUpsertHostInterfacesStoresPhysicalAsReported(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	id := seedInterfaceHost(t, s, "bonded")
+
+	query := func() *bool {
+		t.Helper()
+		var physical *bool
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT physical FROM host_interfaces WHERE host_id = $1 AND iface = 'eth0'`, id,
+		).Scan(&physical); err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		return physical
+	}
+
+	if _, err := s.UpsertHostInterfaces(ctx, id, []*netrav1.HostInterface{
+		link("eth0", upHundredMeg),
+	}); err != nil {
+		t.Fatalf("upsert without the field: %v", err)
+	}
+	if got := query(); got != nil {
+		t.Errorf("physical = %v from an agent that did not report it, want NULL", *got)
+	}
+
+	if _, err := s.UpsertHostInterfaces(ctx, id, []*netrav1.HostInterface{
+		link("eth0", upHundredMeg, func(l *netrav1.HostInterface) { l.Physical = proto.Bool(true) }),
+	}); err != nil {
+		t.Fatalf("upsert physical: %v", err)
+	}
+	if got := query(); got == nil || !*got {
+		t.Errorf("physical = %v, want true", got)
+	}
+
+	if _, err := s.UpsertHostInterfaces(ctx, id, []*netrav1.HostInterface{
+		link("eth0", upHundredMeg, func(l *netrav1.HostInterface) { l.Physical = proto.Bool(false) }),
+	}); err != nil {
+		t.Fatalf("upsert virtual: %v", err)
+	}
+	if got := query(); got == nil || *got {
+		t.Errorf("physical = %v, want false once the name belongs to a bond", got)
+	}
+}
+
 // An empty set is "unchanged", not "the host has no interfaces". The collector
 // reports nothing when nothing changed, and acting on that would delete every
 // row on every quiet scrape.

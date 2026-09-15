@@ -307,6 +307,10 @@ export type Iface = {
   mtu: number | null;
   mac: string | null;
   description: string | null;
+  /** Whether /sys/class/net/<iface>/device exists: a NIC on a bus rather
+   * than a bond, bridge or VLAN. null from an agent older than the field or
+   * a host without sysfs, which is unknown rather than virtual. */
+  physical: boolean | null;
   first_seen: string;
   last_seen: string;
 };

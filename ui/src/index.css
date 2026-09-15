@@ -4716,6 +4716,10 @@ tbody:first-of-type .grouprow th {
 .badge.link-unknown {
   color: var(--muted);
 }
+/* Same quiet ink: a bond next to its NICs is a fact, not a finding. */
+.badge.link-virtual {
+  color: var(--muted);
+}
 
 /* The drive health pill. Same annotation-on-an-identifier shape as the two
    above, on the fixed status palette because this one IS a severity: the

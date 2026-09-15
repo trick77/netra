@@ -1294,13 +1294,16 @@ func (s *Store) UpsertHostInterfaces(ctx context.Context, hostID int32, rows []*
 
 	const stmt = `
 		INSERT INTO host_interfaces (
-			host_id, iface, if_index, oper_state, speed_mbps, duplex, mtu, mac, description)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, NULLIF($6, ''), $7, NULLIF($8, ''), NULLIF($9, ''))
+			host_id, iface, if_index, oper_state, speed_mbps, duplex, mtu, mac, description,
+			physical)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, NULLIF($6, ''), $7, NULLIF($8, ''), NULLIF($9, ''),
+		        $10)
 		ON CONFLICT (host_id, iface) DO UPDATE
 		   SET if_index = EXCLUDED.if_index, oper_state = EXCLUDED.oper_state,
 		       speed_mbps = EXCLUDED.speed_mbps, duplex = EXCLUDED.duplex,
 		       mtu = EXCLUDED.mtu, mac = EXCLUDED.mac,
-		       description = EXCLUDED.description, last_seen = now()`
+		       description = EXCLUDED.description, physical = EXCLUDED.physical,
+		       last_seen = now()`
 
 	batch := &pgx.Batch{}
 	for _, r := range rows {
@@ -1320,7 +1323,7 @@ func (s *Store) UpsertHostInterfaces(ctx context.Context, hostID int32, rows []*
 			mtu = &v
 		}
 		batch.Queue(stmt, hostID, r.GetIface(), ifIndex, r.GetOperState(),
-			speed, r.GetDuplex(), mtu, r.GetMac(), r.GetDescription())
+			speed, r.GetDuplex(), mtu, r.GetMac(), r.GetDescription(), r.Physical)
 	}
 
 	n, err := execBatch(ctx, s.pool, batch, "host interface")

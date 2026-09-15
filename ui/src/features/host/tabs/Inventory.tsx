@@ -1397,6 +1397,19 @@ function LinkStatePill({ state }: { state: string | null }) {
   );
 }
 
+/**
+ * A muted "virtual" beside the link state, on a bond, bridge or VLAN the
+ * kernel made up. Nothing on a NIC: physical is the default a reader assumes,
+ * and it is the made-up one that needs pointing out next to the NICs under
+ * it. Nothing either when the agent could not say (older than the field, or
+ * a host without sysfs) -- that reads the same as a NIC, which is the price
+ * of a pill over a column, and was chosen with it.
+ */
+function VirtualPill({ physical }: { physical: boolean | null }) {
+  if (physical !== false) return null;
+  return <span className="badge link link-virtual">virtual</span>;
+}
+
 const INTERFACE_COLUMNS: Column<Iface>[] = [
   {
     key: "iface",
@@ -1409,6 +1422,7 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
       <span className="addr-cell">
         <span className="ident">{row.iface}</span>
         <LinkStatePill state={row.oper_state} />
+        <VirtualPill physical={row.physical} />
       </span>
     ),
     // The name, not the link state riding on it. Ordering this column by
@@ -1501,7 +1515,14 @@ export function Interfaces({ rows }: { rows: readonly Iface[] }) {
       rows={rows}
       rowKey={(row) => row.iface}
       searchText={(row) =>
-        [row.iface, row.oper_state, row.duplex, row.mac, row.description]
+        [
+          row.iface,
+          row.oper_state,
+          row.physical === false ? "virtual" : null,
+          row.duplex,
+          row.mac,
+          row.description,
+        ]
           .filter(Boolean)
           .join(" ")
       }

@@ -1285,6 +1285,7 @@ describe("inventory sorting", () => {
         mtu: 9000,
         mac: "aa:bb:cc:dd:ee:01",
         description: "uplink",
+        physical: true,
         first_seen: "2026-07-01T00:00:00Z",
         last_seen: "2026-08-01T00:00:00Z",
       },
@@ -1297,10 +1298,43 @@ describe("inventory sorting", () => {
         mtu: 1500,
         mac: null,
         description: null,
+        physical: false,
         first_seen: "2026-07-01T00:00:00Z",
         last_seen: "2026-08-02T00:00:00Z",
       },
     ];
+
+    // Only the made-up device gets a pill. A NIC is the default a reader
+    // assumes, and an agent older than the field says nothing, so it must not
+    // be marked either way.
+    it("marks a virtual link and nothing else", () => {
+      render(
+        <Interfaces
+          rows={[
+            ...ifaces,
+            { ...ifaces[0], iface: "eth2", mac: null, physical: null },
+          ]}
+        />,
+      );
+
+      const cells = screen.getAllByRole("row").map((r) => r.textContent);
+      expect(cells.find((t) => t?.includes("eth1"))).toContain("virtual");
+      expect(cells.find((t) => t?.includes("eth0"))).not.toMatch(
+        /physical|virtual/,
+      );
+      expect(cells.find((t) => t?.includes("eth2"))).not.toMatch(
+        /physical|virtual/,
+      );
+    });
+
+    // The pill's word is searchable, so "virtual" narrows to the bonds and
+    // bridges the way "down" narrows to the dead links.
+    it("filters on virtual", async () => {
+      render(<Interfaces rows={ifaces} />);
+      await userEvent.type(screen.getByRole("searchbox"), "virtual");
+
+      expect(firstCells()).toEqual([expect.stringMatching(/eth1/)]);
+    });
 
     it("sorts on every column", async () => {
       render(<Interfaces rows={ifaces} />);
