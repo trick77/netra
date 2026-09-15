@@ -4716,8 +4716,8 @@ tbody:first-of-type .grouprow th {
 .badge.link-unknown {
   color: var(--muted);
 }
-/* Same quiet ink: a bond next to its NICs is a fact, not a finding. */
-.badge.link-virtual {
+/* Same quiet ink: physical or virtual is a fact, not a finding. */
+.badge.link-type {
   color: var(--muted);
 }
 

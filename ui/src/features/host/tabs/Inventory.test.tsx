@@ -1304,10 +1304,10 @@ describe("inventory sorting", () => {
       },
     ];
 
-    // Only the made-up device gets a pill. A NIC is the default a reader
-    // assumes, and an agent older than the field says nothing, so it must not
-    // be marked either way.
-    it("marks a virtual link and nothing else", () => {
+    // Every classified link gets its word, so a host whose links are all
+    // NICs still shows something. An agent older than the field says
+    // nothing, so its rows must not be marked either way.
+    it("marks a link physical or virtual, and an unreported one not at all", () => {
       render(
         <Interfaces
           rows={[
@@ -1318,10 +1318,8 @@ describe("inventory sorting", () => {
       );
 
       const cells = screen.getAllByRole("row").map((r) => r.textContent);
+      expect(cells.find((t) => t?.includes("eth0"))).toContain("physical");
       expect(cells.find((t) => t?.includes("eth1"))).toContain("virtual");
-      expect(cells.find((t) => t?.includes("eth0"))).not.toMatch(
-        /physical|virtual/,
-      );
       expect(cells.find((t) => t?.includes("eth2"))).not.toMatch(
         /physical|virtual/,
       );
