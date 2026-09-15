@@ -29,6 +29,9 @@ func SetSysClassNetForTest(t *testing.T, root string) {
 // IfaceAliasForTest exposes the alias lookup.
 func IfaceAliasForTest(name string) string { return ifaceAlias(name) }
 
+// IfacePhysicalForTest exposes the device-symlink check.
+func IfacePhysicalForTest(name string) *bool { return ifacePhysical(name) }
+
 // SetStatfsTimeoutForTest shortens the per-mountpoint statfs deadline, so the
 // wedged-mount path can be exercised without spending the production two
 // seconds per blocked call.

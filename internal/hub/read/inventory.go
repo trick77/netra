@@ -281,6 +281,10 @@ type Interface struct {
 	MTU         *int32  `json:"mtu"`
 	MAC         *string `json:"mac"`
 	Description *string `json:"description"`
+	// Whether the interface has a /sys/class/net/<iface>/device link, which
+	// is a NIC on a bus rather than a bond, bridge or VLAN. NULL from an agent
+	// older than the field or a host without sysfs.
+	Physical *bool `json:"physical"`
 
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
@@ -738,7 +742,7 @@ func (s *Service) Interfaces(ctx context.Context, hostID int32) ([]Interface, er
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT iface, if_index, oper_state, speed_mbps, duplex, mtu, mac,
-		       description, first_seen, last_seen
+		       description, physical, first_seen, last_seen
 		  FROM host_interfaces
 		 WHERE host_id = $1
 		 ORDER BY (COALESCE(oper_state, '') IN ('down', 'lowerlayerdown')),
@@ -752,7 +756,7 @@ func (s *Service) Interfaces(ctx context.Context, hostID int32) ([]Interface, er
 	for rows.Next() {
 		var i Interface
 		if err := rows.Scan(&i.Iface, &i.IfIndex, &i.OperState, &i.SpeedMbps,
-			&i.Duplex, &i.MTU, &i.MAC, &i.Description,
+			&i.Duplex, &i.MTU, &i.MAC, &i.Description, &i.Physical,
 			&i.FirstSeen, &i.LastSeen); err != nil {
 			return nil, fmt.Errorf("scan interface: %w", err)
 		}

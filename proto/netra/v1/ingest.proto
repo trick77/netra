@@ -980,6 +980,15 @@ message HostInterface {
   // stores it. This is where the UI reads it from now: on an address-keyed
   // table one alias was printed once per address.
   string description = 8;
+
+  // Whether /sys/class/net/<iface>/device exists: the netdev sits on a bus
+  // (PCI, USB, platform) and is a NIC, as opposed to a bond, bridge, VLAN,
+  // dummy or macvlan the kernel made up. The symlink's presence, not a
+  // verdict -- the same call oper_state makes about not classifying.
+  //
+  // Absent when the interface's sysfs directory cannot be read at all, which
+  // is what an agent on a host without sysfs reports rather than guessing.
+  optional bool physical = 9;
 }
 
 // HostPackage is one installed package.

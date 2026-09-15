@@ -78,6 +78,68 @@ func TestAddressesReportsAnAliasChangeOnItsOwn(t *testing.T) {
 	}
 }
 
+// The physical flag rides the link row, so a NIC being replaced by a bond of
+// the same name (or the reverse) must reach the hub on its own, with the
+// address set untouched.
+func TestAddressesReportsAPhysicalChangeOnItsOwn(t *testing.T) {
+	physical := true
+	iface := collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"}, Physical: &physical}
+
+	lister := func() ([]collector.Iface, error) { return []collector.Iface{iface}, nil }
+	testee := collector.NewAddresses(lister)
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+	if len(res.Interfaces) != 1 || res.Interfaces[0].Physical == nil || !res.Interfaces[0].GetPhysical() {
+		t.Fatalf("first scrape interfaces = %v, want eth0 physical", res.Interfaces)
+	}
+
+	virtual := false
+	iface.Physical = &virtual
+
+	res, err = testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if len(res.Interfaces) != 1 {
+		t.Fatal("a physical flip went unreported; the hub would call a bond a NIC indefinitely")
+	}
+	if p := res.Interfaces[0].Physical; p == nil || *p {
+		t.Errorf("physical = %v, want false", p)
+	}
+}
+
+// A NIC has a device symlink, a bond or bridge has none, and a host without
+// sysfs has neither the link nor the directory. Only the last is unknown.
+func TestIfacePhysicalReadsTheDeviceSymlink(t *testing.T) {
+	root := t.TempDir()
+	collector.SetSysClassNetForTest(t, root)
+
+	if err := os.MkdirAll(filepath.Join(root, "eth0"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A dangling link, as sysfs has them: the target is elsewhere in the
+	// tree and the check must not care whether it resolves.
+	if err := os.Symlink("../../../0000:00:1f.6", filepath.Join(root, "eth0", "device")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "bond0"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if got := collector.IfacePhysicalForTest("eth0"); got == nil || !*got {
+		t.Errorf("eth0 physical = %v, want true for an interface with a device link", got)
+	}
+	if got := collector.IfacePhysicalForTest("bond0"); got == nil || *got {
+		t.Errorf("bond0 physical = %v, want false for an interface without one", got)
+	}
+	if got := collector.IfacePhysicalForTest("eth9"); got != nil {
+		t.Errorf("eth9 physical = %v, want nil for an interface sysfs does not know", *got)
+	}
+}
+
 // SystemIfaces reports no VRF at all, and that is the honest answer rather
 // than a missing feature.
 //

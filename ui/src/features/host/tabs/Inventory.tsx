@@ -1417,6 +1417,15 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
     sortValue: (row) => row.iface,
   },
   {
+    key: "type",
+    header: "Type",
+    // A column, not a "virtual" pill on the name: with a fleet on mixed agent
+    // versions "physical" and "not reported" would otherwise render the same,
+    // which is the ambiguity ABSENT exists to prevent.
+    cell: (row) => linkType(row.physical) ?? ABSENT,
+    sortValue: (row) => linkType(row.physical),
+  },
+  {
     key: "speed",
     header: "Speed",
     align: "right",
@@ -1479,6 +1488,17 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
  * definition (a "1 Gb/s" NIC is 10^9 bits), unlike the byte counts elsewhere
  * on this page.
  */
+/**
+ * "physical" for a NIC on a bus, "virtual" for a bond, bridge or VLAN, and
+ * null where the agent could not say -- older than the field, or a host
+ * without sysfs. The word is chosen here rather than by the agent, which
+ * reports only whether the device link exists.
+ */
+function linkType(physical: boolean | null): string | null {
+  if (physical === null) return null;
+  return physical ? "physical" : "virtual";
+}
+
 function linkSpeed(mbps: number): string {
   if (mbps >= 1000 && mbps % 1000 === 0) return `${mbps / 1000} Gb/s`;
   return `${mbps} Mb/s`;
@@ -1501,7 +1521,14 @@ export function Interfaces({ rows }: { rows: readonly Iface[] }) {
       rows={rows}
       rowKey={(row) => row.iface}
       searchText={(row) =>
-        [row.iface, row.oper_state, row.duplex, row.mac, row.description]
+        [
+          row.iface,
+          row.oper_state,
+          linkType(row.physical),
+          row.duplex,
+          row.mac,
+          row.description,
+        ]
           .filter(Boolean)
           .join(" ")
       }

@@ -55,6 +55,11 @@ type Iface struct {
 	// The MAC. Empty for a device with no link layer of its own -- lo, wg0,
 	// a tunnel -- which sysfs reports as 00:00:00:00:00:00.
 	MAC string
+
+	// Physical is whether /sys/class/net/<name>/device exists -- the netdev
+	// sits on a bus rather than being one the kernel made up. Nil when the
+	// interface's sysfs directory cannot be read at all.
+	Physical *bool
 }
 
 // vrfUnknown records why HostAddress.vrf is left empty rather than filled.
@@ -126,6 +131,7 @@ func SystemIfaces() ([]Iface, error) {
 			Duplex:      ifaceDuplex(i.Name),
 			MTU:         ifaceMTU(i.Name, i.MTU),
 			MAC:         ifaceMAC(i.Name),
+			Physical:    ifacePhysical(i.Name),
 		})
 	}
 	return out, nil
@@ -202,6 +208,24 @@ func ifaceMAC(name string) string {
 		return ""
 	}
 	return mac
+}
+
+// ifacePhysical reports whether the interface has a device symlink, which
+// every netdev backed by hardware (PCI, USB, platform) has and no bond,
+// bridge, VLAN, dummy or macvlan does. Lstat rather than Stat: the link is
+// what is being asked about, not whether it resolves.
+//
+// Nil, not false, when the interface directory itself is missing: that is a
+// host without sysfs (or a fixture without the entry), and reporting it as
+// virtual would classify every interface on such a host the same wrong way.
+func ifacePhysical(name string) *bool {
+	dir := filepath.Join(sysClassNet, name)
+	if _, err := os.Lstat(dir); err != nil {
+		return nil
+	}
+	_, err := os.Lstat(filepath.Join(dir, "device"))
+	v := err == nil
+	return &v
 }
 
 // ifaceAlias returns the interface alias, the Linux equivalent of SNMP's
@@ -295,6 +319,7 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 			Mtu:         i.MTU,
 			Mac:         i.MAC,
 			Description: i.Description,
+			Physical:    i.Physical,
 		})
 
 		for _, raw := range i.Addrs {
@@ -364,7 +389,8 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 		fingerprint = append(fingerprint, "link "+l.GetIface()+" "+
 			formatUint32Ptr(l.IfIndex)+" "+l.GetOperState()+" "+
 			formatUint64Ptr(l.SpeedMbps)+" "+l.GetDuplex()+" "+
-			formatUint32Ptr(l.Mtu)+" "+l.GetMac()+" "+l.GetDescription())
+			formatUint32Ptr(l.Mtu)+" "+l.GetMac()+" "+l.GetDescription()+" "+
+			formatBoolPtr(l.Physical))
 	}
 
 	if slices.Equal(fingerprint, a.prev) {
@@ -386,6 +412,13 @@ func formatUint64Ptr(v *uint64) string {
 		return ""
 	}
 	return strconv.FormatUint(*v, 10)
+}
+
+func formatBoolPtr(v *bool) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatBool(*v)
 }
 
 func formatUint32Ptr(v *uint32) string {

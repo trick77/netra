@@ -1285,6 +1285,7 @@ describe("inventory sorting", () => {
         mtu: 9000,
         mac: "aa:bb:cc:dd:ee:01",
         description: "uplink",
+        physical: true,
         first_seen: "2026-07-01T00:00:00Z",
         last_seen: "2026-08-01T00:00:00Z",
       },
@@ -1297,10 +1298,31 @@ describe("inventory sorting", () => {
         mtu: 1500,
         mac: null,
         description: null,
+        physical: false,
         first_seen: "2026-07-01T00:00:00Z",
         last_seen: "2026-08-02T00:00:00Z",
       },
     ];
+
+    // An agent older than the field says nothing, and nothing is what the
+    // cell prints: rendering it as either word would classify an interface
+    // nobody looked at.
+    it("prints physical, virtual, or nothing", () => {
+      render(
+        <Interfaces
+          rows={[
+            ...ifaces,
+            { ...ifaces[0], iface: "eth2", mac: null, physical: null },
+          ]}
+        />,
+      );
+
+      const cells = screen.getAllByRole("row").map((r) => r.textContent);
+      expect(cells.find((t) => t?.includes("eth0"))).toContain("physical");
+      expect(cells.find((t) => t?.includes("eth1"))).toContain("virtual");
+      const eth2 = cells.find((t) => t?.includes("eth2")) ?? "";
+      expect(eth2).not.toMatch(/physical|virtual/);
+    });
 
     it("sorts on every column", async () => {
       render(<Interfaces rows={ifaces} />);
