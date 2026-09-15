@@ -1327,6 +1327,15 @@ describe("inventory sorting", () => {
       );
     });
 
+    // The pill's word is searchable, so "virtual" narrows to the bonds and
+    // bridges the way "down" narrows to the dead links.
+    it("filters on virtual", async () => {
+      render(<Interfaces rows={ifaces} />);
+      await userEvent.type(screen.getByRole("searchbox"), "virtual");
+
+      expect(firstCells()).toEqual([expect.stringMatching(/eth1/)]);
+    });
+
     it("sorts on every column", async () => {
       render(<Interfaces rows={ifaces} />);
 
