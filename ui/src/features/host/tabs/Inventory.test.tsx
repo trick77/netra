@@ -1304,10 +1304,10 @@ describe("inventory sorting", () => {
       },
     ];
 
-    // An agent older than the field says nothing, and nothing is what the
-    // cell prints: rendering it as either word would classify an interface
-    // nobody looked at.
-    it("prints physical, virtual, or nothing", () => {
+    // Only the made-up device gets a pill. A NIC is the default a reader
+    // assumes, and an agent older than the field says nothing, so it must not
+    // be marked either way.
+    it("marks a virtual link and nothing else", () => {
       render(
         <Interfaces
           rows={[
@@ -1318,10 +1318,13 @@ describe("inventory sorting", () => {
       );
 
       const cells = screen.getAllByRole("row").map((r) => r.textContent);
-      expect(cells.find((t) => t?.includes("eth0"))).toContain("physical");
       expect(cells.find((t) => t?.includes("eth1"))).toContain("virtual");
-      const eth2 = cells.find((t) => t?.includes("eth2")) ?? "";
-      expect(eth2).not.toMatch(/physical|virtual/);
+      expect(cells.find((t) => t?.includes("eth0"))).not.toMatch(
+        /physical|virtual/,
+      );
+      expect(cells.find((t) => t?.includes("eth2"))).not.toMatch(
+        /physical|virtual/,
+      );
     });
 
     it("sorts on every column", async () => {

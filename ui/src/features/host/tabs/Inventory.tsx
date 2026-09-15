@@ -1397,6 +1397,19 @@ function LinkStatePill({ state }: { state: string | null }) {
   );
 }
 
+/**
+ * A muted "virtual" beside the link state, on a bond, bridge or VLAN the
+ * kernel made up. Nothing on a NIC: physical is the default a reader assumes,
+ * and it is the made-up one that needs pointing out next to the NICs under
+ * it. Nothing either when the agent could not say (older than the field, or
+ * a host without sysfs) -- that reads the same as a NIC, which is the price
+ * of a pill over a column, and was chosen with it.
+ */
+function VirtualPill({ physical }: { physical: boolean | null }) {
+  if (physical !== false) return null;
+  return <span className="badge link link-virtual">virtual</span>;
+}
+
 const INTERFACE_COLUMNS: Column<Iface>[] = [
   {
     key: "iface",
@@ -1409,21 +1422,13 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
       <span className="addr-cell">
         <span className="ident">{row.iface}</span>
         <LinkStatePill state={row.oper_state} />
+        <VirtualPill physical={row.physical} />
       </span>
     ),
     // The name, not the link state riding on it. Ordering this column by
     // state would make the one column a reader scans for a device name stop
     // being alphabetical, which is what it is scanned for.
     sortValue: (row) => row.iface,
-  },
-  {
-    key: "type",
-    header: "Type",
-    // A column, not a "virtual" pill on the name: with a fleet on mixed agent
-    // versions "physical" and "not reported" would otherwise render the same,
-    // which is the ambiguity ABSENT exists to prevent.
-    cell: (row) => linkType(row.physical) ?? ABSENT,
-    sortValue: (row) => linkType(row.physical),
   },
   {
     key: "speed",
@@ -1488,17 +1493,6 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
  * definition (a "1 Gb/s" NIC is 10^9 bits), unlike the byte counts elsewhere
  * on this page.
  */
-/**
- * "physical" for a NIC on a bus, "virtual" for a bond, bridge or VLAN, and
- * null where the agent could not say -- older than the field, or a host
- * without sysfs. The word is chosen here rather than by the agent, which
- * reports only whether the device link exists.
- */
-function linkType(physical: boolean | null): string | null {
-  if (physical === null) return null;
-  return physical ? "physical" : "virtual";
-}
-
 function linkSpeed(mbps: number): string {
   if (mbps >= 1000 && mbps % 1000 === 0) return `${mbps / 1000} Gb/s`;
   return `${mbps} Mb/s`;
@@ -1524,7 +1518,7 @@ export function Interfaces({ rows }: { rows: readonly Iface[] }) {
         [
           row.iface,
           row.oper_state,
-          linkType(row.physical),
+          row.physical === false ? "virtual" : null,
           row.duplex,
           row.mac,
           row.description,
