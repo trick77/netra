@@ -405,6 +405,28 @@ describe("Overview", () => {
     ).toBeTruthy();
   });
 
+  // The reading order of the mosaic: the two charts on the left, the tile
+  // cards they sit beside on the right, the disk meters last. DOM order is
+  // grid order and nothing else places a block, so this is the whole layout.
+  it("orders the mosaic charts-left, tiles-right, disk last", () => {
+    const { container } = renderOverview();
+    const grid = container.querySelector(".mosaic")!;
+    // Every block is a labelled section, a chart's reading "<title> chart"
+    // or "<title>, not collected"; the label's first word run is the title.
+    const labels = [...grid.querySelectorAll(":scope > .mo > section")].map(
+      (s) => s.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual([
+      expect.stringMatching(/^Load averages/),
+      "System metrics",
+      "Kernel",
+      expect.stringMatching(/^Traffic/),
+      "Memory pressure",
+      "Network",
+      "Disk",
+    ]);
+  });
+
   // The System card is lifted out for a different reason: it is a strip of
   // eight facts about the machine rather than a reading, and full width above
   // the columns is where it can be laid out four across.

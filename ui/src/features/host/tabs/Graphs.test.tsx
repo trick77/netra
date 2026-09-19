@@ -181,6 +181,17 @@ describe("Graphs", () => {
   // The Overview's traffic panel and the Network tab's are two specs over one
   // pair of columns, and the split is the point: this page asks what the box
   // is moving, that tab asks which link moved it.
+  // IP sits below UDP, where it was asked to be.
+  it("orders the Network groups Traffic, TCP, UDP, IP, ICMP", () => {
+    expect(NETWORK_GROUPS.map((g) => g.title)).toEqual([
+      "Traffic",
+      "TCP",
+      "UDP",
+      "IP",
+      "ICMP",
+    ]);
+  });
+
   it("keeps the summed traffic panel off the Network tab", () => {
     const network = NETWORK_GROUPS.flatMap((g) => g.specs.map((s) => s.slug));
     expect(network).toContain("host-traffic");

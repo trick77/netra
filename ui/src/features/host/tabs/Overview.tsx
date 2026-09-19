@@ -620,8 +620,8 @@ export function Overview({
     now,
   });
 
-  // Each row's twelve tracks, split between its two cards in proportion to
-  // how many tiles each holds.
+  // The third row's twelve tracks, split between its two cards in proportion
+  // to how many tiles each holds.
   //
   // Fixed spans looked right on a host that reports everything and wrong on
   // every other: a swapless VM has one Memory pressure tile, and at a fixed
@@ -630,10 +630,9 @@ export function Overview({
   // the tiles either side come out the same width -- which is the actual
   // goal, since a tile is a fixed thing and only the card around it is
   // elastic.
-  const [systemSpan, kernelSpan] = splitRow(
-    tiles.system.length,
-    tiles.kernel.length,
-  );
+  //
+  // The first two rows are not split: each pairs a tile card with a chart,
+  // and a chart has no tile count to weigh against. Both halves are six.
   const [pressureSpan, networkSpan] = splitRow(
     tiles.pressure.length,
     tiles.network.length,
@@ -844,38 +843,8 @@ export function Overview({
         a card states its own span and the browser does the rest, and below
         1100px every span collapses to the full width in CSS alone. */}
       <div className="mosaic">
-        <TileCard
-          title="System metrics"
-          tiles={tiles.system}
-          span={systemSpan}
-          hostId={host.id}
-          onOpenChart={onOpenChart}
-        />
-        <TileCard
-          title="Kernel"
-          tiles={tiles.kernel}
-          span={kernelSpan}
-          hostId={host.id}
-          onOpenChart={onOpenChart}
-        />
-        <TileCard
-          title="Memory pressure"
-          tiles={tiles.pressure}
-          span={pressureSpan}
-          hostId={host.id}
-          onOpenChart={onOpenChart}
-        />
-        <TileCard
-          title="Network"
-          tiles={tiles.network}
-          span={networkSpan}
-          hostId={host.id}
-          onOpenChart={onOpenChart}
-        />
-
-        {/* Traffic on the left, under the Network tiles it belongs to, and
-          the load average on the right under the kernel ones. The reading
-          order of the row above is the reading order of this one.
+        {/* Load averages beside the System metrics tiles, Traffic beside the
+          Kernel ones: the charts on the left, the tiles on the right.
 
           "Traffic" and "Load averages", not "Network load" and "System
           load": those are the titles the Network and System tabs draw this
@@ -890,20 +859,48 @@ export function Overview({
           is this line. */}
         <div className="mo" style={{ gridColumn: "span 6" }}>
           <SpecPanel
-            spec={TRAFFIC_SPEC}
-            sources={sources}
-            range={range}
-            fetchFamily={fetchFamily}
-          />
-        </div>
-        <div className="mo" style={{ gridColumn: "span 6" }}>
-          <SpecPanel
             spec={LOAD_SPEC}
             sources={sources}
             range={range}
             fetchFamily={fetchFamily}
           />
         </div>
+        <TileCard
+          title="System metrics"
+          tiles={tiles.system}
+          span={6}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
+        <TileCard
+          title="Kernel"
+          tiles={tiles.kernel}
+          span={6}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
+        <div className="mo" style={{ gridColumn: "span 6" }}>
+          <SpecPanel
+            spec={TRAFFIC_SPEC}
+            sources={sources}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
+        </div>
+        <TileCard
+          title="Memory pressure"
+          tiles={tiles.pressure}
+          span={pressureSpan}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
+        <TileCard
+          title="Network"
+          tiles={tiles.network}
+          span={networkSpan}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
 
         {/* The one meter left on this page, and it stays a meter: a
           filesystem is a bounded quantity with a fill line, which is the one

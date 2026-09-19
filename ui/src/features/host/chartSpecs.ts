@@ -1703,10 +1703,6 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
       slugs: ["host-traffic", "interface-errors"],
     },
     {
-      title: "IP",
-      slugs: ["ip-statistics", "ip-fragmentation", "ip6-fragmentation"],
-    },
-    {
       title: "TCP",
       slugs: [
         "tcp-statistics",
@@ -1718,6 +1714,10 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
     {
       title: "UDP",
       slugs: ["udp-statistics", "udp6-statistics", "udp-datagrams"],
+    },
+    {
+      title: "IP",
+      slugs: ["ip-statistics", "ip-fragmentation", "ip6-fragmentation"],
     },
     { title: "ICMP", slugs: ["icmp-statistics", "icmp-informational"] },
   ],
