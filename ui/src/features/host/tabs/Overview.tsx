@@ -843,8 +843,8 @@ export function Overview({
         a card states its own span and the browser does the rest, and below
         1100px every span collapses to the full width in CSS alone. */}
       <div className="mosaic">
-        {/* Load averages left of the System metrics tiles, and Traffic under
-          those tiles, to the right of the Kernel ones.
+        {/* System metrics tiles with Load averages to their right; Traffic
+          under the tiles, with the Kernel tiles to its right.
 
           "Traffic" and "Load averages", not "Network load" and "System
           load": those are the titles the Network and System tabs draw this
@@ -857,6 +857,13 @@ export function Overview({
           shared deliberately, for the reason above: they are the same
           quantity at two levels of detail, and the stack's outer edge there
           is this line. */}
+        <TileCard
+          title="System metrics"
+          tiles={tiles.system}
+          span={6}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
         <div className="mo" style={{ gridColumn: "span 6" }}>
           <SpecPanel
             spec={LOAD_SPEC}
@@ -865,20 +872,6 @@ export function Overview({
             fetchFamily={fetchFamily}
           />
         </div>
-        <TileCard
-          title="System metrics"
-          tiles={tiles.system}
-          span={6}
-          hostId={host.id}
-          onOpenChart={onOpenChart}
-        />
-        <TileCard
-          title="Kernel"
-          tiles={tiles.kernel}
-          span={6}
-          hostId={host.id}
-          onOpenChart={onOpenChart}
-        />
         <div className="mo" style={{ gridColumn: "span 6" }}>
           <SpecPanel
             spec={TRAFFIC_SPEC}
@@ -887,6 +880,13 @@ export function Overview({
             fetchFamily={fetchFamily}
           />
         </div>
+        <TileCard
+          title="Kernel"
+          tiles={tiles.kernel}
+          span={6}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
         <TileCard
           title="Memory pressure"
           tiles={tiles.pressure}

@@ -405,11 +405,11 @@ describe("Overview", () => {
     ).toBeTruthy();
   });
 
-  // The reading order of the mosaic, two blocks a row: Load averages |
-  // System metrics, Kernel | Traffic, Memory pressure | Network, then Disk.
+  // The reading order of the mosaic, two blocks a row: System metrics |
+  // Load averages, Traffic | Kernel, Memory pressure | Network, then Disk.
   // DOM order is grid order and nothing else places a block, so this is the
   // whole layout.
-  it("orders the mosaic load, system, kernel, traffic, disk last", () => {
+  it("orders the mosaic system, load, traffic, kernel, disk last", () => {
     const { container } = renderOverview();
     const grid = container.querySelector(".mosaic")!;
     // Every block is a labelled section, a chart's reading "<title> chart"
@@ -418,10 +418,10 @@ describe("Overview", () => {
       (s) => s.getAttribute("aria-label"),
     );
     expect(labels).toEqual([
-      expect.stringMatching(/^Load averages/),
       "System metrics",
-      "Kernel",
+      expect.stringMatching(/^Load averages/),
       expect.stringMatching(/^Traffic/),
+      "Kernel",
       "Memory pressure",
       "Network",
       "Disk",
