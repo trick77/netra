@@ -843,8 +843,8 @@ export function Overview({
         a card states its own span and the browser does the rest, and below
         1100px every span collapses to the full width in CSS alone. */}
       <div className="mosaic">
-        {/* Load averages beside the System metrics tiles, Traffic beside the
-          Kernel ones: the charts on the left, the tiles on the right.
+        {/* Load averages left of the System metrics tiles, and Traffic under
+          those tiles, to the right of the Kernel ones.
 
           "Traffic" and "Load averages", not "Network load" and "System
           load": those are the titles the Network and System tabs draw this

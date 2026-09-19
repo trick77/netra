@@ -405,10 +405,11 @@ describe("Overview", () => {
     ).toBeTruthy();
   });
 
-  // The reading order of the mosaic: the two charts on the left, the tile
-  // cards they sit beside on the right, the disk meters last. DOM order is
-  // grid order and nothing else places a block, so this is the whole layout.
-  it("orders the mosaic charts-left, tiles-right, disk last", () => {
+  // The reading order of the mosaic, two blocks a row: Load averages |
+  // System metrics, Kernel | Traffic, Memory pressure | Network, then Disk.
+  // DOM order is grid order and nothing else places a block, so this is the
+  // whole layout.
+  it("orders the mosaic load, system, kernel, traffic, disk last", () => {
     const { container } = renderOverview();
     const grid = container.querySelector(".mosaic")!;
     // Every block is a labelled section, a chart's reading "<title> chart"
