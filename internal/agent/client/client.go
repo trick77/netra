@@ -629,7 +629,7 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 
 	c.refreshCapabilities()
 
-	depth := uint32(c.ring.Depth()) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
+	depth := uint32(c.ring.Depth()) //nolint:gosec // a ring buffer depth, bounded by its fixed capacity
 	dropped := c.ring.Dropped()
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -913,7 +913,7 @@ func (c *Client) Flush(ctx context.Context) error {
 			// Counted before the dump, because after it there is nothing left
 			// to count. These are scrapes no retry will ever deliver, which is
 			// the difference between this and an ordinary outage.
-			c.outage.discarded += uint64(c.ring.Depth()) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
+			c.outage.discarded += uint64(c.ring.Depth()) //nolint:gosec // a ring buffer depth, bounded by its fixed capacity
 			// Latched, not reported. An event written here would go into the
 			// next scrape and be dumped by the next 401 -- exactly what the
 			// inventory comment below says about a set emitted at this point.

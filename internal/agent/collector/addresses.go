@@ -185,7 +185,7 @@ func ifaceDuplex(name string) string {
 // Zero is not a valid MTU, so it reads as absent rather than as a measurement.
 func ifaceMTU(name string, fromNet int) *uint32 {
 	if fromNet > 0 {
-		v := uint32(fromNet) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
+		v := uint32(fromNet) //nolint:gosec // an IP prefix length, at most 128
 		return &v
 	}
 	text := ifaceAttr(name, "mtu")
@@ -312,7 +312,7 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 		// looking for. In an address-keyed table they appear nowhere at all.
 		links = append(links, &netrav1.HostInterface{
 			Iface:       i.Name,
-			IfIndex:     ptrTo(uint32(i.Index)), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
+			IfIndex:     ptrTo(uint32(i.Index)), //nolint:gosec // a kernel interface index, which the kernel keeps well inside uint32
 			OperState:   i.OperState,
 			SpeedMbps:   i.SpeedMbps,
 			Duplex:      i.Duplex,
@@ -339,7 +339,7 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 
 			rows = append(rows, &netrav1.HostAddress{
 				Iface:       i.Name,
-				IfIndex:     ptrTo(uint32(i.Index)), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
+				IfIndex:     ptrTo(uint32(i.Index)), //nolint:gosec // a kernel interface index, which the kernel keeps well inside uint32
 				Address:     ip.String(),
 				Family:      family,
 				Vrf:         i.VRF,
