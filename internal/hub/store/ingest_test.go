@@ -488,7 +488,7 @@ func TestIntegrationSaveMetadataDoesNotFlagFirstSighting(t *testing.T) {
 // One row per core, and a replayed row absorbed rather than duplicated or
 // failed: a replayed batch re-sends rows the hub already has, and rejecting
 // the INSERT would pin the agent's ring buffer on a batch it can never land.
-func TestIntegrationInsertCpuCoreSamplesStoresOneRowPerCore(t *testing.T) {
+func TestIntegrationInsertCPUCoreSamplesStoresOneRowPerCore(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
 	if err := s.Migrate(ctx); err != nil {
@@ -499,19 +499,19 @@ func TestIntegrationInsertCpuCoreSamplesStoresOneRowPerCore(t *testing.T) {
 	// Given: two cores measured at the same instant, one of them idle.
 	ts := time.Now().Add(-time.Minute).UnixMilli()
 	busy0, busy1 := 100.0, 0.0
-	n, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+	n, err := s.InsertCPUCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
 		{TsMs: ts, Core: 0, Busy: &busy0},
 		{TsMs: ts, Core: 1, Busy: &busy1},
 	})
 	if err != nil {
-		t.Fatalf("InsertCpuCoreSamples: %v", err)
+		t.Fatalf("InsertCPUCoreSamples: %v", err)
 	}
 	if n != 2 {
 		t.Fatalf("inserted = %d, want 2", n)
 	}
 
 	// When: the same row arrives again, as a replay would send it.
-	if _, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+	if _, err := s.InsertCPUCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
 		{TsMs: ts, Core: 0, Busy: &busy0},
 	}); err != nil {
 		t.Fatalf("replay insert: %v", err)
@@ -545,7 +545,7 @@ func TestIntegrationInsertCpuCoreSamplesStoresOneRowPerCore(t *testing.T) {
 // reason busy is optional: "not computable this scrape" is a different fact
 // from "this core was idle", and a rollup averaging them together would be
 // quietly wrong.
-func TestIntegrationInsertCpuCoreSamplesPreservesUnsetBusyAsNull(t *testing.T) {
+func TestIntegrationInsertCPUCoreSamplesPreservesUnsetBusyAsNull(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
 	if err := s.Migrate(ctx); err != nil {
@@ -554,10 +554,10 @@ func TestIntegrationInsertCpuCoreSamplesPreservesUnsetBusyAsNull(t *testing.T) {
 	hostID := seedHost(t, s)
 
 	ts := time.Now().Add(-time.Minute).UnixMilli()
-	if _, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+	if _, err := s.InsertCPUCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
 		{TsMs: ts, Core: 0}, // Busy deliberately unset
 	}); err != nil {
-		t.Fatalf("InsertCpuCoreSamples: %v", err)
+		t.Fatalf("InsertCPUCoreSamples: %v", err)
 	}
 
 	var busy *float64

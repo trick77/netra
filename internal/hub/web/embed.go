@@ -68,7 +68,7 @@ func handlerFor(sub fs.FS) http.Handler {
 	// healthcheck goes green, and the operator gets a file index where the UI
 	// should be. Saying so plainly, once, is worth more than any 200 here.
 	if _, err := fs.Stat(sub, "index.html"); err != nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w,
 				"netra: this binary was built without the web UI; run `make ui` before building, or use a released image",
 				http.StatusServiceUnavailable)

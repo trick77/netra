@@ -183,7 +183,7 @@ func (s *Store) UpsertHostCurrent(
 	return nil
 }
 
-// InsertCpuCoreSamples writes one row per CPU core.
+// InsertCPUCoreSamples writes one row per CPU core.
 //
 // Unlike the host families above, these rows carry their own timestamps: a
 // request holds a batch of scrapes, so the rows in it span several instants
@@ -192,7 +192,7 @@ func (s *Store) UpsertHostCurrent(
 // ON CONFLICT DO NOTHING for the same reason InsertHostSamples has it -- a
 // replayed batch re-sends rows the hub already stored, and failing the INSERT
 // would pin the agent's ring buffer on a batch it can never land.
-func (s *Store) InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*netrav1.CpuCoreSample) (int64, error) {
+func (s *Store) InsertCPUCoreSamples(ctx context.Context, hostID int32, rows []*netrav1.CpuCoreSample) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}

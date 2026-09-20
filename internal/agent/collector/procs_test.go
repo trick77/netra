@@ -158,6 +158,6 @@ func TestProcsName(t *testing.T) {
 
 // The interface is optional, so the wiring that looks for it has to actually
 // find it on this type.
-func TestProcsImplementsCapabilityReporter(t *testing.T) {
+func TestProcsImplementsCapabilityReporter(_ *testing.T) {
 	var _ collector.CapabilityReporter = collector.NewProcs("testdata/procpids", false)
 }

@@ -125,13 +125,13 @@ func sortVerdicts(in []verdict) {
 	})
 }
 
-func seedEqualityFixture(t *testing.T, ctx context.Context, s *store.Store,
+func seedEqualityFixture(ctx context.Context, t *testing.T, s *store.Store,
 	f equalityFixture, now time.Time) map[int32]string {
 	t.Helper()
 	names := map[int32]string{}
 
 	for _, h := range f.Hosts {
-		id := newHost(t, ctx, s, h.Hostname)
+		id := newHost(ctx, t, s, h.Hostname)
 		names[id] = h.Hostname
 
 		// host_current carries BOTH the last_seen every kind is interpreted
@@ -211,7 +211,7 @@ func TestIntegrationHubVerdictEqualsTheBrowsersOnTheSharedFixture(t *testing.T) 
 	// Truncated to the second so an offset lands on a whole second and the
 	// comparison below is not decided by microseconds.
 	now := time.Now().UTC().Truncate(time.Second)
-	names := seedEqualityFixture(t, ctx, s, f, now)
+	names := seedEqualityFixture(ctx, t, s, f, now)
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
@@ -304,7 +304,7 @@ func render(in []verdict) []string {
 // a fleet where nothing happened to expose it.
 func TestIntegrationFailedUnitsCountsTheSummaryAndDatesTheRows(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-units-source")
+	host := newHost(ctx, t, s, "cond-units-source")
 	now := time.Now().UTC().Truncate(time.Second)
 	oldest := now.Add(-2 * time.Hour)
 
@@ -363,15 +363,15 @@ func TestIntegrationAMountIsDatedAgainstItsHostNotTheClock(t *testing.T) {
 	full, room := 97*gib, 3*gib
 
 	// Off for a day, with a reading from just before it went.
-	off := newHost(t, ctx, s, "cond-off")
+	off := newHost(ctx, t, s, "cond-off")
 	offSeen := now.Add(-24 * time.Hour)
-	seedHostCurrent(t, ctx, s, off, offSeen)
-	seedFilesystem(t, ctx, s, off, "root", "/", full, room, offSeen)
+	seedHostCurrent(ctx, t, s, off, offSeen)
+	seedFilesystem(ctx, t, s, off, "root", "/", full, room, offSeen)
 
 	// Talking now, with a mount nobody has re-read for an hour.
-	wedged := newHost(t, ctx, s, "cond-wedged")
-	seedHostCurrent(t, ctx, s, wedged, now)
-	seedFilesystem(t, ctx, s, wedged, "backup", "/mnt/backup", full, room, now.Add(-time.Hour))
+	wedged := newHost(ctx, t, s, "cond-wedged")
+	seedHostCurrent(ctx, t, s, wedged, now)
+	seedFilesystem(ctx, t, s, wedged, "backup", "/mnt/backup", full, room, now.Add(-time.Hour))
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {

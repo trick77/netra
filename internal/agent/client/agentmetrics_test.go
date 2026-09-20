@@ -135,7 +135,7 @@ func TestPostFailuresTotalAccumulatesAndSurvivesRecovery(t *testing.T) {
 // a revoked token stops all data, and without this the agent goes quiet with
 // no number anywhere explaining why.
 func TestPostFailuresTotalCountsUnauthorized(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)

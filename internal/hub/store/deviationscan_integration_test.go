@@ -13,7 +13,7 @@ import (
 
 // seedSensorLimits inserts one sensor and returns its id. Limits are optional:
 // pass nil for a chip that publishes none.
-func seedSensorLimits(t *testing.T, ctx context.Context, s *store.Store,
+func seedSensorLimits(ctx context.Context, t *testing.T, s *store.Store,
 	host int32, chip, label, instance string, high, crit *float64) int32 {
 	t.Helper()
 	var id int32
@@ -32,7 +32,7 @@ func seedSensorLimits(t *testing.T, ctx context.Context, s *store.Store,
 // CopyFrom rather than n inserts: these tests seed thousands of samples to build
 // a span, and one statement at a time turns a five-second test into a
 // ninety-second one.
-func seedSensorSeries(t *testing.T, ctx context.Context, s *store.Store,
+func seedSensorSeries(ctx context.Context, t *testing.T, s *store.Store,
 	host, sensorID int32, end time.Time, n int, temp float64) {
 	t.Helper()
 	rows := make([][]any, 0, n)
@@ -48,7 +48,7 @@ func seedSensorSeries(t *testing.T, ctx context.Context, s *store.Store,
 	}
 }
 
-func seedHostSeries(t *testing.T, ctx context.Context, s *store.Store,
+func seedHostSeries(ctx context.Context, t *testing.T, s *store.Store,
 	host int32, end time.Time, n int, procs int32, load float64) {
 	t.Helper()
 	rows := make([][]any, 0, n)
@@ -65,7 +65,7 @@ func seedHostSeries(t *testing.T, ctx context.Context, s *store.Store,
 }
 
 // ewmaRow reads one subject's stored state.
-func ewmaRow(t *testing.T, ctx context.Context, s *store.Store,
+func ewmaRow(ctx context.Context, t *testing.T, s *store.Store,
 	host int32, kind, subject string) (slow, fast float64, span time.Duration, ok bool) {
 	t.Helper()
 	var first, updated time.Time
@@ -84,7 +84,7 @@ func ewmaRow(t *testing.T, ctx context.Context, s *store.Store,
 }
 
 // bucketCount is how many hour buckets a subject has learned.
-func bucketCount(t *testing.T, ctx context.Context, s *store.Store,
+func bucketCount(ctx context.Context, t *testing.T, s *store.Store,
 	host int32, kind, subject string) int {
 	t.Helper()
 	var n int
@@ -105,17 +105,17 @@ const enoughSpan = 2000
 // and the retired job all have to be right for it to get this far.
 func TestIntegrationFoldBuildsTheMovingAverage(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-fold")
+	host := newHost(ctx, t, s, "ewma-fold")
 	now := time.Now().UTC().Truncate(time.Minute)
 
-	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, enoughSpan, 44)
+	sensorID := seedSensorLimits(ctx, t, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, enoughSpan, 44)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
 	}
 
-	slow, fast, span, ok := ewmaRow(t, ctx, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
+	slow, fast, span, ok := ewmaRow(ctx, t, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
 	if !ok {
 		t.Fatal("no metric_ewma row")
 	}
@@ -132,7 +132,7 @@ func TestIntegrationFoldBuildsTheMovingAverage(t *testing.T) {
 	// The seasonal half landed too, and only for the hours the series actually
 	// covered: enoughSpan minutes is about 33 h, so every hour is touched, but
 	// a shorter series must not conjure buckets it never observed.
-	if n := bucketCount(t, ctx, s, host, conditions.KindTemperature, "drivetemp/temp1/sda"); n == 0 {
+	if n := bucketCount(ctx, t, s, host, conditions.KindTemperature, "drivetemp/temp1/sda"); n == 0 {
 		t.Error("no metric_ewma_hour rows: the seasonal half was not written")
 	}
 }
@@ -145,18 +145,18 @@ func TestIntegrationFoldBuildsTheMovingAverage(t *testing.T) {
 // thing the buckets exist to separate.
 func TestIntegrationOnlyObservedHoursAreLearned(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-partial-day")
+	host := newHost(ctx, t, s, "ewma-partial-day")
 	now := time.Now().UTC().Truncate(time.Minute)
 
-	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	sensorID := seedSensorLimits(ctx, t, s, host, "drivetemp", "temp1", "sda", nil, nil)
 	// Three hours of history: three or four buckets, not twenty-four.
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 3*60, 44)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, 3*60, 44)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
 	}
 
-	n := bucketCount(t, ctx, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
+	n := bucketCount(ctx, t, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
 	if n == 0 || n > 4 {
 		t.Errorf("buckets = %d, want the three or four hours the series covered", n)
 	}
@@ -212,25 +212,25 @@ func TestIntegrationTheBaselineWindowIsGone(t *testing.T) {
 // rather than what the host did.
 func TestIntegrationABufferedReplayFoldsEverySample(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-replay")
+	host := newHost(ctx, t, s, "ewma-replay")
 	now := time.Now().UTC().Truncate(time.Minute)
 
-	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	sensorID := seedSensorLimits(ctx, t, s, host, "drivetemp", "temp1", "sda", nil, nil)
 
 	// A settled history, folded.
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-time.Hour), enoughSpan, 44)
+	seedSensorSeries(ctx, t, s, host, sensorID, now.Add(-time.Hour), enoughSpan, 44)
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("first fold: %v", err)
 	}
-	_, _, spanBefore, _ := ewmaRow(t, ctx, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
+	_, _, spanBefore, _ := ewmaRow(ctx, t, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
 
 	// Then an hour of buffered samples arriving at once, all warmer.
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 60, 52)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, 60, 52)
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("second fold: %v", err)
 	}
 
-	_, fast, spanAfter, ok := ewmaRow(t, ctx, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
+	_, fast, spanAfter, ok := ewmaRow(ctx, t, s, host, conditions.KindTemperature, "drivetemp/temp1/sda")
 	if !ok {
 		t.Fatal("no metric_ewma row")
 	}
@@ -250,13 +250,13 @@ func TestIntegrationABufferedReplayFoldsEverySample(t *testing.T) {
 // A new host must not be declared fine by a rule that has not watched it yet.
 func TestIntegrationAnUnwatchedSubjectIsUnjudged(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-new")
+	host := newHost(ctx, t, s, "ewma-new")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
-	sensorID := seedSensorLimits(t, ctx, s, host, "coretemp", "Package id 0", "", nil, nil)
+	sensorID := seedSensorLimits(ctx, t, s, host, "coretemp", "Package id 0", "", nil, nil)
 	// Ten minutes of history: seeded, nowhere near the 24-hour warm-up.
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 10, 92)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, 10, 92)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
@@ -285,9 +285,9 @@ func TestIntegrationAnUnwatchedSubjectIsUnjudged(t *testing.T) {
 // abnormal.
 func TestIntegrationHostKindsWaitLongerThanTemperature(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-firstmonday")
+	host := newHost(ctx, t, s, "ewma-firstmonday")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	// Three days: past temperature's warm-up, well inside the host kinds'.
 	//
@@ -296,9 +296,9 @@ func TestIntegrationHostKindsWaitLongerThanTemperature(t *testing.T) {
 	// band is trusted (conditions.WarmWeight). The subject-level MinSpan of a
 	// day is a floor that the bucket's own warm-up now sits above.
 	const warmed = 3 * 24 * 60
-	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, warmed, 44)
-	seedHostSeries(t, ctx, s, host, now, warmed, 300, 1.5)
+	sensorID := seedSensorLimits(ctx, t, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, warmed, 44)
+	seedHostSeries(ctx, t, s, host, now, warmed, 300, 1.5)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
@@ -325,7 +325,7 @@ func TestIntegrationHostKindsWaitLongerThanTemperature(t *testing.T) {
 		}
 		// The state is nonetheless accumulating, so nothing has to start over
 		// when the span is finally long enough.
-		if _, _, _, ok := ewmaRow(t, ctx, s, host, kind, ""); !ok {
+		if _, _, _, ok := ewmaRow(ctx, t, s, host, kind, ""); !ok {
 			t.Errorf("%s has no state row: the history is not accumulating", kind)
 		}
 	}
@@ -335,14 +335,14 @@ func TestIntegrationHostKindsWaitLongerThanTemperature(t *testing.T) {
 // long enough is raised, with the numbers a reader needs in the detail.
 func TestIntegrationADepartureFromNormalIsRaised(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-departure")
+	host := newHost(ctx, t, s, "ewma-departure")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
-	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	sensorID := seedSensorLimits(ctx, t, s, host, "drivetemp", "temp1", "sda", nil, nil)
 	// Two days at 44, then fifteen minutes at 61 -- past OpenFor.
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-15*time.Minute), 3*24*60, 44)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 15, 61)
+	seedSensorSeries(ctx, t, s, host, sensorID, now.Add(-15*time.Minute), 3*24*60, 44)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, 15, 61)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
@@ -394,12 +394,12 @@ func TestIntegrationADepartureFromNormalIsRaised(t *testing.T) {
 // a condition already open on that subject.
 func TestIntegrationABriefExcursionIsUnjudgedNotRaised(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-burst")
+	host := newHost(ctx, t, s, "ewma-burst")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
-	sensorID := seedSensorLimits(t, ctx, s, host, "drivetemp", "temp1", "sda", nil, nil)
-	seedSensorSeries(t, ctx, s, host, sensorID, now.Add(-4*time.Minute), 3*24*60, 44)
+	sensorID := seedSensorLimits(ctx, t, s, host, "drivetemp", "temp1", "sda", nil, nil)
+	seedSensorSeries(ctx, t, s, host, sensorID, now.Add(-4*time.Minute), 3*24*60, 44)
 	// Four minutes at 70. `fast` needs about two of them to cross the band, so
 	// the EXCURSION is only about two minutes old against OpenFor's three --
 	// which is the window this test is about.
@@ -407,7 +407,7 @@ func TestIntegrationABriefExcursionIsUnjudgedNotRaised(t *testing.T) {
 	// A single sample would not do: fast only reaches 54 from 44 in one minute,
 	// under the 56 warn, so the subject reads healthy and the suppression is
 	// never exercised at all. CI caught exactly that.
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 4, 70)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, 4, 70)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
@@ -436,13 +436,13 @@ func TestIntegrationABriefExcursionIsUnjudgedNotRaised(t *testing.T) {
 // picked for spinning disks.
 func TestIntegrationABusyNVMeIsNotRaisedAgainstItsOwnNormal(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "ewma-nvme")
+	host := newHost(ctx, t, s, "ewma-nvme")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	high, crit := 80.0, 85.0
-	sensorID := seedSensorLimits(t, ctx, s, host, "nvme", "Composite", "nvme0n1", &high, &crit)
-	seedSensorSeries(t, ctx, s, host, sensorID, now, 3*24*60, 65)
+	sensorID := seedSensorLimits(ctx, t, s, host, "nvme", "Composite", "nvme0n1", &high, &crit)
+	seedSensorSeries(ctx, t, s, host, sensorID, now, 3*24*60, 65)
 
 	if err := s.FoldSamples(ctx); err != nil {
 		t.Fatalf("FoldSamples: %v", err)
