@@ -52,12 +52,6 @@ func (f *fakeStore) FoldSamples(context.Context) error {
 	return f.foldErr
 }
 
-func (f *fakeStore) foldCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.folds
-}
-
 func (f *fakeStore) OpenConditions(context.Context) ([]conditions.Open, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -116,7 +116,7 @@ func (p *Procs) Collect(_ context.Context) (*Result, error) {
 		// and none of them is fixed by adding pid: host. The namespace verdict
 		// is only reached below, where the tree was actually readable.
 		p.setCapability(procsCapUnavailable)
-		return &Result{Host: sample}, nil
+		return &Result{Host: sample}, nil //nolint:nilerr // an unreadable /proc leaves the field unset rather than failing the scrape; the capability is reported as unavailable instead
 	}
 
 	count := 0

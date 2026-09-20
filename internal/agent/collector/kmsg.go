@@ -189,7 +189,7 @@ func (k *Kmsg) Collect(_ context.Context) (*Result, error) {
 		src, err := k.newSource()
 		if err != nil {
 			k.openErr = err
-			return &Result{}, nil
+			return &Result{}, nil //nolint:nilerr // a host that declines the device grant is a supported deployment, not a fault: failing here would discard every other collector's contribution to the same scrape
 		}
 		k.src, k.openErr = src, nil
 	}

@@ -527,13 +527,13 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	raw, err := s.run(ctx, "--json", "--scan")
 	if err != nil {
 		s.fail()
-		return &Result{}, nil
+		return &Result{}, nil //nolint:nilerr // a transient smartctl --scan failure must not cost a full interval of SMART data; s.fail() records it and the next scrape retries
 	}
 
 	var scan smartctlScan
 	if err := json.Unmarshal(raw, &scan); err != nil {
 		s.fail()
-		return &Result{}, nil
+		return &Result{}, nil //nolint:nilerr // unparseable smartctl JSON is recorded by s.fail() and retried on the next scrape rather than failing the whole scrape
 	}
 
 	s.lastRun, s.hasRun = s.now(), true
