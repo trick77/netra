@@ -222,7 +222,7 @@ func TestFlushSendsMetadataHashOnEveryRequest(t *testing.T) {
 }
 
 func TestFlushRejectsUnauthorized(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
@@ -294,7 +294,7 @@ func newDeepBufferClient(t *testing.T, url string) *client.Client {
 // AckThrough(highest) left every sample beyond the first batch in the ring —
 // so a revoked agent stayed pinned near capacity while ScrapeOnce kept adding.
 func TestFlushOnUnauthorizedDropsTheEntireBufferNotJustTheBatch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
@@ -402,7 +402,7 @@ func TestFlushKeepsBackfillSetForEveryBatchOfAReplay(t *testing.T) {
 // believes the flush succeeded — no error, no backoff, no backfill flag on
 // the next attempt.
 func TestFlushTreatsZeroAckSeqAsFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		out, _ := proto.Marshal(&netrav1.IngestResponse{})
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		_, _ = w.Write(out)
@@ -686,7 +686,7 @@ func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
 // jitter and keeps retrying, and still exits promptly once the context is
 // cancelled mid-backoff rather than waiting out the full sleep.
 func TestRunBacksOffOnTransientFailureAndStopsOnCancel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(srv.Close)
@@ -724,7 +724,7 @@ func TestRunBacksOffOnTransientFailureAndStopsOnCancel(t *testing.T) {
 // A 401 must switch Run into its slow-retry path rather than the normal
 // exponential backoff, and still honor context cancellation while sleeping.
 func TestRunRetriesSlowlyOnUnauthorizedAndStopsOnCancel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
@@ -762,7 +762,7 @@ func TestRunRetriesSlowlyOnUnauthorizedAndStopsOnCancel(t *testing.T) {
 // A malformed response body (not a valid IngestResponse) must surface as an
 // error rather than a zero-value success.
 func TestFlushFailsOnMalformedResponseBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		_, _ = w.Write([]byte{0xFF, 0xFF, 0xFF}) // not a valid protobuf message
 	}))
@@ -828,7 +828,7 @@ func TestScrapeOnceSkipsFailingCollector(t *testing.T) {
 // A 503 that carries retry_after_s must surface as a *client.RetryAfterError
 // with that duration, so Run can honour it instead of its own backoff.
 func TestFlushReturnsRetryAfterFromHub503(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := &netrav1.IngestResponse{RetryAfterS: 42}
 		out, err := proto.Marshal(resp)
 		if err != nil {
@@ -863,7 +863,7 @@ func TestFlushReturnsRetryAfterFromHub503(t *testing.T) {
 // "unmarshal" as a zero-value message, and treating that as a real
 // instruction would risk sleeping on garbage.
 func TestFlushIgnoresRetryAfterWithoutProtobufContentType(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("<html>service unavailable</html>"))
 	}))
@@ -895,7 +895,7 @@ func TestRunHonoursHubRetryAfterInsteadOfOwnBackoff(t *testing.T) {
 	var mu sync.Mutex
 	var times []time.Time
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		times = append(times, time.Now())
 		mu.Unlock()
@@ -1003,7 +1003,7 @@ func TestRunKeepsScrapingWhileBackingOffFlush(t *testing.T) {
 	var mu sync.Mutex
 	requests := 0
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
 		requests++
 		mu.Unlock()
@@ -1381,7 +1381,7 @@ func TestRunLogsEverySuccessfulReport(t *testing.T) {
 func TestRunDoesNotLogAReportWhenTheFlushFails(t *testing.T) {
 	// Given: a hub that refuses every request.
 	logs := captureLogs(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(srv.Close)

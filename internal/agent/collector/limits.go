@@ -196,7 +196,7 @@ func (l *Limits) readConntrack(sample *netrav1.HostSample) bool {
 }
 
 func (l *Limits) readU32(rel string) (uint32, bool) {
-	raw, err := os.ReadFile(filepath.Join(l.procRoot, rel))
+	raw, err := os.ReadFile(filepath.Join(l.procRoot, rel)) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return 0, false
 	}

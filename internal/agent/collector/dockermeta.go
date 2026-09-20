@@ -266,6 +266,9 @@ func parseStartedAt(s string) time.Time {
 	return t.UTC()
 }
 
+// SystemDockerContainers returns container metadata from the Docker socket,
+// or an error when the socket is not mounted or dockerd does not answer. It is
+// the production ContainerMetaSource; tests substitute their own.
 func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 	// Stat, deliberately, and NOT a connect probe. setup-agent.sh bind-mounts
 	// the socket FILE, which pins the inode inside this container, so the stat

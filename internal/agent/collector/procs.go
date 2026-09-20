@@ -116,7 +116,7 @@ func (p *Procs) Collect(_ context.Context) (*Result, error) {
 		// and none of them is fixed by adding pid: host. The namespace verdict
 		// is only reached below, where the tree was actually readable.
 		p.setCapability(procsCapUnavailable)
-		return &Result{Host: sample}, nil
+		return &Result{Host: sample}, nil //nolint:nilerr // an unreadable /proc leaves the field unset rather than failing the scrape; the capability is reported as unavailable instead
 	}
 
 	count := 0
@@ -193,7 +193,7 @@ func (p *Procs) judgeNamespace() (verdict, settled bool) {
 }
 
 func (p *Procs) readComm(pid string) (string, bool) {
-	raw, err := os.ReadFile(filepath.Join(p.procRoot, pid, "comm"))
+	raw, err := os.ReadFile(filepath.Join(p.procRoot, pid, "comm")) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return "", false
 	}

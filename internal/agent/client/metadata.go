@@ -40,7 +40,7 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 		Hostname:     hostname,
 		Arch:         runtime.GOARCH,
 		OsName:       osName(cfg.OsRelease),
-		Threads:      uint32(runtime.NumCPU()),
+		Threads:      uint32(runtime.NumCPU()), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 		Location:     cfg.Location,
 		Provider:     cfg.Provider,
 		Facility:     cfg.Facility,
@@ -58,7 +58,7 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 // readKernelRelease returns the running kernel version, as uname -r reports
 // it. /proc/sys/kernel/osrelease is the same string the syscall returns.
 func readKernelRelease(procRoot string) string {
-	raw, err := os.ReadFile(filepath.Join(procRoot, "sys", "kernel", "osrelease"))
+	raw, err := os.ReadFile(filepath.Join(procRoot, "sys", "kernel", "osrelease")) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return ""
 	}
@@ -86,7 +86,7 @@ func osName(osReleasePath string) string {
 // as setup-agent.sh treats the same file. Only one layer of surrounding
 // quotes comes off; anything inside them is passed through verbatim.
 func readOSRelease(path string) string {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return ""
 	}
@@ -138,7 +138,7 @@ func unquote(s string) string {
 // socket's cores twice. Kernels that report neither field -- most ARM -- fall
 // back to the processor count, where threads and cores are the same thing.
 func readCPUInfo(procRoot string) (model string, cores uint32) {
-	f, err := os.Open(filepath.Join(procRoot, "cpuinfo"))
+	f, err := os.Open(filepath.Join(procRoot, "cpuinfo")) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return "", 0
 	}
@@ -189,14 +189,14 @@ func readCPUInfo(procRoot string) (model string, cores uint32) {
 	flush()
 
 	if len(seen) > 0 {
-		return model, uint32(len(seen))
+		return model, uint32(len(seen)) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 	}
 	return model, uint32(processors)
 }
 
 // readMemTotal returns MemTotal from /proc/meminfo in bytes.
 func readMemTotal(procRoot string) uint64 {
-	f, err := os.Open(filepath.Join(procRoot, "meminfo"))
+	f, err := os.Open(filepath.Join(procRoot, "meminfo")) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return 0
 	}
@@ -278,7 +278,7 @@ var machineIDPaths = []string{
 
 func fingerprint() string {
 	for _, p := range machineIDPaths {
-		raw, err := os.ReadFile(p)
+		raw, err := os.ReadFile(p) //nolint:gosec // p iterates machineIDPaths, a hardcoded list of the two standard machine-id locations
 		if err != nil {
 			continue
 		}

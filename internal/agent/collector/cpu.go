@@ -154,7 +154,7 @@ func (c *CPU) Collect(_ context.Context) (*Result, error) {
 
 func (c *CPU) read() (cpuTimes, error) {
 	path := filepath.Join(c.procRoot, "stat")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return cpuTimes{}, fmt.Errorf("open %s: %w", path, err)
 	}

@@ -144,7 +144,7 @@ func reportableIface(name string) bool {
 // read parses /proc/net/dev into per-interface counters.
 func (n *Network) read() (map[string]netCounters, error) {
 	path := filepath.Join(n.procRoot, "net", "dev")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}

@@ -70,7 +70,7 @@ type ConditionsResponse struct {
 // cannot produce its own counts. It is cheap because open rows are bounded by
 // what is actually wrong rather than by fleet size, and the query rides
 // host_conditions_open_key, which covers exactly the unresolved rows.
-func (s *Service) Conditions(ctx context.Context, now time.Time) (ConditionsResponse, error) {
+func (s *Service) Conditions(ctx context.Context, _ time.Time) (ConditionsResponse, error) {
 	// The subject's own last reading, joined per kind, because staleness is not
 	// one question. A mount is measured on every scrape tick; a drive is
 	// measured on whatever AGENT_SMART_INTERVAL the operator set. Kinds whose

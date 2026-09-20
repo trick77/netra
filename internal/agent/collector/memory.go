@@ -115,7 +115,7 @@ func (m *Memory) Collect(_ context.Context) (*Result, error) {
 // readMeminfo returns every "Key: value kB" line converted to bytes.
 func (m *Memory) readMeminfo() (map[string]uint64, error) {
 	path := filepath.Join(m.procRoot, "meminfo")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
@@ -150,7 +150,7 @@ func (m *Memory) readMeminfo() (map[string]uint64, error) {
 // readZfsArc returns the ARC size in bytes, and false when ZFS is not loaded.
 func (m *Memory) readZfsArc() (uint64, bool) {
 	path := filepath.Join(m.procRoot, "spl", "kstat", "zfs", "arcstats")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return 0, false
 	}

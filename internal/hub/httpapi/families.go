@@ -44,7 +44,7 @@ func (h *IngestHandler) storeFamilies(ctx context.Context, hostID int32, req *ne
 
 	cores, dropped := filterByTs(req.GetCpuCores(), future)
 	logDropped(hostID, "cpu core", dropped)
-	if _, err := h.store.InsertCpuCoreSamples(ctx, hostID, cores); err != nil {
+	if _, err := h.store.InsertCPUCoreSamples(ctx, hostID, cores); err != nil {
 		return fmt.Errorf("cpu cores: %w", err)
 	}
 

@@ -319,8 +319,8 @@ func (p *Profile) Metadata(agentVersion, goVersion, commit string) *netrav1.Meta
 		OsName:       p.OSName,
 		Arch:         p.Arch,
 		CpuModel:     p.CPUModel,
-		Cores:        uint32(p.Cores),
-		Threads:      uint32(p.Threads),
+		Cores:        uint32(p.Cores),   //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
+		Threads:      uint32(p.Threads), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 		MemoryTotal:  p.MemoryTotal,
 		Location:     p.Location,
 		Provider:     p.Provider,

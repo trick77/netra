@@ -20,7 +20,7 @@ func condCtx(t *testing.T) (context.Context, *store.Store) {
 	return ctx, s
 }
 
-func newHost(t *testing.T, ctx context.Context, s *store.Store, name string) int32 {
+func newHost(ctx context.Context, t *testing.T, s *store.Store, name string) int32 {
 	t.Helper()
 	var id int32
 	if err := s.Pool().QueryRow(ctx,
@@ -55,7 +55,7 @@ func openFinding(k conditions.Key, severity string, at time.Time) conditions.Fin
 // An opened condition is a row AND an event, written together.
 func TestIntegrationOpeningWritesBothHalves(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-open")
+	host := newHost(ctx, t, s, "cond-open")
 	at := time.Now().UTC().Truncate(time.Second)
 	// Deliberately different from `at`, so the assertions below can tell the
 	// onset and the recording time apart. With one value for both, this test
@@ -124,7 +124,7 @@ func TestIntegrationOpeningWritesBothHalves(t *testing.T) {
 // either, which would report an onset that never happened.
 func TestIntegrationOpeningTwiceIsOnceOnly(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-twice")
+	host := newHost(ctx, t, s, "cond-twice")
 	at := time.Now().UTC().Truncate(time.Second)
 	k := diskKey(host, "root")
 
@@ -162,7 +162,7 @@ func TestIntegrationOpeningTwiceIsOnceOnly(t *testing.T) {
 // closed so a consumer can pair the two without scanning.
 func TestIntegrationResolvingKeepsTheRow(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-resolve")
+	host := newHost(ctx, t, s, "cond-resolve")
 	at := time.Now().UTC().Truncate(time.Second)
 	k := diskKey(host, "root")
 
@@ -222,7 +222,7 @@ func TestIntegrationResolvingKeepsTheRow(t *testing.T) {
 // identity and the triple is unique only among open rows.
 func TestIntegrationTheSameSubjectCanReopen(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-reopen")
+	host := newHost(ctx, t, s, "cond-reopen")
 	first := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
 	k := diskKey(host, "root")
 
@@ -264,7 +264,7 @@ func TestIntegrationTheSameSubjectCanReopen(t *testing.T) {
 // than blank a NOT NULL column.
 func TestIntegrationAMissKeepsTheStoredDetail(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-miss")
+	host := newHost(ctx, t, s, "cond-miss")
 	at := time.Now().UTC().Truncate(time.Second)
 	k := diskKey(host, "root")
 
@@ -305,7 +305,7 @@ func TestIntegrationAMissKeepsTheStoredDetail(t *testing.T) {
 // silently NULL -- the hub forgetting a live problem and calling it resolved.
 func TestIntegrationPruneKeepsOpenConditionsForever(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-prune")
+	host := newHost(ctx, t, s, "cond-prune")
 	ancient := time.Now().UTC().Add(-365 * 24 * time.Hour)
 
 	// One open and ancient, one resolved and ancient.
@@ -350,7 +350,7 @@ func TestIntegrationPruneKeepsOpenConditionsForever(t *testing.T) {
 // at all -- column names, joins and the nullable mountpoint included.
 func TestIntegrationScanFindsAFullDisk(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-scan")
+	host := newHost(ctx, t, s, "cond-scan")
 	now := time.Now().UTC()
 
 	if _, err := s.Pool().Exec(ctx,
@@ -405,7 +405,7 @@ func TestIntegrationScanFindsAFullDisk(t *testing.T) {
 // the same percentage has room and must not be flagged.
 func TestIntegrationScanLeavesABigArrayAlone(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-scan-big")
+	host := newHost(ctx, t, s, "cond-scan-big")
 	now := time.Now().UTC()
 
 	if _, err := s.Pool().Exec(ctx,
@@ -445,7 +445,7 @@ func TestIntegrationScanLeavesABigArrayAlone(t *testing.T) {
 // A host nobody has heard from is silent, and its onset is last_seen itself.
 func TestIntegrationScanFindsASilentHost(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-silent")
+	host := newHost(ctx, t, s, "cond-silent")
 	now := time.Now().UTC()
 	quiet := now.Add(-time.Hour)
 
@@ -476,7 +476,7 @@ func TestIntegrationScanFindsASilentHost(t *testing.T) {
 // first.
 func TestIntegrationScanCountsFailedUnitsOncePerHost(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-units")
+	host := newHost(ctx, t, s, "cond-units")
 	now := time.Now().UTC()
 	oldest := now.Add(-6 * time.Hour)
 
@@ -525,7 +525,7 @@ func TestIntegrationScanCountsFailedUnitsOncePerHost(t *testing.T) {
 // on it clear rather than hang open forever.
 func TestIntegrationAHealthyHostIsStillSeen(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-healthy")
+	host := newHost(ctx, t, s, "cond-healthy")
 	now := time.Now().UTC()
 
 	// services_failed = 0 is the host CONFIRMING its units are fine, which is
@@ -563,7 +563,7 @@ func TestIntegrationAHealthyHostIsStillSeen(t *testing.T) {
 // look like a host whose units all recovered.
 func TestIntegrationANullUnitSummaryIsNotAnAllClear(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-units-null")
+	host := newHost(ctx, t, s, "cond-units-null")
 	now := time.Now().UTC()
 
 	if _, err := s.Pool().Exec(ctx,
@@ -594,7 +594,7 @@ func TestIntegrationANullUnitSummaryIsNotAnAllClear(t *testing.T) {
 // "what became critical since T" cannot be asked of the log at all.
 func TestIntegrationGettingWorseUpdatesInPlaceAndWritesOneEvent(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-worse")
+	host := newHost(ctx, t, s, "cond-worse")
 	at := time.Now().UTC().Truncate(time.Second)
 	onset := at.Add(-3 * time.Hour)
 	k := diskKey(host, "root")
@@ -689,7 +689,7 @@ func TestIntegrationGettingWorseUpdatesInPlaceAndWritesOneEvent(t *testing.T) {
 // what keeps a flapping predicate out of the log entirely.
 func TestIntegrationEasingOffAndStandingStillWriteNoEvent(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-easing")
+	host := newHost(ctx, t, s, "cond-easing")
 	at := time.Now().UTC().Truncate(time.Second)
 	k := diskKey(host, "root")
 
@@ -738,7 +738,7 @@ func TestIntegrationEasingOffAndStandingStillWriteNoEvent(t *testing.T) {
 // second ending for one condition.
 func TestIntegrationResolvingTwiceIsIdempotent(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-twice-resolve")
+	host := newHost(ctx, t, s, "cond-twice-resolve")
 	at := time.Now().UTC().Truncate(time.Second)
 	k := diskKey(host, "root")
 
@@ -783,7 +783,7 @@ func TestIntegrationApplyingNothingDoesNothing(t *testing.T) {
 // NULLS NOT DISTINCT expects.
 func TestIntegrationAHostWideConditionHasANullEventSubject(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-hostwide")
+	host := newHost(ctx, t, s, "cond-hostwide")
 	at := time.Now().UTC().Truncate(time.Second)
 	k := conditions.Key{HostID: host, Kind: conditions.KindSilent}
 
@@ -817,7 +817,7 @@ func TestIntegrationAHostWideConditionHasANullEventSubject(t *testing.T) {
 // every five minutes.
 func TestIntegrationFailedUnitsTrustTheSummaryOverTheRows(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-units-summary")
+	host := newHost(ctx, t, s, "cond-units-summary")
 	now := time.Now().UTC()
 
 	// A host heard from, with a summary and no unit rows at all.
@@ -848,7 +848,7 @@ func TestIntegrationFailedUnitsTrustTheSummaryOverTheRows(t *testing.T) {
 // two names contradicts itself.
 func TestIntegrationFailedUnitsNeverNameMoreThanTheCount(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-units-cap")
+	host := newHost(ctx, t, s, "cond-units-cap")
 	now := time.Now().UTC()
 
 	if _, err := s.Pool().Exec(ctx, `
@@ -884,7 +884,7 @@ func TestIntegrationFailedUnitsNeverNameMoreThanTheCount(t *testing.T) {
 // destroying the very thing this table exists to keep.
 func TestIntegrationAWedgedMountIsStillSeen(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-wedged")
+	host := newHost(ctx, t, s, "cond-wedged")
 	now := time.Now().UTC()
 
 	if _, err := s.Pool().Exec(ctx,
@@ -940,7 +940,7 @@ func TestIntegrationAWedgedMountIsStillSeen(t *testing.T) {
 // reader can see, where the alternative is invisible and is a lie.
 func TestIntegrationALongSilentMountIsNeverDeclaredGone(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-gone")
+	host := newHost(ctx, t, s, "cond-gone")
 	now := time.Now().UTC()
 
 	if _, err := s.Pool().Exec(ctx,
@@ -987,7 +987,7 @@ func TestIntegrationALongSilentMountIsNeverDeclaredGone(t *testing.T) {
 // comes up.
 func TestIntegrationANeverSeenHostRaisesNothing(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-unprovisioned")
+	host := newHost(ctx, t, s, "cond-unprovisioned")
 
 	// No host_current row at all, which is exactly what CreateHost leaves.
 	scan, err := s.ScanConditions(ctx, time.Now().UTC(), nil, time.Now().UTC().Add(-24*time.Hour))
@@ -1011,7 +1011,7 @@ func TestIntegrationANeverSeenHostRaisesNothing(t *testing.T) {
 // recorded as having filled up the moment the hub looked.
 func TestIntegrationDiskOnsetIsTheReadingNotTheTick(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-onset")
+	host := newHost(ctx, t, s, "cond-onset")
 	now := time.Now().UTC()
 	reading := now.Add(-2 * time.Minute)
 

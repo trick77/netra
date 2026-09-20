@@ -242,7 +242,7 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 		// serving what it already knows (see 26a42a5: a wedged collector costs
 		// one scrape, not the agent).
 		s.unavailable = true
-		return &Result{}, nil
+		return &Result{}, nil //nolint:nilerr // a scrape the bus refused carries no information: sending an empty-but-complete snapshot would make the hub prune every unit on the host (see 26a42a5)
 	}
 	s.unavailable = false
 
@@ -366,7 +366,7 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	// than forcing a dashboard to count rows in an event table.
 	return &Result{
 		Host: &netrav1.HostSample{
-			ServicesTotal:  ptrTo(uint32(len(units))),
+			ServicesTotal:  ptrTo(uint32(len(units))), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 			ServicesFailed: ptrTo(failed),
 		},
 		SystemdEvents:   events,

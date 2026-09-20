@@ -183,7 +183,7 @@ func (s *Store) UpsertHostCurrent(
 	return nil
 }
 
-// InsertCpuCoreSamples writes one row per CPU core.
+// InsertCPUCoreSamples writes one row per CPU core.
 //
 // Unlike the host families above, these rows carry their own timestamps: a
 // request holds a batch of scrapes, so the rows in it span several instants
@@ -192,7 +192,7 @@ func (s *Store) UpsertHostCurrent(
 // ON CONFLICT DO NOTHING for the same reason InsertHostSamples has it -- a
 // replayed batch re-sends rows the hub already stored, and failing the INSERT
 // would pin the agent's ring buffer on a batch it can never land.
-func (s *Store) InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*netrav1.CpuCoreSample) (int64, error) {
+func (s *Store) InsertCPUCoreSamples(ctx context.Context, hostID int32, rows []*netrav1.CpuCoreSample) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
@@ -209,7 +209,7 @@ func (s *Store) InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*
 		// core genuinely measured at 0%.
 		batch.Queue(stmt, hostID,
 			time.UnixMilli(r.GetTsMs()).UTC(),
-			int32(r.GetCore()),
+			int32(r.GetCore()), //nolint:gosec // a CPU core index, bounded by the core count of the reporting host
 			r.Busy)
 	}
 
@@ -448,7 +448,7 @@ func u64(p *uint64) any {
 	if p == nil {
 		return nil
 	}
-	return int64(*p)
+	return int64(*p) //nolint:gosec // widening a uint64 counter into the bigint column it is stored in
 }
 
 // u32 is the same mapping for the counts stored in INTEGER columns.
@@ -456,7 +456,7 @@ func u32(p *uint32) any {
 	if p == nil {
 		return nil
 	}
-	return int32(*p)
+	return int32(*p) //nolint:gosec // widening a uint32 field into the integer column it is stored in
 }
 
 // IngestIdentity returns what the hub already knows about a host from its last
@@ -567,7 +567,7 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 		md.GetFingerprint(), md.GetHostType(),
 		md.GetAgentVersion(), md.GetGoVersion(), md.GetBuildCommit(),
 		md.GetKernel(), md.GetOsName(), md.GetArch(), md.GetCpuModel(),
-		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()),
+		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()), //nolint:gosec // core and thread counts and a memory total reported by the agent for its own host, all far inside their column types
 		hash, capabilitiesJSON(md.GetCapabilities()),
 		md.GetLocation(), md.GetProvider(), md.GetFacility())
 	if err != nil {

@@ -29,7 +29,7 @@ func SystemStatfs(mountpoint string) (FsStat, error) {
 	}
 
 	// Bsize is the block size the counts below are expressed in.
-	bs := uint64(fs.Bsize)
+	bs := uint64(fs.Bsize) //nolint:gosec // Bsize is a kernel-reported filesystem block size: always positive and a small power of two
 
 	// Free is Bavail, not Bfree: Bfree includes the blocks reserved for root,
 	// which an unprivileged process cannot use. Reporting Bfree as free would
@@ -47,6 +47,6 @@ func SystemStatfs(mountpoint string) (FsStat, error) {
 		Used:        (fs.Blocks - fs.Bfree) * bs,
 		InodesTotal: fs.Files,
 		InodesFree:  fs.Ffree,
-		DeviceID:    uint64(st.Dev),
+		DeviceID:    st.Dev,
 	}, nil
 }

@@ -231,7 +231,7 @@ func ensureTemplateDB(ctx context.Context, dsn string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer admin.Close(ctx)
+	defer func() { _ = admin.Close(ctx) }()
 
 	if _, err := admin.Exec(ctx, `SELECT pg_advisory_lock($1)`, int64(templateBuildLockID)); err != nil {
 		return "", fmt.Errorf("take template build lock: %w", err)
@@ -377,7 +377,7 @@ func adminExec(ctx context.Context, dsn, sql string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	if _, err := conn.Exec(ctx, sql); err != nil {
 		return fmt.Errorf("%s: %w", sql, err)

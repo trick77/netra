@@ -302,7 +302,7 @@ func TestUsersName(t *testing.T) {
 	}
 }
 
-func TestUsersImplementsCapabilityReporter(t *testing.T) {
+func TestUsersImplementsCapabilityReporter(_ *testing.T) {
 	var _ collector.CapabilityReporter = collector.NewUsers(nil, "x")
 }
 

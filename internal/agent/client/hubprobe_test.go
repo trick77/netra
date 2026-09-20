@@ -205,10 +205,10 @@ func TestHubProbeFallsBackToTheSecondAddress(t *testing.T) {
 	dead := "127.0.0.1:1"
 	alive := ln.Addr().String()
 
-	if _, ok := client.HandshakeForTest(c, context.Background(), []string{dead}); ok {
+	if _, ok := client.HandshakeForTest(context.Background(), c, []string{dead}); ok {
 		t.Fatal("a refused address reported a successful handshake")
 	}
-	if _, ok := client.HandshakeForTest(c, context.Background(), []string{dead, alive}); !ok {
+	if _, ok := client.HandshakeForTest(context.Background(), c, []string{dead, alive}); !ok {
 		t.Error("no fallback past a dead first address; a dual-stack host with one family blocked would report a permanent false outage")
 	}
 }

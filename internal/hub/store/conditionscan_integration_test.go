@@ -11,7 +11,7 @@ import (
 
 // seedFilesystem inserts a mount and its current reading, and returns the fs
 // id so a caller can write the samples the onset walk reads.
-func seedFilesystem(t *testing.T, ctx context.Context, s *store.Store,
+func seedFilesystem(ctx context.Context, t *testing.T, s *store.Store,
 	host int32, label, mountpoint string, used, free int64, at time.Time) int32 {
 	t.Helper()
 	var fsID int32
@@ -29,7 +29,7 @@ func seedFilesystem(t *testing.T, ctx context.Context, s *store.Store,
 	return fsID
 }
 
-func seedFilesystemSample(t *testing.T, ctx context.Context, s *store.Store,
+func seedFilesystemSample(ctx context.Context, t *testing.T, s *store.Store,
 	host, fsID int32, at time.Time, used, free int64) {
 	t.Helper()
 	if _, err := s.Pool().Exec(ctx, `
@@ -40,7 +40,7 @@ func seedFilesystemSample(t *testing.T, ctx context.Context, s *store.Store,
 	}
 }
 
-func seedHostCurrent(t *testing.T, ctx context.Context, s *store.Store, host int32, lastSeen time.Time) {
+func seedHostCurrent(ctx context.Context, t *testing.T, s *store.Store, host int32, lastSeen time.Time) {
 	t.Helper()
 	if _, err := s.Pool().Exec(ctx,
 		`INSERT INTO host_current (host_id, last_seen) VALUES ($1, $2)`, host, lastSeen); err != nil {
@@ -57,26 +57,26 @@ const gib = int64(1024) * 1024 * 1024
 // rather than saying it filled the moment netra happened to look.
 func TestIntegrationDiskOnsetIsWalkedBackToTheCrossing(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-onset")
+	host := newHost(ctx, t, s, "cond-onset")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	// 97 GiB used, 3 GiB free: over both halves of the compound rule.
 	full, room := 97*gib, 3*gib
 	// And a reading with plenty of room, which is what ends the walk.
 	empty, space := 40*gib, 60*gib
 
-	fsID := seedFilesystem(t, ctx, s, host, "root", "/", full, room, now)
+	fsID := seedFilesystem(ctx, t, s, host, "root", "/", full, room, now)
 
 	// Six samples a minute apart. The oldest two are healthy; the mount crossed
 	// on the third and has been over the line ever since.
 	crossing := now.Add(-3 * time.Minute)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-5*time.Minute), empty, space)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-4*time.Minute), empty, space)
-	seedFilesystemSample(t, ctx, s, host, fsID, crossing, full, room)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-2*time.Minute), full, room)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-time.Minute), full, room)
-	seedFilesystemSample(t, ctx, s, host, fsID, now, full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-5*time.Minute), empty, space)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-4*time.Minute), empty, space)
+	seedFilesystemSample(ctx, t, s, host, fsID, crossing, full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-2*time.Minute), full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-time.Minute), full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now, full, room)
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
@@ -102,17 +102,17 @@ func TestIntegrationDiskOnsetIsWalkedBackToTheCrossing(t *testing.T) {
 // after it.
 func TestIntegrationDiskOnsetSkipsAGapRatherThanRestarting(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-onset-gap")
+	host := newHost(ctx, t, s, "cond-onset-gap")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	full, room := 97*gib, 3*gib
 	empty, space := 40*gib, 60*gib
-	fsID := seedFilesystem(t, ctx, s, host, "root", "/", full, room, now)
+	fsID := seedFilesystem(ctx, t, s, host, "root", "/", full, room, now)
 
 	crossing := now.Add(-4 * time.Minute)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-5*time.Minute), empty, space)
-	seedFilesystemSample(t, ctx, s, host, fsID, crossing, full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-5*time.Minute), empty, space)
+	seedFilesystemSample(ctx, t, s, host, fsID, crossing, full, room)
 	// The agent was away here: a row with nothing measurable in it.
 	if _, err := s.Pool().Exec(ctx, `
 		INSERT INTO filesystem_samples (host_id, ts, fs_id, total, used, free)
@@ -120,8 +120,8 @@ func TestIntegrationDiskOnsetSkipsAGapRatherThanRestarting(t *testing.T) {
 		host, now.Add(-3*time.Minute), fsID); err != nil {
 		t.Fatalf("gap sample: %v", err)
 	}
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-2*time.Minute), full, room)
-	seedFilesystemSample(t, ctx, s, host, fsID, now, full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-2*time.Minute), full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now, full, room)
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
@@ -141,17 +141,17 @@ func TestIntegrationDiskOnsetSkipsAGapRatherThanRestarting(t *testing.T) {
 // bucket where nothing happened.
 func TestIntegrationDiskOnsetIsAFloorWhenTheWalkRunsOut(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-onset-floor")
+	host := newHost(ctx, t, s, "cond-onset-floor")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	full, room := 97*gib, 3*gib
-	fsID := seedFilesystem(t, ctx, s, host, "root", "/", full, room, now)
+	fsID := seedFilesystem(ctx, t, s, host, "root", "/", full, room, now)
 
 	oldest := now.Add(-3 * time.Minute)
-	seedFilesystemSample(t, ctx, s, host, fsID, oldest, full, room)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-2*time.Minute), full, room)
-	seedFilesystemSample(t, ctx, s, host, fsID, now, full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, oldest, full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-2*time.Minute), full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now, full, room)
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
@@ -174,17 +174,17 @@ func TestIntegrationDiskOnsetIsAFloorWhenTheWalkRunsOut(t *testing.T) {
 // with a worse one every week.
 func TestIntegrationDiskOnsetIsNotWalkedForAnAlreadyOpenCondition(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-onset-open")
+	host := newHost(ctx, t, s, "cond-onset-open")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	full, room := 97*gib, 3*gib
 	empty, space := 40*gib, 60*gib
 	readingTS := now
-	fsID := seedFilesystem(t, ctx, s, host, "root", "/", full, room, readingTS)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-5*time.Minute), empty, space)
-	seedFilesystemSample(t, ctx, s, host, fsID, now.Add(-4*time.Minute), full, room)
-	seedFilesystemSample(t, ctx, s, host, fsID, now, full, room)
+	fsID := seedFilesystem(ctx, t, s, host, "root", "/", full, room, readingTS)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-5*time.Minute), empty, space)
+	seedFilesystemSample(ctx, t, s, host, fsID, now.Add(-4*time.Minute), full, room)
+	seedFilesystemSample(ctx, t, s, host, fsID, now, full, room)
 
 	k := diskKey(host, "root")
 	scan, err := s.ScanConditions(ctx, now, map[conditions.Key]bool{k: true}, hubUp)
@@ -207,9 +207,9 @@ func TestIntegrationDiskOnsetIsNotWalkedForAnAlreadyOpenCondition(t *testing.T) 
 // sporadic: a host that answers now but keeps dropping scrapes.
 func TestIntegrationScanFindsASporadicHost(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-sporadic")
+	host := newHost(ctx, t, s, "cond-sporadic")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	// Thirty minutes of scrapes with six missing: a fifth of the span, which is
 	// exactly the ratio.
@@ -253,9 +253,9 @@ func TestIntegrationScanFindsASporadicHost(t *testing.T) {
 // sporadic condition on it clear rather than hang.
 func TestIntegrationScanJudgesACleanHostSporadicallyHealthy(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-clean")
+	host := newHost(ctx, t, s, "cond-clean")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	for i := 29; i >= 0; i-- {
 		if _, err := s.Pool().Exec(ctx,
@@ -286,10 +286,10 @@ func TestIntegrationScanJudgesACleanHostSporadicallyHealthy(t *testing.T) {
 // outage as a recovery from flakiness.
 func TestIntegrationScanLeavesASilentHostUnjudgedForSporadic(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-sporadic-silent")
+	host := newHost(ctx, t, s, "cond-sporadic-silent")
 	now := time.Now().UTC().Truncate(time.Minute)
 	// Last heard from an hour ago: well past StaleAfter.
-	seedHostCurrent(t, ctx, s, host, now.Add(-time.Hour))
+	seedHostCurrent(ctx, t, s, host, now.Add(-time.Hour))
 
 	for i := 90; i >= 60; i-- {
 		if _, err := s.Pool().Exec(ctx,
@@ -327,9 +327,9 @@ func TestIntegrationScanLeavesASilentHostUnjudgedForSporadic(t *testing.T) {
 // window is three hours wide, so the hole outlives any warm-up.
 func TestIntegrationSporadicIsNotJudgedOverTheHubsOwnDowntime(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-hub-restart")
+	host := newHost(ctx, t, s, "cond-hub-restart")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	// The shape a hub restart actually leaves: samples on BOTH sides of the
 	// hole. The hub was ingesting until it went down two hours ago, and has
@@ -385,9 +385,9 @@ func TestIntegrationSporadicIsNotJudgedOverTheHubsOwnDowntime(t *testing.T) {
 // opens gradually rather than switching on.
 func TestIntegrationSporadicDeclinesToJudgeAFreshlyStartedHub(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-fresh-hub")
+	host := newHost(ctx, t, s, "cond-fresh-hub")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	// Two buckets since the hub came up, one of them missed.
 	for _, offset := range []time.Duration{2 * time.Minute, 0} {
@@ -418,12 +418,12 @@ func TestIntegrationSporadicDeclinesToJudgeAFreshlyStartedHub(t *testing.T) {
 // permanently, and the row would then print "over 1 m".
 func TestIntegrationAFailedOnsetWalkDefersRatherThanFabricating(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-onset-fail")
+	host := newHost(ctx, t, s, "cond-onset-fail")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	full, room := 97*gib, 3*gib
-	seedFilesystem(t, ctx, s, host, "root", "/", full, room, now)
+	seedFilesystem(ctx, t, s, host, "root", "/", full, room, now)
 
 	// The walk reads filesystem_samples. Dropping it is the bluntest way to
 	// make exactly that query fail while everything else this pass does still
@@ -456,9 +456,9 @@ func TestIntegrationAFailedOnsetWalkDefersRatherThanFabricating(t *testing.T) {
 // it reports cleanly.
 func TestIntegrationScanLeavesAHostWithNoSamplesUnjudgedForSporadic(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-sporadic-quiet")
+	host := newHost(ctx, t, s, "cond-sporadic-quiet")
 	now := time.Now().UTC().Truncate(time.Minute)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
@@ -470,7 +470,7 @@ func TestIntegrationScanLeavesAHostWithNoSamplesUnjudgedForSporadic(t *testing.T
 	}
 }
 
-func seedDrive(t *testing.T, ctx context.Context, s *store.Store,
+func seedDrive(ctx context.Context, t *testing.T, s *store.Store,
 	host int32, device string, lastSeen time.Time, attrs map[int16]int64) {
 	t.Helper()
 	var devID int32
@@ -492,18 +492,18 @@ func seedDrive(t *testing.T, ctx context.Context, s *store.Store,
 // used.
 func TestIntegrationScanFindsAFailingDrive(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-drive")
+	host := newHost(ctx, t, s, "cond-drive")
 	now := time.Now().UTC().Truncate(time.Second)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
-	seedDrive(t, ctx, s, host, "sda", now, map[int16]int64{
+	seedDrive(ctx, t, s, host, "sda", now, map[int16]int64{
 		conditions.ATACurrentPending:     2,
 		conditions.ATAReallocatedSectors: 12,
 		// A warning, which must not escalate on its own.
 		conditions.ATACRCErrors: 5,
 	})
 	// A healthy drive on the same host, to prove the subject is the device.
-	seedDrive(t, ctx, s, host, "sdb", now, map[int16]int64{
+	seedDrive(ctx, t, s, host, "sdb", now, map[int16]int64{
 		conditions.ATAReallocatedSectors: 0,
 	})
 
@@ -548,11 +548,11 @@ func TestIntegrationScanFindsAFailingDrive(t *testing.T) {
 // should resolve one as vanished.
 func TestIntegrationScanLeavesAnUnreadDriveUnjudged(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-drive-stale")
+	host := newHost(ctx, t, s, "cond-drive-stale")
 	now := time.Now().UTC().Truncate(time.Second)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
-	seedDrive(t, ctx, s, host, "sda", now.Add(-conditions.DriveStaleAfter-time.Hour),
+	seedDrive(ctx, t, s, host, "sda", now.Add(-conditions.DriveStaleAfter-time.Hour),
 		map[int16]int64{conditions.ATACurrentPending: 2})
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
@@ -575,11 +575,11 @@ func TestIntegrationScanLeavesAnUnreadDriveUnjudged(t *testing.T) {
 // reading a null failed-unit count as zero.
 func TestIntegrationScanLeavesADriveWithNoAttributesUnjudged(t *testing.T) {
 	ctx, s := condCtx(t)
-	host := newHost(t, ctx, s, "cond-drive-bare")
+	host := newHost(ctx, t, s, "cond-drive-bare")
 	now := time.Now().UTC().Truncate(time.Second)
-	seedHostCurrent(t, ctx, s, host, now)
+	seedHostCurrent(ctx, t, s, host, now)
 
-	seedDrive(t, ctx, s, host, "sda", now, nil)
+	seedDrive(ctx, t, s, host, "sda", now, nil)
 
 	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {

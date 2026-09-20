@@ -100,7 +100,7 @@ func (v *VMStat) Collect(_ context.Context) (*Result, error) {
 // read parses the "key value" lines of /proc/vmstat.
 func (v *VMStat) read() (vmCounters, error) {
 	path := filepath.Join(v.procRoot, "vmstat")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return vmCounters{}, fmt.Errorf("open %s: %w", path, err)
 	}

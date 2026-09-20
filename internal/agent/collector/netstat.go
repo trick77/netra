@@ -83,7 +83,7 @@ func (n *Netstat) Collect(_ context.Context) (*Result, error) {
 
 	// CurrEstab is a gauge, so it is reported on the first scrape too.
 	if v, ok := cur["Tcp.CurrEstab"]; ok {
-		e := uint32(v)
+		e := uint32(v) //nolint:gosec // a gauge bounded far below 2^32 (process/connection counts)
 		sample.TcpCurrEstab = &e
 	}
 
@@ -263,7 +263,7 @@ func (n *Netstat) Collect(_ context.Context) (*Result, error) {
 // skipped rather than mis-zipped, because aligning them by guesswork would
 // silently attribute one counter's value to a different counter.
 func (n *Netstat) readPaired(path string, out map[string]uint64) error {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -316,7 +316,7 @@ func (n *Netstat) readPaired(path string, out map[string]uint64) error {
 // are stored under a synthetic "Snmp6." family because the names there are
 // already self-prefixed (Udp6InErrors, Ip6ReasmFails).
 func (n *Netstat) readFlat(path string, out map[string]uint64) error {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil

@@ -104,7 +104,7 @@ func rpi5() *Profile {
 		// rendered as "healthy" would ship unnoticed.
 		Containers: []ContainerSpec{
 			{Key: "netra/agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 1.1, MemBase: 38 * mib},
-			{Key: "home/mosquitto", Name: "home-mosquitto-1", Image: "eclipse-mosquitto:2", MemLimit: 256 * mib, CPUBase: 0.6, MemBase: 21 * mib},
+			{Key: "home/mosquitto", Name: "home-mosquitto-1", Image: "eclipse-mosquitto:2", MemLimit: 256 * mib, CPUBase: 0.6, MemBase: 21 * mib}, //nolint:misspell // Mosquitto is the MQTT broker's actual name, matching the eclipse-mosquitto image, not a misspelling of the insect
 			{Key: "home/zigbee2mqtt", Name: "home-zigbee2mqtt-1", Image: "koenkk/zigbee2mqtt:latest", MemLimit: 512 * mib, CPUBase: 3.4, MemBase: 174 * mib},
 		},
 		Units: []string{

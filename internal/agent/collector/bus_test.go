@@ -50,7 +50,7 @@ func (h *busHarness) call(c *fakeConn) (int, error) {
 	return c.id, nil
 }
 
-func run(t *testing.T, ctx context.Context, b *heldBus[*fakeConn], h *busHarness) (int, error) {
+func run(ctx context.Context, t *testing.T, b *heldBus[*fakeConn], h *busHarness) (int, error) {
 	t.Helper()
 	return callBus(ctx, b, h.dial, h.close, h.call)
 }
@@ -62,10 +62,10 @@ func TestCallBusReusesTheHeldConnection(t *testing.T) {
 	h := &busHarness{}
 
 	// When it is called twice, as two scrapes would.
-	if _, err := run(t, t.Context(), &b, h); err != nil {
+	if _, err := run(t.Context(), t, &b, h); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
-	if _, err := run(t, t.Context(), &b, h); err != nil {
+	if _, err := run(t.Context(), t, &b, h); err != nil {
 		t.Fatalf("second call: %v", err)
 	}
 
@@ -86,13 +86,13 @@ func TestCallBusRedialsOnceWhenTheHeldConnectionWentStale(t *testing.T) {
 	// Given a held connection whose next call fails.
 	var b heldBus[*fakeConn]
 	h := &busHarness{}
-	if _, err := run(t, t.Context(), &b, h); err != nil {
+	if _, err := run(t.Context(), t, &b, h); err != nil {
 		t.Fatalf("priming call: %v", err)
 	}
 	h.results = []error{errors.New("connection closed by peer")}
 
 	// When the collector calls again.
-	got, err := run(t, t.Context(), &b, h)
+	got, err := run(t.Context(), t, &b, h)
 
 	// Then it redialled and answered within the same call.
 	if err != nil {
@@ -120,7 +120,7 @@ func TestCallBusDoesNotRetryOnAConnectionItJustDialled(t *testing.T) {
 	h := &busHarness{results: []error{errors.New("logind is not running")}}
 
 	// When called with nothing held.
-	_, err := run(t, t.Context(), &b, h)
+	_, err := run(t.Context(), t, &b, h)
 
 	// Then it dialled once, called once, and reported that failure.
 	if err == nil || err.Error() != "logind is not running" {
@@ -141,14 +141,14 @@ func TestCallBusGivesUpAfterTheRedialAndHoldsNothing(t *testing.T) {
 	// Given a held connection, and a bus that then fails every call.
 	var b heldBus[*fakeConn]
 	h := &busHarness{}
-	if _, err := run(t, t.Context(), &b, h); err != nil {
+	if _, err := run(t.Context(), t, &b, h); err != nil {
 		t.Fatalf("priming call: %v", err)
 	}
 	h.results = []error{errors.New("first"), errors.New("second")}
 	h.attempts = nil // the priming call is setup, not part of what is measured
 
 	// When called.
-	_, err := run(t, t.Context(), &b, h)
+	_, err := run(t.Context(), t, &b, h)
 
 	// Then it tried exactly twice and reported the last failure.
 	if err == nil || err.Error() != "second" {
@@ -173,7 +173,7 @@ func TestCallBusKeepsTheConnectionWhenTheContextExpired(t *testing.T) {
 	// Given a held connection and a cancelled scrape.
 	var b heldBus[*fakeConn]
 	h := &busHarness{}
-	if _, err := run(t, t.Context(), &b, h); err != nil {
+	if _, err := run(t.Context(), t, &b, h); err != nil {
 		t.Fatalf("priming call: %v", err)
 	}
 	h.results = []error{context.DeadlineExceeded}
@@ -181,7 +181,7 @@ func TestCallBusKeepsTheConnectionWhenTheContextExpired(t *testing.T) {
 	cancel()
 
 	// When the call fails under it.
-	if _, err := run(t, ctx, &b, h); err == nil {
+	if _, err := run(ctx, t, &b, h); err == nil {
 		t.Fatal("err = nil, want the cancelled call to fail")
 	}
 
@@ -202,7 +202,7 @@ func TestCallBusDoesNotRetryAFailedDial(t *testing.T) {
 	h := &busHarness{dialErr: errors.New("no such file or directory")}
 
 	// When called.
-	_, err := run(t, t.Context(), &b, h)
+	_, err := run(t.Context(), t, &b, h)
 
 	// Then it reports the dial failure without calling anything.
 	if err == nil {

@@ -33,7 +33,7 @@ func (l *Load) Collect(_ context.Context) (*Result, error) {
 	sample := &netrav1.HostSample{}
 
 	path := filepath.Join(l.procRoot, "loadavg")
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

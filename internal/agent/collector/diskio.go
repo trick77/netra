@@ -214,7 +214,7 @@ func reportable(name string) bool {
 // read parses /proc/diskstats into per-device counters.
 func (d *DiskIO) read() (map[string]diskCounters, error) {
 	path := filepath.Join(d.procRoot, "diskstats")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}

@@ -555,7 +555,7 @@ func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) 
 	}
 
 	data, err := deadlined(ctx, s.readTimeout, func() ([]byte, error) {
-		return os.ReadFile(path)
+		return os.ReadFile(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
 		s.markWedged(path)

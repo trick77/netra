@@ -34,7 +34,7 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 			rel := fam.relation(spec)
 
 			t.Run(name+"/"+spec.name+"/retention", func(t *testing.T) {
-				assertPolicyInterval(t, ctx, s.Pool(),
+				assertPolicyInterval(ctx, t, s.Pool(),
 					"policy_retention", rel, "drop_after", spec.retention)
 			})
 
@@ -42,7 +42,7 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 			// materialise, which is exactly why their lag is zero.
 			if spec.lag == 0 {
 				t.Run(name+"/"+spec.name+"/has no refresh policy", func(t *testing.T) {
-					if n := countPolicies(t, ctx, s.Pool(),
+					if n := countPolicies(ctx, t, s.Pool(),
 						"policy_refresh_continuous_aggregate", rel); n != 0 {
 						t.Errorf("%s has %d refresh policies but tier.go gives it no lag; "+
 							"a relation that materialises is one whose live tail this table "+
@@ -53,7 +53,7 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 			}
 
 			t.Run(name+"/"+spec.name+"/lag", func(t *testing.T) {
-				assertPolicyInterval(t, ctx, s.Pool(),
+				assertPolicyInterval(ctx, t, s.Pool(),
 					"policy_refresh_continuous_aggregate", rel, "end_offset", spec.lag)
 			})
 
@@ -66,7 +66,7 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 			// query on the tier scan further back -- fails here instead of
 			// only showing up as a slow page.
 			t.Run(name+"/"+spec.name+"/refresh schedule", func(t *testing.T) {
-				assertScheduleInterval(t, ctx, s.Pool(), rel, spec.refreshEvery)
+				assertScheduleInterval(ctx, t, s.Pool(), rel, spec.refreshEvery)
 			})
 		}
 	}
@@ -217,7 +217,7 @@ func TestIntegrationEveryAggregateIsRealTime(t *testing.T) {
 	}
 }
 
-func assertPolicyInterval(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
+func assertPolicyInterval(ctx context.Context, t *testing.T, pool *pgxpool.Pool,
 	procName, relation, key string, want time.Duration,
 ) {
 	t.Helper()
@@ -239,7 +239,7 @@ func assertPolicyInterval(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 // inside its config JSON the way end_offset is -- reading it through
 // assertPolicyInterval above returns NULL and fails on the scan rather than on
 // the comparison, which says nothing useful about the schema.
-func assertScheduleInterval(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
+func assertScheduleInterval(ctx context.Context, t *testing.T, pool *pgxpool.Pool,
 	relation string, want time.Duration,
 ) {
 	t.Helper()
@@ -258,7 +258,7 @@ func assertScheduleInterval(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	}
 }
 
-func countPolicies(t *testing.T, ctx context.Context, pool *pgxpool.Pool, procName, relation string) int {
+func countPolicies(ctx context.Context, t *testing.T, pool *pgxpool.Pool, procName, relation string) int {
 	t.Helper()
 
 	var n int

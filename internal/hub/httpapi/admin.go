@@ -194,6 +194,6 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func (h *adminHandler) config(w http.ResponseWriter, r *http.Request) {
+func (h *adminHandler) config(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"hub_url": h.hubURL})
 }

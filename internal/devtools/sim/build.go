@@ -291,12 +291,12 @@ func (g *Generator) hostSample(ts time.Time, cpu float64) *netrav1.HostSample {
 	h.Load15 = proto.Float64(round2(g.loadOver(ts, 15*time.Minute) / 100 * threads * 1.15))
 
 	h.UptimeS = proto.Uint64(uint64(ts.Sub(g.boot).Seconds()))
-	h.BootTimeS = proto.Uint64(uint64(g.boot.Unix()))
+	h.BootTimeS = proto.Uint64(uint64(g.boot.Unix())) //nolint:gosec // a Unix timestamp from the simulator's own clock, always positive
 
 	h.CtxtPerS = proto.Float64(round2(g.sig.daily("ctxt", ts, 1400*threads, 0.6, 0.2) * (0.3 + cpu/60)))
 	h.IntrPerS = proto.Float64(round2(g.sig.daily("intr", ts, 900*threads, 0.5, 0.2) * (0.3 + cpu/60)))
 	h.ForksPerS = proto.Float64(round2(g.sig.daily("forks", ts, 3.5, 0.8, 0.5)))
-	h.ProcsRunning = proto.Uint32(uint32(1 + int(cpu/100*threads)))
+	h.ProcsRunning = proto.Uint32(uint32(1 + int(cpu/100*threads))) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 	h.ProcsBlocked = proto.Uint32(uint32(g.sig.unit("blocked", ts) * 3))
 
 	// processes_total is unset -- never 0 -- on a host whose agent is in a
@@ -312,7 +312,7 @@ func (g *Generator) hostSample(ts time.Time, cpu float64) *netrav1.HostSample {
 		h.UsersLoggedIn = proto.Uint32(uint32(g.sig.unit("users", ts) * 3))
 	}
 	if p.Capabilities["systemd"] != "unavailable" && len(p.Units) > 0 {
-		h.ServicesTotal = proto.Uint32(uint32(len(p.Units)))
+		h.ServicesTotal = proto.Uint32(uint32(len(p.Units))) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 		h.ServicesFailed = proto.Uint32(g.sched.failedUnits(ts))
 	}
 
@@ -1031,7 +1031,7 @@ func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 		}
 
 		add(9, d.PowerOnHours+hoursIn, 98)
-		add(194, int64(temp), uint32(120-int(temp)))
+		add(194, int64(temp), uint32(120-int(temp))) //nolint:gosec // a simulated SMART normalized value, a single byte by the ATA spec
 		add(1, int64(g.sig.unit(key+"/rre", ts.Truncate(time.Hour))*40), 100)
 
 		reallocated := int64(0)
@@ -1050,7 +1050,7 @@ func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 			// Wear levelling: normalized counts DOWN from 100 as the drive
 			// is written, which is the opposite direction to every other
 			// attribute here and the usual source of an inverted chart.
-			add(233, int64(float64(d.PowerOnHours+hoursIn)*3.4), uint32(100-int(progress*3)))
+			add(233, int64(float64(d.PowerOnHours+hoursIn)*3.4), uint32(100-int(progress*3))) //nolint:gosec // a simulated SMART normalized value, a single byte by the ATA spec
 			add(241, int64(float64(d.PowerOnHours+hoursIn)*1.9e6), 100)
 		}
 	}
@@ -1190,7 +1190,7 @@ func simMAC(iface string, oui byte) string {
 		h = (h ^ uint32(iface[i])) * 16777619
 	}
 	return fmt.Sprintf("%02x:00:00:%02x:%02x:%02x",
-		oui, byte(h>>16), byte(h>>8), byte(h))
+		oui, byte(h>>16), byte(h>>8), byte(h)) //nolint:gosec // building a MAC address from bytes of a hash, masked to a byte each
 }
 
 // packages renders the inventory AS OF ts: the profile's static set, with the

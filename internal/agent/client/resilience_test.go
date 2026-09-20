@@ -46,7 +46,7 @@ func (panickingCollector) Name() string { return "panicking" }
 func (panickingCollector) Collect(context.Context) (*collector.Result, error) {
 	var rows []int
 	// Index out of range: the exact shape of the bug this guard exists for.
-	_ = rows[3]
+	_ = rows[3] //nolint:govet // the out-of-range index is deliberate: this fixture panics on purpose to exercise the collector panic guard
 	return nil, nil
 }
 

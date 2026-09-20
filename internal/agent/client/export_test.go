@@ -62,7 +62,7 @@ func (c *Client) SetResolverForTest(r *net.Resolver) { c.resolver = r }
 
 // HandshakeForTest exposes one timed connect over a candidate address list,
 // so the multi-address fallback can be driven without a DNS server.
-func HandshakeForTest(c *Client, ctx context.Context, addrs []string) (time.Duration, bool) {
+func HandshakeForTest(ctx context.Context, c *Client, addrs []string) (time.Duration, bool) {
 	return c.handshake(ctx, addrs)
 }
 

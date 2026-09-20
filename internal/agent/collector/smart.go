@@ -48,7 +48,7 @@ const smartctlWaitDelay = 2 * time.Second
 // the case netra exists to notice. Failing on those would blind the collector
 // to failing drives.
 func SystemSmartctl(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "smartctl", args...)
+	cmd := exec.CommandContext(ctx, "smartctl", args...) //nolint:gosec // argv with no shell: a literal binary name and collector-built arguments
 	cmd.WaitDelay = smartctlWaitDelay
 
 	out, err := cmd.Output()
@@ -527,13 +527,13 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	raw, err := s.run(ctx, "--json", "--scan")
 	if err != nil {
 		s.fail()
-		return &Result{}, nil
+		return &Result{}, nil //nolint:nilerr // a transient smartctl --scan failure must not cost a full interval of SMART data; s.fail() records it and the next scrape retries
 	}
 
 	var scan smartctlScan
 	if err := json.Unmarshal(raw, &scan); err != nil {
 		s.fail()
-		return &Result{}, nil
+		return &Result{}, nil //nolint:nilerr // unparseable smartctl JSON is recorded by s.fail() and retried on the next scrape rather than failing the whole scrape
 	}
 
 	s.lastRun, s.hasRun = s.now(), true
@@ -620,9 +620,9 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 				Device:     name,
 				Model:      d.ModelName,
 				Serial:     d.SerialNumber,
-				AttrId:     uint32(attr.ID),
+				AttrId:     uint32(attr.ID), //nolint:gosec // SMART attribute ids and normalized values are single bytes by the ATA spec, so they fit the smallint column
 				Raw:        ptrTo(attr.Raw.Value),
-				Normalized: ptrTo(uint32(attr.Value)),
+				Normalized: ptrTo(uint32(attr.Value)), //nolint:gosec // SMART attribute ids and normalized values are single bytes by the ATA spec, so they fit the smallint column
 				SizeBytes:  d.sizeBytes(),
 			})
 		}

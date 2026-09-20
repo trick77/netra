@@ -74,25 +74,6 @@ func doAdmin(t *testing.T, srv *httptest.Server, method, path, body string) *htt
 	return resp
 }
 
-// postForm submits a urlencoded form to the UI, authenticated.
-func postForm(t *testing.T, srv *httptest.Server, path string, form url.Values) *http.Response {
-	t.Helper()
-
-	req, err := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(form.Encode()))
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Authorization", "Bearer "+testAdminToken)
-
-	resp, err := noRedirectClient(srv).Do(req)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	return resp
-}
-
 // postFormUnauthenticated submits a form with no credential, for the login
 // and redirect paths.
 func postFormUnauthenticated(t *testing.T, srv *httptest.Server, path string, form url.Values) *http.Response {

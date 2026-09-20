@@ -52,12 +52,6 @@ func (f *fakeStore) FoldSamples(context.Context) error {
 	return f.foldErr
 }
 
-func (f *fakeStore) foldCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.folds
-}
-
 func (f *fakeStore) OpenConditions(context.Context) ([]conditions.Open, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -252,10 +246,7 @@ func TestRunKeepsTickingAfterAFailedPass(t *testing.T) {
 	}()
 
 	deadline := time.After(2 * time.Second)
-	for {
-		if store.passCount() >= 3 {
-			break
-		}
+	for store.passCount() < 3 {
 		select {
 		case <-deadline:
 			cancel()
