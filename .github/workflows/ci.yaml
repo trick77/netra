@@ -25,8 +25,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      # Pinned: v2.11 runs a G706 log-injection check that v2.13 dropped, so an
-      # unpinned bump makes the repo pass locally and fail here.
+      # Pinned so CI runs the same version developers run locally. The family
+      # moved off v2.11 because its G706 log-injection check went red here on
+      # findings that did not reproduce locally; the linter version is a
+      # free-form input, so Dependabot cannot keep this honest.
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13
