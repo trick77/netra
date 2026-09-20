@@ -15,6 +15,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Pinned: v2.11 runs a G706 log-injection check that v2.13 dropped, so an
+      # unpinned bump makes the repo pass locally and fail here.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13
+
   build:
     name: Build and vet
     runs-on: ubuntu-latest
