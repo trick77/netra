@@ -209,7 +209,7 @@ func (s *Store) InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*
 		// core genuinely measured at 0%.
 		batch.Queue(stmt, hostID,
 			time.UnixMilli(r.GetTsMs()).UTC(),
-			int32(r.GetCore()),
+			int32(r.GetCore()), //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 			r.Busy)
 	}
 
@@ -448,7 +448,7 @@ func u64(p *uint64) any {
 	if p == nil {
 		return nil
 	}
-	return int64(*p)
+	return int64(*p) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 }
 
 // u32 is the same mapping for the counts stored in INTEGER columns.
@@ -456,7 +456,7 @@ func u32(p *uint32) any {
 	if p == nil {
 		return nil
 	}
-	return int32(*p)
+	return int32(*p) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 }
 
 // IngestIdentity returns what the hub already knows about a host from its last
@@ -567,7 +567,7 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 		md.GetFingerprint(), md.GetHostType(),
 		md.GetAgentVersion(), md.GetGoVersion(), md.GetBuildCommit(),
 		md.GetKernel(), md.GetOsName(), md.GetArch(), md.GetCpuModel(),
-		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()),
+		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()), //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 		hash, capabilitiesJSON(md.GetCapabilities()),
 		md.GetLocation(), md.GetProvider(), md.GetFacility())
 	if err != nil {

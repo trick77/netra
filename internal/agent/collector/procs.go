@@ -193,7 +193,7 @@ func (p *Procs) judgeNamespace() (verdict, settled bool) {
 }
 
 func (p *Procs) readComm(pid string) (string, bool) {
-	raw, err := os.ReadFile(filepath.Join(p.procRoot, pid, "comm"))
+	raw, err := os.ReadFile(filepath.Join(p.procRoot, pid, "comm")) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return "", false
 	}

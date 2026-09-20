@@ -191,7 +191,7 @@ func (u *Users) Collect(ctx context.Context) (*Result, error) {
 	if u.sessions != nil {
 		if count, err := u.sessions(ctx); err == nil {
 			u.setCapability(usersCapOK, usersSourceLogind)
-			n := uint32(count)
+			n := uint32(count) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 			sample.UsersLoggedIn = &n
 			return &Result{Host: sample}, nil
 		}
@@ -223,7 +223,7 @@ func (u *Users) Collect(ctx context.Context) (*Result, error) {
 	}
 
 	u.setCapability(usersCapOK, usersSourceUtmp)
-	n := uint32(count)
+	n := uint32(count) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 	sample.UsersLoggedIn = &n
 
 	return &Result{Host: sample}, nil

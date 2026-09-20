@@ -141,7 +141,7 @@ func SystemIfaces() ([]Iface, error) {
 // unreadable, reads as empty -- the same treatment ifaceAlias gives a missing
 // alias, and for the same reason: a virtual device simply has fewer files.
 func ifaceAttr(name, attr string) string {
-	raw, err := os.ReadFile(filepath.Join(sysClassNet, name, attr))
+	raw, err := os.ReadFile(filepath.Join(sysClassNet, name, attr)) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return ""
 	}
@@ -185,7 +185,7 @@ func ifaceDuplex(name string) string {
 // Zero is not a valid MTU, so it reads as absent rather than as a measurement.
 func ifaceMTU(name string, fromNet int) *uint32 {
 	if fromNet > 0 {
-		v := uint32(fromNet)
+		v := uint32(fromNet) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 		return &v
 	}
 	text := ifaceAttr(name, "mtu")
@@ -231,7 +231,7 @@ func ifacePhysical(name string) *bool {
 // ifaceAlias returns the interface alias, the Linux equivalent of SNMP's
 // ifAlias. Absent on most interfaces, which reads as empty.
 func ifaceAlias(name string) string {
-	raw, err := os.ReadFile(filepath.Join(sysClassNet, name, "ifalias"))
+	raw, err := os.ReadFile(filepath.Join(sysClassNet, name, "ifalias")) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return ""
 	}
@@ -312,7 +312,7 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 		// looking for. In an address-keyed table they appear nowhere at all.
 		links = append(links, &netrav1.HostInterface{
 			Iface:       i.Name,
-			IfIndex:     ptrTo(uint32(i.Index)),
+			IfIndex:     ptrTo(uint32(i.Index)), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 			OperState:   i.OperState,
 			SpeedMbps:   i.SpeedMbps,
 			Duplex:      i.Duplex,
@@ -339,7 +339,7 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 
 			rows = append(rows, &netrav1.HostAddress{
 				Iface:       i.Name,
-				IfIndex:     ptrTo(uint32(i.Index)),
+				IfIndex:     ptrTo(uint32(i.Index)), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 				Address:     ip.String(),
 				Family:      family,
 				Vrf:         i.VRF,

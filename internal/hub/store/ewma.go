@@ -384,7 +384,7 @@ func (s *Store) saveEWMA(ctx context.Context, kind string,
 	}
 
 	results := s.pool.SendBatch(ctx, batch)
-	defer results.Close()
+	defer func() { _ = results.Close() }()
 	for range queued {
 		if _, err := results.Exec(); err != nil {
 			return fmt.Errorf("upsert state: %w", err)

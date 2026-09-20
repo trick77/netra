@@ -589,7 +589,7 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 				// while the simulator writes realistic figures -- the same panel
 				// reading differently for real and simulated hosts is the exact
 				// divergence this set out to remove.
-				DurationMs: ptr(uint32((colElapsed + 500*time.Microsecond) / time.Millisecond)),
+				DurationMs: ptr(uint32((colElapsed + 500*time.Microsecond) / time.Millisecond)), //nolint:gosec // a measured duration in ms, bounded by the scrape timeout
 				Ok:         err == nil,
 				ErrorCode:  errorCode(err),
 			})
@@ -629,13 +629,13 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 
 	c.refreshCapabilities()
 
-	depth := uint32(c.ring.Depth())
+	depth := uint32(c.ring.Depth()) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 	dropped := c.ring.Dropped()
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 
 	agent := &netrav1.AgentSample{
-		ScrapeDurationMs:   ptr(uint32(elapsed.Milliseconds())),
+		ScrapeDurationMs:   ptr(uint32(elapsed.Milliseconds())), //nolint:gosec // a measured duration in ms, bounded by the scrape timeout
 		BufferDepth:        &depth,
 		BufferDroppedTotal: &dropped,
 		// The AGENT's uptime, not the host's -- see the startedAt field.
@@ -644,14 +644,14 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 		// operator sees in ps and what makes the agent a bad tenant, whereas
 		// Alloc is Go's live heap and understates the footprint.
 		RssBytes:          ptr(mem.Sys),
-		Goroutines:        ptr(uint32(runtime.NumGoroutine())),
+		Goroutines:        ptr(uint32(runtime.NumGoroutine())), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 		PostFailuresTotal: ptr(c.postFailures),
 	}
 	// Only carried when the last post actually succeeded. Reusing a stale
 	// value would report a healthy RTT throughout an outage, and zeroing it
 	// would report an impossibly fast one; both are worse than saying nothing.
 	if c.lastPostLatency != nil {
-		agent.PostLatencyMs = ptr(uint32(c.lastPostLatency.Milliseconds()))
+		agent.PostLatencyMs = ptr(uint32(c.lastPostLatency.Milliseconds())) //nolint:gosec // a measured duration in ms, bounded by the scrape timeout
 	}
 
 	// The handshake probe runs HERE rather than around the post, which is why
@@ -913,7 +913,7 @@ func (c *Client) Flush(ctx context.Context) error {
 			// Counted before the dump, because after it there is nothing left
 			// to count. These are scrapes no retry will ever deliver, which is
 			// the difference between this and an ordinary outage.
-			c.outage.discarded += uint64(c.ring.Depth())
+			c.outage.discarded += uint64(c.ring.Depth()) //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 			// Latched, not reported. An event written here would go into the
 			// next scrape and be dumped by the next 401 -- exactly what the
 			// inventory comment below says about a set emitted at this point.
@@ -1323,9 +1323,9 @@ func (c *Client) Run(ctx context.Context) error {
 				// is already struggling. The hub's number is treated as a
 				// floor and the spread above it is kept small (up to 10%), so
 				// the delay still closely tracks what the hub asked for.
-				wait := backoff + time.Duration(rand.Int64N(int64(backoff)))
+				wait := backoff + time.Duration(rand.Int64N(int64(backoff))) //nolint:gosec // retry jitter, not a secret: no security property depends on this value
 				if c.retryAfter > 0 {
-					wait = c.retryAfter + time.Duration(rand.Int64N(int64(c.retryAfter/10)+1))
+					wait = c.retryAfter + time.Duration(rand.Int64N(int64(c.retryAfter/10)+1)) //nolint:gosec // retry jitter, not a secret: no security property depends on this value
 				}
 
 				flushNotBefore = time.Now().Add(wait)

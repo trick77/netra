@@ -124,7 +124,7 @@ func rate(cur, prev *uint64, elapsed float64) *float64 {
 
 func (k *KernelStat) read() (kernelCounters, kernelGauges, error) {
 	path := filepath.Join(k.procRoot, "stat")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return kernelCounters{}, kernelGauges{}, fmt.Errorf("open %s: %w", path, err)
 	}
@@ -160,10 +160,10 @@ func (k *KernelStat) read() (kernelCounters, kernelGauges, error) {
 			c := v
 			counters.processes = &c
 		case "procs_running":
-			n := uint32(v)
+			n := uint32(v) //nolint:gosec // a gauge bounded far below 2^32 (process/connection counts)
 			gauges.procsRunning = &n
 		case "procs_blocked":
-			n := uint32(v)
+			n := uint32(v) //nolint:gosec // a gauge bounded far below 2^32 (process/connection counts)
 			gauges.procsBlocked = &n
 		case "btime":
 			b := v

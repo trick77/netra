@@ -87,7 +87,7 @@ func (c *Client) probeHub(ctx context.Context) hubLatency {
 		// Microseconds. A hub on the same LAN answers in 200-900us, which as
 		// milliseconds truncates to the 0 the schema calls impossible -- and
 		// would make min and max identical, so jitter could never be seen.
-		us := uint32(rtt.Microseconds())
+		us := uint32(rtt.Microseconds()) //nolint:gosec // a measured duration in ms, bounded by the scrape timeout
 		if !out.probed || us < out.minUs {
 			out.minUs = us
 		}

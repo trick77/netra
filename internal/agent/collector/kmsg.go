@@ -352,7 +352,7 @@ func unescapeKmsg(s string) string {
 
 // readUptime returns how long the host has been up, from /proc/uptime.
 func readUptime(procRoot string) (time.Duration, error) {
-	data, err := os.ReadFile(filepath.Join(procRoot, "uptime"))
+	data, err := os.ReadFile(filepath.Join(procRoot, "uptime")) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return 0, err
 	}

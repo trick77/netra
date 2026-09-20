@@ -246,7 +246,7 @@ func (m *Mdraid) read() (map[string]arrayState, error) {
 // A missing attribute is normal -- sync_action does not exist on every level --
 // and must not cost the array its whole state.
 func readSysString(dir, name string) string {
-	data, err := os.ReadFile(filepath.Join(dir, name))
+	data, err := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return ""
 	}

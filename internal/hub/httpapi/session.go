@@ -57,7 +57,8 @@ func sessionKey(adminToken string) []byte {
 // user "3x" would sign identically to expiry 123 and user "x".
 func sign(key []byte, expiry int64, user string) string {
 	m := hmac.New(sha256.New, key)
-	fmt.Fprintf(m, "%d\x00%s", expiry, user)
+	// hash.Hash.Write is documented never to return an error.
+	_, _ = fmt.Fprintf(m, "%d\x00%s", expiry, user)
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
 

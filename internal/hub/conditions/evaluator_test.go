@@ -246,10 +246,7 @@ func TestRunKeepsTickingAfterAFailedPass(t *testing.T) {
 	}()
 
 	deadline := time.After(2 * time.Second)
-	for {
-		if store.passCount() >= 3 {
-			break
-		}
+	for store.passCount() < 3 {
 		select {
 		case <-deadline:
 			cancel()

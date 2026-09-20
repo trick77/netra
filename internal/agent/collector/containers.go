@@ -866,7 +866,7 @@ func isHex(s string) bool {
 }
 
 func readFileString(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return ""
 	}
@@ -908,7 +908,7 @@ func readUint(path string) uint64 {
 // vanish constantly, and the walk that calls this must not lose a whole scrape
 // to a scope that exited between the readdir and the open.
 func lookupKeyedUints(path string, keys ...string) map[string]uint64 {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil
 	}
@@ -948,7 +948,7 @@ func lookupKeyedUints(path string, keys ...string) map[string]uint64 {
 // readIOStat sums rbytes and wbytes across every device in io.stat. A
 // container's I/O is the sum over the devices it touched, not one of them.
 func readIOStat(path string) (rbytes, wbytes uint64) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return 0, 0
 	}
@@ -1184,7 +1184,7 @@ func (c *Containers) readNamespace(path string) (string, error) {
 // cgroup will do: they all share the container's namespaces, which is the
 // only property being used here.
 func firstPID(path string) (string, bool) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return "", false
 	}
@@ -1214,7 +1214,7 @@ func firstPID(path string) (string, bool) {
 // container's only path to the network, and excluding it by prefix would
 // report zero for every container on a bridge.
 func sumNetDev(path string) (rx, tx uint64, ok bool) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return 0, 0, false
 	}

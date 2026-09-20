@@ -1146,7 +1146,7 @@ func (s *Store) resolveDeviceIDs(ctx context.Context, hostID int32, rows []*netr
 		// a capacity the hub already knows.
 		var size *int64
 		if r.SizeBytes != nil {
-			v := int64(r.GetSizeBytes())
+			v := int64(r.GetSizeBytes()) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 			size = &v
 		}
 		id, ok, err := s.resolveOne(ctx, "device", name, `
@@ -1193,10 +1193,10 @@ func (s *Store) InsertSmartAttributes(ctx context.Context, hostID int32, rows []
 		}
 		var normalized *int16
 		if r.Normalized != nil {
-			v := int16(r.GetNormalized())
+			v := int16(r.GetNormalized()) //nolint:gosec // SMART attribute ids and normalized values are single bytes by the ATA spec, so they fit the smallint column
 			normalized = &v
 		}
-		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id, int16(r.GetAttrId()), r.Raw, normalized)
+		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id, int16(r.GetAttrId()), r.Raw, normalized) //nolint:gosec // a measured duration in ms, bounded by the scrape timeout
 	}
 	return execBatch(ctx, s.pool, batch, "smart attribute")
 }
@@ -1238,11 +1238,11 @@ func (s *Store) UpsertHostAddresses(ctx context.Context, hostID int32, rows []*n
 	for _, r := range rows {
 		var ifIndex *int32
 		if r.IfIndex != nil {
-			v := int32(r.GetIfIndex())
+			v := int32(r.GetIfIndex()) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 			ifIndex = &v
 		}
 		batch.Queue(stmt, hostID, r.GetIface(), ifIndex, r.GetAddress(),
-			int16(r.GetFamily()), AddressScope(r.GetAddress()), r.GetVrf(), r.GetDescription())
+			int16(r.GetFamily()), AddressScope(r.GetAddress()), r.GetVrf(), r.GetDescription()) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 	}
 
 	n, err := execBatch(ctx, s.pool, batch, "host address")
@@ -1309,17 +1309,17 @@ func (s *Store) UpsertHostInterfaces(ctx context.Context, hostID int32, rows []*
 	for _, r := range rows {
 		var ifIndex *int32
 		if r.IfIndex != nil {
-			v := int32(r.GetIfIndex())
+			v := int32(r.GetIfIndex()) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 			ifIndex = &v
 		}
 		var speed *int64
 		if r.SpeedMbps != nil {
-			v := int64(r.GetSpeedMbps())
+			v := int64(r.GetSpeedMbps()) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 			speed = &v
 		}
 		var mtu *int32
 		if r.Mtu != nil {
-			v := int32(r.GetMtu())
+			v := int32(r.GetMtu()) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 			mtu = &v
 		}
 		batch.Queue(stmt, hostID, r.GetIface(), ifIndex, r.GetOperState(),
@@ -1570,7 +1570,7 @@ func int64OrNil(v *uint64) *int64 {
 	if v == nil {
 		return nil
 	}
-	n := int64(*v)
+	n := int64(*v) //nolint:gosec // a kernel interface index / link speed / MTU reported by an authenticated agent for its own host; the column type is the storage bound
 	return &n
 }
 

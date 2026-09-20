@@ -213,7 +213,7 @@ func (p *Packages) database() (string, string) {
 }
 
 func (p *Packages) parse(path, format string) (map[string]*netrav1.HostPackage, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}

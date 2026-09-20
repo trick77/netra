@@ -104,7 +104,7 @@ func (p *PerCoreCPU) Collect(_ context.Context) (*Result, error) {
 // bare "cpu" aggregate line that the CPU collector owns.
 func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 	path := filepath.Join(p.procRoot, "stat")
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}

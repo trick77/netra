@@ -366,7 +366,7 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	// than forcing a dashboard to count rows in an event table.
 	return &Result{
 		Host: &netrav1.HostSample{
-			ServicesTotal:  ptrTo(uint32(len(units))),
+			ServicesTotal:  ptrTo(uint32(len(units))), //nolint:gosec // a count or length that cannot be negative and cannot approach 2^32 on any real host
 			ServicesFailed: ptrTo(failed),
 		},
 		SystemdEvents:   events,

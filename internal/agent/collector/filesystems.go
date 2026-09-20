@@ -357,7 +357,7 @@ type mountEntry struct {
 // readMounts parses /proc/mounts, dropping pseudo-filesystems.
 func (f *Filesystems) readMounts() ([]mountEntry, error) {
 	path := filepath.Join(f.procRoot, "mounts")
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
