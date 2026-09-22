@@ -1031,6 +1031,11 @@ func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 		}
 
 		add(9, d.PowerOnHours+hoursIn, 98)
+		// Roughly one power-up per 150 powered-on hours: a rack drive that
+		// gets cycled for the occasional reboot or maintenance window, not a
+		// laptop disk. Derived from the hours rather than carried as its own
+		// DriveSpec field so the archetypes stay a list of real model names.
+		add(12, (d.PowerOnHours+hoursIn)/150, 100)
 		add(194, int64(temp), uint32(120-int(temp))) //nolint:gosec // a simulated SMART normalized value, a single byte by the ATA spec
 		add(1, int64(g.sig.unit(key+"/rre", ts.Truncate(time.Hour))*40), 100)
 

@@ -826,6 +826,7 @@ describe("Drives", () => {
     attributes: [
       { id: 5, raw: 238, normalized: 68 },
       { id: 9, raw: 21_402, normalized: 98 },
+      { id: 12, raw: 142, normalized: 100 },
       { id: 194, raw: 49, normalized: 71 },
       { id: 197, raw: 15, normalized: 68 },
     ],
@@ -841,6 +842,7 @@ describe("Drives", () => {
       { id: 1000, raw: 0, normalized: null },
       { id: 1001, raw: 7, normalized: null },
       { id: 1006, raw: 9400, normalized: null },
+      { id: 1007, raw: 41, normalized: null },
       { id: 1008, raw: 49, normalized: null },
     ],
     last_seen: "2026-08-23T11:00:00Z",
@@ -895,6 +897,38 @@ describe("Drives", () => {
     render(<Drives rows={[ata, nvme]} />);
     // Both report 49 degrees, from attribute 194 and 1008 respectively.
     expect(screen.getAllByText("49 °C")).toHaveLength(2);
+  });
+
+  // 21402 hours is two and a half years, and the column has to say so rather
+  // than print the four-digit counter the drive keeps. The exact figure stays
+  // reachable as the cell's hover.
+  it("prints power-on hours as an age and keeps the raw count on hover", () => {
+    render(<Drives rows={[ata, nvme]} />);
+
+    const spinning = screen.getByRole("row", { name: /sdc/ });
+    const age = within(spinning).getByText("2 y 161 d");
+    // cardinal() groups with a narrow no-break space, not a comma.
+    expect(age).toHaveAttribute("title", "21\u202f402 h");
+
+    // The NVMe drive's hours come from 1006 and read the same way.
+    const solid = screen.getByRole("row", { name: /nvme0n1/ });
+    expect(within(solid).getByText("1 y 26 d")).toBeInTheDocument();
+  });
+
+  // ATA 12 and NVMe 1007, and a dash for the drive that reports neither.
+  it("prints power cycles from either id space and dashes when absent", () => {
+    render(<Drives rows={[ata, nvme, unread]} />);
+
+    expect(
+      within(screen.getByRole("row", { name: /sdc/ })).getByText("142"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("row", { name: /nvme0n1/ })).getByText("41"),
+    ).toBeInTheDocument();
+    // sdz reports nothing at all; the cell states that rather than "0".
+    expect(
+      within(screen.getByRole("row", { name: /sdz/ })).queryByText("0"),
+    ).not.toBeInTheDocument();
   });
 
   // The smart family, keyed by device and attr_id. attr_id is TEXT on the
@@ -1367,6 +1401,7 @@ describe("inventory sorting", () => {
       size_bytes: 16_000_900_661_248,
       attributes: [
         { id: 9, raw: 40_000, normalized: 98 },
+        { id: 12, raw: 266, normalized: 100 },
         { id: 194, raw: 49, normalized: 71 },
         { id: 197, raw: 15, normalized: 68 },
       ],
@@ -1379,6 +1414,7 @@ describe("inventory sorting", () => {
       size_bytes: 4_000_787_030_016,
       attributes: [
         { id: 9, raw: 100, normalized: 99 },
+        { id: 12, raw: 1_024, normalized: 100 },
         { id: 194, raw: 30, normalized: 80 },
       ],
       last_seen: "2026-08-23T11:00:00Z",
@@ -1409,11 +1445,23 @@ describe("inventory sorting", () => {
     });
 
     // The cell prints "4 y" and "4 d"; hours are what separate them.
+    // Anchored, because "Power cycles" sits in the next column over and an
+    // unanchored /power on/i would match neither header unambiguously.
     it("orders Power on by hours and not by the printed duration", async () => {
       render(<Drives rows={[failing, healthy]} />);
-      await userEvent.click(header(/power on/i));
+      await userEvent.click(header(/^power on$/i));
 
       expect(firstCells()[0]).toMatch(/sdb/);
+    });
+
+    // 266 against 1024. cardinal() prints the larger as "1,024", which sorts
+    // FIRST as text -- so a string sort would put sdb at the top and pass for
+    // the wrong reason. Ascending by count puts the 266 there.
+    it("orders Power cycles by count and not by the grouped string", async () => {
+      render(<Drives rows={[failing, healthy]} />);
+      await userEvent.click(header(/power cycles/i));
+
+      expect(firstCells()[0]).toMatch(/sda/);
     });
   });
 

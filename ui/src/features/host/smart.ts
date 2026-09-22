@@ -19,6 +19,7 @@ import type { Severity } from "../../ui/Badge";
 export const ATA = {
   reallocatedSectors: 5,
   powerOnHours: 9,
+  powerCycles: 12,
   reportedUncorrect: 187,
   currentPending: 197,
   offlineUncorrectable: 198,
@@ -452,6 +453,21 @@ export function drivePowerOnHours(drive: Drive): number | null {
   return driveKind(drive) === "nvme"
     ? attr(drive, NVME.powerOnHours)
     : attr(drive, ATA.powerOnHours);
+}
+
+/**
+ * How many times this drive has been powered up.
+ *
+ * Read, not judged. A high count is not a fault on its own -- a laptop disk
+ * cycles every lid close and a server disk that has been up for five years
+ * may sit in double digits -- so this has no threshold and produces no
+ * finding. It is context for the power-on hours beside it: the same 20000
+ * hours reads differently at 40 cycles than at 4000.
+ */
+export function drivePowerCycles(drive: Drive): number | null {
+  return driveKind(drive) === "nvme"
+    ? attr(drive, NVME.powerCycles)
+    : attr(drive, ATA.powerCycles);
 }
 
 /**

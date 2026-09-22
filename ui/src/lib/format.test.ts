@@ -47,6 +47,23 @@ describe("format", () => {
     expect(duration(41)).toBe("41 s");
   });
 
+  // Drive power-on hours are the reason this unit exists: a five-year-old
+  // disk reported 1825 d, and nobody divides that by 365 while scanning a
+  // table. The day is still the unit below it, so "2 y 161 d" keeps the
+  // precision that "2 y" alone would throw away.
+  it("carries durations past a year into years", () => {
+    expect(duration(8760 * 3600)).toBe("1 y");
+    expect(duration(21400 * 3600)).toBe("2 y 161 d");
+    expect(duration(43800 * 3600)).toBe("5 y");
+    expect(duration(96000 * 3600)).toBe("10 y 350 d");
+  });
+
+  // The boundary: a year less an hour is still counted in days, so nothing
+  // under 365 d changed when the unit went in.
+  it("leaves durations under a year in days", () => {
+    expect(duration(365 * 86400 - 3600)).toBe("364 d 23 h");
+  });
+
   it("formats relative times against a fixed now", () => {
     const now = new Date("2026-08-10T14:00:00Z");
     expect(relative("2026-08-10T13:59:19Z", now)).toBe("41 s ago");
