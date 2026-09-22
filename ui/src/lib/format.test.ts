@@ -49,13 +49,21 @@ describe("format", () => {
 
   // Drive power-on hours are the reason this unit exists: a five-year-old
   // disk reported 1825 d, and nobody divides that by 365 while scanning a
-  // table. The day is still the unit below it, so "2 y 161 d" keeps the
-  // precision that "2 y" alone would throw away.
-  it("carries durations past a year into years", () => {
+  // table.
+  //
+  // One unit, not two: past a year the year figure IS the reading, and the
+  // days after it are a remainder nobody acts on. Truncated, so a drive
+  // eleven months into its third year still says two.
+  it("carries durations past a year into years, alone", () => {
     expect(duration(8760 * 3600)).toBe("1 y");
-    expect(duration(21400 * 3600)).toBe("2 y 161 d");
+    expect(duration(21400 * 3600)).toBe("2 y");
     expect(duration(43800 * 3600)).toBe("5 y");
-    expect(duration(96000 * 3600)).toBe("10 y 350 d");
+    expect(duration(96000 * 3600)).toBe("10 y");
+  });
+
+  // The rounding question the one-unit rule raises: 2 y 364 d is not 3 y.
+  it("truncates years rather than rounding up", () => {
+    expect(duration(3 * 365 * 86400 - 3600)).toBe("2 y");
   });
 
   // The boundary: a year less an hour is still counted in days, so nothing

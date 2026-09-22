@@ -899,20 +899,20 @@ describe("Drives", () => {
     expect(screen.getAllByText("49 °C")).toHaveLength(2);
   });
 
-  // 21402 hours is two and a half years, and the column has to say so rather
-  // than print the four-digit counter the drive keeps. The exact figure stays
-  // reachable as the cell's hover.
+  // 21402 hours is two years and change, and the column says "2 y" rather
+  // than printing the four-digit counter the drive keeps. The exact figure
+  // is what the hover is for -- that is the whole bargain of rounding here.
   it("prints power-on hours as an age and keeps the raw count on hover", () => {
     render(<Drives rows={[ata, nvme]} />);
 
     const spinning = screen.getByRole("row", { name: /sdc/ });
-    const age = within(spinning).getByText("2 y 161 d");
+    const age = within(spinning).getByText("2 y");
     // cardinal() groups with a narrow no-break space, not a comma.
     expect(age).toHaveAttribute("title", "21\u202f402 h");
 
     // The NVMe drive's hours come from 1006 and read the same way.
     const solid = screen.getByRole("row", { name: /nvme0n1/ });
-    expect(within(solid).getByText("1 y 26 d")).toBeInTheDocument();
+    expect(within(solid).getByText("1 y")).toBeInTheDocument();
   });
 
   // ATA 12 and NVMe 1007, and a dash for the drive that reports neither.
