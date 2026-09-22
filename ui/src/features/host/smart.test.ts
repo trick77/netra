@@ -6,6 +6,7 @@ import {
   DRIVE_STALE_MS,
   driveAlarms,
   driveFindings,
+  drivePowerCycles,
   drivePowerOnHours,
   driveKind,
   driveSeverity,
@@ -212,6 +213,26 @@ describe("the readings the table prints", () => {
     });
     expect(driveTemperature(nvme)).toBe(52);
     expect(drivePowerOnHours(nvme)).toBe(900);
+  });
+
+  // ATA 12 and NVMe 1007 are the same fact in two id spaces, the way 9 and
+  // 1006 are for the hours beside them.
+  it("takes power cycles from whichever id the drive uses", () => {
+    const ata = drive({ [ATA.powerOnHours]: 21400, [ATA.powerCycles]: 142 });
+    expect(drivePowerCycles(ata)).toBe(142);
+
+    const nvme = drive({
+      [NVME.powerOnHours]: 900,
+      [NVME.powerCycles]: 41,
+    });
+    expect(drivePowerCycles(nvme)).toBe(41);
+  });
+
+  // A drive that reports hours but not cycles is ordinary -- USB bridges and
+  // virtual disks pass through a partial attribute set. Absent, not zero:
+  // "never powered up" is a different claim from "did not say".
+  it("returns null for a drive that does not report cycles", () => {
+    expect(drivePowerCycles(drive({ [ATA.powerOnHours]: 21400 }))).toBeNull();
   });
 
   // The collector stores smartctl's raw field verbatim, and many vendors pack

@@ -217,7 +217,12 @@ export function percent(n: number | null, digits = 0): string {
   return `${round(n, digits)}%`;
 }
 
+// A year is a flat 365 days here, with no leap-day correction. This
+// formatter renders a rounded reading at two units of precision -- "5 y",
+// "2 y 161 d" -- not a calendar date, and at that precision a leap day is
+// already below the resolution of the answer.
 const DURATION_UNITS: Array<[string, number]> = [
+  ["y", 365 * 86400],
   ["d", 86400],
   ["h", 3600],
   ["m", 60],

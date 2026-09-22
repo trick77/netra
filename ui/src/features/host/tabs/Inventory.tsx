@@ -19,12 +19,14 @@ import {
   ABSENT,
   byterate,
   bytes,
+  cardinal,
   duration,
   percent,
 } from "../../../lib/format";
 import {
   driveFindings,
   driveKind,
+  drivePowerCycles,
   drivePowerOnHours,
   driveSeverity,
   driveSeverityRank,
@@ -1231,12 +1233,47 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
     // disk has been spinning for five years.
     cell: (row) => {
       const hours = drivePowerOnHours(row);
-      return hours === null ? ABSENT : duration(hours * 3600);
+      if (hours === null) return ABSENT;
+      // The duration is the reading; the raw counter is the hover. Rounding
+      // to two units is what makes this column scannable, but the drive
+      // keeps an exact figure and someone comparing two disks, or reading a
+      // warranty sheet written in hours, wants it without leaving the page.
+      //
+      // .nowrap for the reason the Size cell gives: at a 1200px viewport
+      // "2 y 164 d" broke after the figure and left the unit alone on the
+      // second line, which is not a reading anyone should have to reassemble.
+      return (
+        <span className="nowrap" title={`${cardinal(hours)} h`}>
+          {duration(hours * 3600)}
+        </span>
+      );
     },
     // Hours, not the "5 y" the cell prints: duration() rounds to a unit, so
     // ordering on its string would tie every drive between five and six
     // years and then break the tie alphabetically.
     sortValue: (row) => drivePowerOnHours(row),
+  },
+  {
+    key: "power_cycles",
+    header: "Power cycles",
+    align: "right",
+    // Beside Power on because the two are read together: 20000 hours at 40
+    // cycles is a drive that has sat in a rack, the same hours at 4000 is one
+    // that has been power-cycled daily, and those are different histories.
+    //
+    // .tnum for the same reason Size uses it -- a column of counts is
+    // compared digit by digit, and proportional figures make that harder.
+    cell: (row) => {
+      const cycles = drivePowerCycles(row);
+      return cycles === null ? (
+        ABSENT
+      ) : (
+        <span className="tnum nowrap">{cardinal(cycles)}</span>
+      );
+    },
+    // The count, not the printed string: cardinal() groups thousands, and
+    // "1,024" sorts before "512" as text.
+    sortValue: (row) => drivePowerCycles(row),
   },
   {
     key: "wear",
