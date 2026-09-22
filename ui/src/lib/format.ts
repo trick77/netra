@@ -230,7 +230,7 @@ const DURATION_UNITS: Array<[string, number]> = [
 ];
 
 /** Years are printed alone; see the budget's use in `duration`. */
-const YEAR = 365 * 86400;
+const YEAR = DURATION_UNITS[0]![1];
 const YEAR_BUDGET = 1;
 const DEFAULT_BUDGET = 2;
 
@@ -269,9 +269,9 @@ export function duration(seconds: number | null): string {
 }
 
 /**
- * Age of `iso` relative to `now`, at the same two-unit precision as
- * `duration`. `now` is injectable so tests are deterministic instead of
- * racing the system clock.
+ * Age of `iso` relative to `now`, at whatever precision `duration` gives it
+ * -- two units below a year, the year alone above. `now` is injectable so
+ * tests are deterministic instead of racing the system clock.
  *
  * Accepts `null` -- every numeric formatter above absorbs `null` into
  * `ABSENT`, and a date field on the wire is just as often absent
