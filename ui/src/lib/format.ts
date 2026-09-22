@@ -217,10 +217,10 @@ export function percent(n: number | null, digits = 0): string {
   return `${round(n, digits)}%`;
 }
 
-// A year is a flat 365 days here, with no leap-day correction. This
-// formatter renders a rounded reading at two units of precision -- "5 y",
-// "2 y 161 d" -- not a calendar date, and at that precision a leap day is
-// already below the resolution of the answer.
+// A year is a flat 365 days, with no leap-day correction, and nothing is
+// printed beside it -- see the one-unit rule in `duration`. Both follow from
+// the same thing: at this magnitude the reader wants the order of the
+// number, not its remainder.
 const DURATION_UNITS: Array<[string, number]> = [
   ["y", 365 * 86400],
   ["d", 86400],
@@ -229,17 +229,34 @@ const DURATION_UNITS: Array<[string, number]> = [
   ["s", 1],
 ];
 
+/** Years are printed alone; see the budget's use in `duration`. */
+const YEAR = 365 * 86400;
+const YEAR_BUDGET = 1;
+const DEFAULT_BUDGET = 2;
+
 /**
  * Renders at most two units of precision ("266 d 6 h", not
  * "266 d 6 h 41 m") -- past the top two units the smaller ones are noise
  * for a human scanning a status page.
+ *
+ * Years get one unit rather than two. "2 y 164 d" invites arithmetic nobody
+ * performs: past a year the reading people take is the year figure, and the
+ * days after it are a remainder that makes the cell longer without making
+ * the answer better. The exact count stays available where it matters -- the
+ * drive table puts the raw hours on the cell's hover.
+ *
+ * Truncated, never rounded up: a drive at 2 y 200 d has not been running for
+ * three years, and an age that overstates itself is worse than one that is
+ * coarse. This is what every smaller unit here already does.
  */
 export function duration(seconds: number | null): string {
   if (seconds === null) return ABSENT;
-  let remaining = Math.max(0, Math.round(seconds));
+  const total = Math.max(0, Math.round(seconds));
+  let remaining = total;
   const parts: string[] = [];
+  const budget = total >= YEAR ? YEAR_BUDGET : DEFAULT_BUDGET;
   for (const [label, size] of DURATION_UNITS) {
-    if (parts.length >= 2) break;
+    if (parts.length >= budget) break;
     const count = Math.floor(remaining / size);
     if (count === 0 && parts.length === 0 && size !== 1) continue;
     // A second unit that rounds to zero (e.g. "4 m 0 s") is noise, not
