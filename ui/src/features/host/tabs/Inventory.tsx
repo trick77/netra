@@ -1271,8 +1271,8 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
         <span className="tnum nowrap">{cardinal(cycles)}</span>
       );
     },
-    // The count, not the printed string: cardinal() groups thousands, and
-    // "1,024" sorts before "512" as text.
+    // The count, not the printed string: cardinal() groups thousands with a
+    // narrow no-break space, and "1 024" sorts before "512" as text.
     sortValue: (row) => drivePowerCycles(row),
   },
   {
