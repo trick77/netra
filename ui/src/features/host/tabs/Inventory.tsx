@@ -1241,17 +1241,16 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
       //
       // .nowrap for the reason the Size cell gives: at a 1200px viewport a
       // reading broke after the figure and left the unit alone on the second
-      // line, which is not something anyone should have to reassemble. Years
-      // print alone now, but a drive under a year still reads "364 d 23 h".
+      // line, which is not something anyone should have to reassemble.
       return (
         <span className="nowrap" title={`${cardinal(hours)} h`}>
           {duration(hours * 3600)}
         </span>
       );
     },
-    // Hours, not the "5 y" the cell prints: duration() rounds to a unit, so
-    // ordering on its string would tie every drive between five and six
-    // years and then break the tie alphabetically.
+    // Hours, not the "5 y 3 mo" the cell prints: duration() rounds to a
+    // unit, so ordering on its string would tie every drive in the same
+    // month and sort "10 y" before "9 y" alphabetically.
     sortValue: (row) => drivePowerOnHours(row),
   },
   {

@@ -51,19 +51,19 @@ describe("format", () => {
   // disk reported 1825 d, and nobody divides that by 365 while scanning a
   // table.
   //
-  // One unit, not two: past a year the year figure IS the reading, and the
-  // days after it are a remainder nobody acts on. Truncated, so a drive
-  // eleven months into its third year still says two.
-  it("carries durations past a year into years, alone", () => {
+  // Past a year the month follows, not the day: "2 y 161 d" asks for
+  // arithmetic, "2 y" alone drops most of a year. An exact year has no
+  // remainder to print, and "1 y 0 mo" would be noise.
+  it("carries durations past a year into years and months", () => {
     expect(duration(8760 * 3600)).toBe("1 y");
-    expect(duration(21400 * 3600)).toBe("2 y");
+    expect(duration(21400 * 3600)).toBe("2 y 5 mo");
     expect(duration(43800 * 3600)).toBe("5 y");
-    expect(duration(96000 * 3600)).toBe("10 y");
+    expect(duration(96000 * 3600)).toBe("10 y 11 mo");
   });
 
-  // The rounding question the one-unit rule raises: 2 y 364 d is not 3 y.
-  it("truncates years rather than rounding up", () => {
-    expect(duration(3 * 365 * 86400 - 3600)).toBe("2 y");
+  // 2 y 364 d is not 3 y, and 10 y 350 d (11.5 months) is not 10 y 12 mo.
+  it("truncates years and months rather than rounding up", () => {
+    expect(duration(3 * 365 * 86400 - 3600)).toBe("2 y 11 mo");
   });
 
   // The boundary: a year less an hour is still counted in days, so nothing

@@ -217,46 +217,49 @@ export function percent(n: number | null, digits = 0): string {
   return `${round(n, digits)}%`;
 }
 
-// A year is a flat 365 days, with no leap-day correction, and nothing is
-// printed beside it -- see the one-unit rule in `duration`. Both follow from
-// the same thing: at this magnitude the reader wants the order of the
-// number, not its remainder.
+// A year is a flat 365 days, with no leap-day correction, and a month is a
+// twelfth of it. This renders a rounded reading, not a calendar date, and
+// at that precision a leap day or a short February is already below the
+// resolution of the answer.
+const YEAR = 365 * 86400;
+
 const DURATION_UNITS: Array<[string, number]> = [
-  ["y", 365 * 86400],
+  ["y", YEAR],
   ["d", 86400],
   ["h", 3600],
   ["m", 60],
   ["s", 1],
 ];
 
-/** Years are printed alone; see the budget's use in `duration`. */
-const YEAR = DURATION_UNITS[0]![1];
-const YEAR_BUDGET = 1;
-const DEFAULT_BUDGET = 2;
+/** Past a year the month follows it, not the day. "mo": "m" is the minute. */
+const YEAR_UNITS: Array<[string, number]> = [
+  ["y", YEAR],
+  ["mo", YEAR / 12],
+];
 
 /**
  * Renders at most two units of precision ("266 d 6 h", not
  * "266 d 6 h 41 m") -- past the top two units the smaller ones are noise
  * for a human scanning a status page.
  *
- * Years get one unit rather than two. "2 y 164 d" invites arithmetic nobody
- * performs: past a year the reading people take is the year figure, and the
- * days after it are a remainder that makes the cell longer without making
- * the answer better. The exact count stays available where it matters -- the
- * drive table puts the raw hours on the cell's hover.
+ * Past a year the second unit is the month: "8 y 3 mo". "2 y 164 d" invites
+ * arithmetic nobody performs, and "8 y" alone drops up to a year. Nothing
+ * under a year counts in months -- "266 d 6 h" already reads, and a month
+ * is too uneven a unit to be the leading figure. The exact count stays
+ * where it matters: the drive table puts the raw hours on the cell's hover.
  *
- * Truncated, never rounded up: a drive at 2 y 200 d has not been running for
- * three years, and an age that overstates itself is worse than one that is
- * coarse. This is what every smaller unit here already does.
+ * Truncated, never rounded up: a drive at 2 y 11 mo has not been running
+ * for three years, and an age that overstates itself is worse than one
+ * that is coarse. This is what every smaller unit here already does.
  */
 export function duration(seconds: number | null): string {
   if (seconds === null) return ABSENT;
   const total = Math.max(0, Math.round(seconds));
   let remaining = total;
   const parts: string[] = [];
-  const budget = total >= YEAR ? YEAR_BUDGET : DEFAULT_BUDGET;
-  for (const [label, size] of DURATION_UNITS) {
-    if (parts.length >= budget) break;
+  const units = total >= YEAR ? YEAR_UNITS : DURATION_UNITS;
+  for (const [label, size] of units) {
+    if (parts.length >= 2) break;
     const count = Math.floor(remaining / size);
     if (count === 0 && parts.length === 0 && size !== 1) continue;
     // A second unit that rounds to zero (e.g. "4 m 0 s") is noise, not
@@ -270,7 +273,7 @@ export function duration(seconds: number | null): string {
 
 /**
  * Age of `iso` relative to `now`, at whatever precision `duration` gives it
- * -- two units below a year, the year alone above. `now` is injectable so
+ * -- two units below a year, years and months above. `now` is injectable so
  * tests are deterministic instead of racing the system clock.
  *
  * Accepts `null` -- every numeric formatter above absorbs `null` into
