@@ -899,18 +899,19 @@ describe("Drives", () => {
     expect(screen.getAllByText("49 °C")).toHaveLength(2);
   });
 
-  // 21402 hours is two years and change, and the column says "2 y" rather
-  // than printing the four-digit counter the drive keeps. The exact figure
-  // is what the hover is for -- that is the whole bargain of rounding here.
+  // 21402 hours is two years and five months, and the column says "2 y 5 mo"
+  // rather than printing the five-digit counter the drive keeps. The exact
+  // figure is what the hover is for -- that is the whole bargain of rounding.
   it("prints power-on hours as an age and keeps the raw count on hover", () => {
     render(<Drives rows={[ata, nvme]} />);
 
     const spinning = screen.getByRole("row", { name: /sdc/ });
-    const age = within(spinning).getByText("2 y");
+    const age = within(spinning).getByText("2 y 5 mo");
     // cardinal() groups with a narrow no-break space, not a comma.
     expect(age).toHaveAttribute("title", "21\u202f402 h");
 
-    // The NVMe drive's hours come from 1006 and read the same way.
+    // The NVMe drive's hours come from 1006 and read the same way. It is 26
+    // days into its second year, short of a month, so the year stands alone.
     const solid = screen.getByRole("row", { name: /nvme0n1/ });
     expect(within(solid).getByText("1 y")).toBeInTheDocument();
   });
@@ -1444,7 +1445,7 @@ describe("inventory sorting", () => {
       expect(firstCells()[0]).toMatch(/sdb/);
     });
 
-    // The cell prints "4 y" and "4 d"; hours are what separate them.
+    // The cell prints "4 y 6 mo" and "4 d"; hours are what separate them.
     // Anchored, because "Power cycles" sits in the next column over and an
     // unanchored /power on/i would match neither header unambiguously.
     it("orders Power on by hours and not by the printed duration", async () => {
