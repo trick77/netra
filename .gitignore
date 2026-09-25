@@ -7,3 +7,6 @@ internal/hub/web/dist/*
 !internal/hub/web/dist/.gitkeep
 ui/node_modules/
 .playwright-mcp/
+
+# Local git worktrees
+.agents/worktrees/
