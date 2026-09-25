@@ -8,5 +8,4 @@ internal/hub/web/dist/*
 ui/node_modules/
 .playwright-mcp/
 
-# Local git worktrees
-.agents/worktrees/
+.agents/
