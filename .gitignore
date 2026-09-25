@@ -3,6 +3,7 @@ data/
 bin/
 coverage/
 .claude/
+.agents/
 internal/hub/web/dist/*
 !internal/hub/web/dist/.gitkeep
 ui/node_modules/
