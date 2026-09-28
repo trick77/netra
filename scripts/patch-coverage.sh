@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# hack/patch-coverage.sh [base-ref]
+# scripts/patch-coverage.sh [base-ref]
 #
 # Patch coverage: the lines this branch adds or changes must be at least
-# PATCH_MIN% covered. Complements hack/coverage-gate.sh, which enforces the
+# PATCH_MIN% covered. Complements scripts/coverage-gate.sh, which enforces the
 # absolute project floor — the two answer different questions:
 #
 #   coverage-gate.sh   "is the codebase as a whole tested enough?"   (75% floor)
@@ -13,10 +13,10 @@
 # cmd/). Both therefore go through the same Cobertura/diff-cover path. The
 # UI (ui/, Vitest) is the third stack: its lcov report goes through diff-cover
 # too, in its own section below, and its absolute floor is the thresholds in
-# ui/vite.config.ts rather than hack/coverage-gate.sh.
+# ui/vite.config.ts rather than scripts/coverage-gate.sh.
 #
 # cmd/ and internal/shared/gen are excluded from both sides, matching the exclusions
-# hack/coverage-gate.sh already applies to the absolute floor. See the
+# scripts/coverage-gate.sh already applies to the absolute floor. See the
 # diff-cover invocations below.
 #
 # The floor alone lets a large well-tested codebase absorb untested new code
@@ -63,14 +63,14 @@ fi
 # Opt out with [skip patch-coverage] in a commit message on the branch.
 #
 # This skips ONLY patch coverage. The absolute floor still holds in the same
-# CI job -- hack/coverage-gate.sh for hub and agent, vitest's thresholds in
+# CI job -- scripts/coverage-gate.sh for hub and agent, vitest's thresholds in
 # ui/vite.config.ts for the UI -- so overall coverage can never silently
 # fall; the worst this can do is let already-untested lines stay untested.
 if git log --format='%B' "$(git merge-base "$BASE_REF" HEAD)"..HEAD 2>/dev/null |
   grep -qF '[skip patch-coverage]'; then
   echo "::warning::patch-coverage SKIPPED — a commit on this branch carries [skip patch-coverage]."
   echo "patch-coverage: SKIPPED by [skip patch-coverage] in a commit message." >&2
-  echo "  The absolute floor still applies (hack/coverage-gate.sh for hub and" >&2
+  echo "  The absolute floor still applies (scripts/coverage-gate.sh for hub and" >&2
   echo "  agent, vitest's thresholds for the UI) and is enforced separately," >&2
   echo "  so total coverage cannot fall unnoticed." >&2
   exit 0
@@ -170,7 +170,7 @@ assert_matched() {
 MODULE_DIR="."
 
 # --- hub ------------------------------------------------------------------
-# CI already converts the coverprofile to Cobertura for hack/coverage-gate.sh;
+# CI already converts the coverprofile to Cobertura for scripts/coverage-gate.sh;
 # reuse that artifact rather than regenerating it.
 if [[ -f coverage/hub.xml ]]; then
   checked=1
@@ -204,12 +204,12 @@ if [[ -f coverage/hub.xml ]]; then
   # carries no non-comment token, so a trailing `// why` and a string holding
   # "http://x" both stay counted. It is deliberately conservative: a file it
   # cannot read or parse keeps every line it had.
-  go run hack/strip-comment-lines.go "$MODULE_DIR" \
+  go run scripts/strip-comment-lines.go "$MODULE_DIR" \
     < coverage/hub-rooted.xml > coverage/hub-code-only.xml
 
   # cmd/ excluded — see the agent section below for the full rationale.
   # internal/shared/gen is excluded for the same reason cmd/ is, and the same reason
-  # hack/coverage-gate.sh excludes it from the absolute floor: generated
+  # scripts/coverage-gate.sh excludes it from the absolute floor: generated
   # protobuf getters are machine-written lines no reachable test would move.
   # A PR that adds a wire message adds hundreds of them, so without this the
   # gate measures how much codegen the change produced rather than whether the
@@ -235,10 +235,10 @@ if [[ -f coverage/agent.xml ]]; then
     coverage/agent.xml > coverage/agent-rooted.xml
 
   # Same comment-stripping rationale as the hub section above.
-  go run hack/strip-comment-lines.go "$MODULE_DIR" \
+  go run scripts/strip-comment-lines.go "$MODULE_DIR" \
     < coverage/agent-rooted.xml > coverage/agent-code-only.xml
 
-  # cmd/ is excluded here for the same reason hack/coverage-gate.sh excludes it
+  # cmd/ is excluded here for the same reason scripts/coverage-gate.sh excludes it
   # from the absolute floor: main() wiring — flag parsing, signal handling,
   # dependency construction, ListenAndServe — is reachable only by running the
   # binary, and the two gates must agree on what counts as testable. Without

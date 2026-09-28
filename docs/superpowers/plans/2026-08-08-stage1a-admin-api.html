@@ -171,7 +171,7 @@
   <li><strong>Only <code>/api/agent/</code> is internet-routed</strong> (Traefik <code>PathPrefix</code> in <code>compose.yaml</code>). Everything added here must live outside that prefix.</li>
   <li>TDD, conventional commits, <code>.yaml</code> never <code>.yml</code>, English only, <code>CGO_ENABLED=0</code> for shipped binaries.</li>
   <li><strong>Integration tests need <code>-p 1</code></strong> — <code>store.OpenTest</code> drops the shared public schema, so parallel package binaries race.</li>
-  <li><strong>Patch coverage gate is 75% and <code>hack/patch-coverage.sh</code> excludes <code>cmd/</code>.</strong> Every error branch needs an exercised test; keep <code>main.go</code> wiring thin.</li>
+  <li><strong>Patch coverage gate is 75% and <code>scripts/patch-coverage.sh</code> excludes <code>cmd/</code>.</strong> Every error branch needs an exercised test; keep <code>main.go</code> wiring thin.</li>
 </ul>
 
 <h2>Three findings that shaped this plan</h2>
@@ -1055,7 +1055,7 @@ git commit -m "feat(hub): minimal host management page"</code></pre></li>
 
 <p><code>NewRouter</code> grows the config it needs to gate the new routes:</p>
 <pre><code>func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Handler</code></pre>
-<p><code>main.go</code> only passes <code>cfg</code> through — no logic there, since <code>hack/patch-coverage.sh</code> excludes <code>cmd/</code>. The API mount gets <code>RequireAdmin(cfg.AdminToken, false, …)</code>, the UI mount <code>RequireAdmin(cfg.AdminToken, true, …)</code>, and <code>/login</code> is mounted outside both. Ingest and health are untouched.</p>
+<p><code>main.go</code> only passes <code>cfg</code> through — no logic there, since <code>scripts/patch-coverage.sh</code> excludes <code>cmd/</code>. The API mount gets <code>RequireAdmin(cfg.AdminToken, false, …)</code>, the UI mount <code>RequireAdmin(cfg.AdminToken, true, …)</code>, and <code>/login</code> is mounted outside both. Ingest and health are untouched.</p>
 
 <ol class="steps">
 <li><strong>Wire the routes</strong> as described above. Ingest and health stay exactly as they are.</li>

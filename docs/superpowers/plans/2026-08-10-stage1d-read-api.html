@@ -126,7 +126,7 @@ if none                    // from predates even the coarsest
 
 <h2>Verification</h2>
 <pre><code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -count=1 -p 1 ./...
-hack/coverage-gate.sh hub &amp;&amp; hack/coverage-gate.sh agent
-hack/patch-coverage.sh</code></pre>
+scripts/coverage-gate.sh hub &amp;&amp; scripts/coverage-gate.sh agent
+scripts/patch-coverage.sh</code></pre>
 <p>Fixture tests only. Aggregate-tier tests must <code>CALL refresh_continuous_aggregate(…)</code> explicitly: every view is <code>WITH NO DATA</code> and <code>OpenTest</code> unschedules the refresh policies, so insert-then-query returns zero rows otherwise.</p>
 </div></body></html>

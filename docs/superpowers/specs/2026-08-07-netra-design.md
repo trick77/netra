@@ -681,14 +681,14 @@ Modelled on `../music`'s workflows.
   `-coverpkg=./...` attributes coverage across package boundaries.
 - Cobertura conversion via `gocover-cobertura` — Go reports statements, not lines, and the
   conversion also merges the duplicate blocks `-coverpkg` emits
-- `hack/coverage-gate.sh` — absolute project floor
-- `hack/patch-coverage.sh` — changed lines must be ≥ `PATCH_MIN`% covered
+- `scripts/coverage-gate.sh` — absolute project floor
+- `scripts/patch-coverage.sh` — changed lines must be ≥ `PATCH_MIN`% covered
 - `concurrency` with `cancel-in-progress: true`
 
 Jobs: **`hub`**, **`agent`**, and an **`integration`** job running TimescaleDB as a service
 container (netra-specific; music has no equivalent). No UI job in phase 1.
 
-`hack/coverage-floors` carries one entry per component:
+`scripts/coverage-floors` carries one entry per component:
 
 ```
 hub=75.0
