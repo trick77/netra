@@ -192,7 +192,7 @@ Carried forward. None block Stage 1, all are cheap to fix in the right PR.
 | `smartctl` `drivedb.h` update cadence undecided | Spec §14 item 3 | Affects vendor attribute *naming* only; health, temperature, reallocated sectors and power-on hours are standardised |
 | Setup script `--ref` resolves the latest release at runtime | `setup-agent.sh` | Deviates from §12a's "the setup script's own version". A literal constant cannot self-update without the release workflow pushing to master. Revisit only if the runtime lookup proves flaky |
 | `--force` guards `.env` but not `compose.yaml` | §12a specifies this asymmetry | Defensible — compose is derived, `.env` holds the token — and stated in the finish output |
-| ~~Coverage floors still 75%~~ | `hack/coverage-floors` | **Raised in 1D**, once the collector and read packages had landed. Both floors are set from the measured number with a point or two of margin; the gate's 0.05 grace is float-formatting slack, not headroom |
+| ~~Coverage floors still 75%~~ | `scripts/coverage-floors` | **Raised in 1D**, once the collector and read packages had landed. Both floors are set from the measured number with a point or two of margin; the gate's 0.05 grace is float-formatting slack, not headroom |
 
 ---
 
@@ -222,5 +222,5 @@ NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test make test-integr
 
 - **Retargeting a PR does not trigger CI.** A base change emits `pull_request: edited`, which is not in the default trigger set. Close and reopen. This is how a fixture bug survived four stacked PRs.
 - **`gh pr merge` fails on any PR touching `.github/workflows/`** unless the token carries `workflow` scope. A `git push` over SSH is not an OAuth app and is exempt.
-- **`hack/patch-coverage.sh` excludes `cmd/`**, matching `coverage-gate.sh`. `main()` wiring is reachable only by running the binary; without the exclusion, changing one constructor argument is an uncoverable red gate.
+- **`scripts/patch-coverage.sh` excludes `cmd/`**, matching `coverage-gate.sh`. `main()` wiring is reachable only by running the binary; without the exclusion, changing one constructor argument is an uncoverable red gate.
 - **Verify against a fresh clone**, not the working tree, whenever fixtures are involved.

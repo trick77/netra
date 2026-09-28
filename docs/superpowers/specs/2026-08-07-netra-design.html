@@ -952,13 +952,13 @@ needs cgo, which is independent of the <code>CGO_ENABLED=0</code> invariant for 
 <code>-coverpkg=./...</code> attributes coverage across package boundaries.</li>
 <li>Cobertura conversion via <code>gocover-cobertura</code> — Go reports statements, not lines, and the
 conversion also merges the duplicate blocks <code>-coverpkg</code> emits</li>
-<li><code>hack/coverage-gate.sh</code> — absolute project floor</li>
-<li><code>hack/patch-coverage.sh</code> — changed lines must be ≥ <code>PATCH_MIN</code>% covered</li>
+<li><code>scripts/coverage-gate.sh</code> — absolute project floor</li>
+<li><code>scripts/patch-coverage.sh</code> — changed lines must be ≥ <code>PATCH_MIN</code>% covered</li>
 <li><code>concurrency</code> with <code>cancel-in-progress: true</code></li>
 </ul>
 <p>Jobs: <strong><code>hub</code></strong>, <strong><code>agent</code></strong>, and an <strong><code>integration</code></strong> job running TimescaleDB as a service
 container (netra-specific; music has no equivalent). No UI job in phase 1.</p>
-<p><code>hack/coverage-floors</code> carries one entry per component:</p>
+<p><code>scripts/coverage-floors</code> carries one entry per component:</p>
 <pre><code>hub=75.0
 agent=75.0
 </code></pre>

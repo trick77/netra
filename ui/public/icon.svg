@@ -59,7 +59,7 @@
   only the four corners outside its rx-4 radius are clear, so what lands in a tab
   is a chip rather than a square tile. The two consumers that would flatten those
   corners — iOS onto black, Android onto the launcher's own fill — are served by
-  the tiled sources beside this file, and hack/gen-icons.sh asserts both
+  the tiled sources beside this file, and scripts/gen-icons.sh asserts both
   directions.
 
   THE TRANSFORMS ARE DERIVED, not typed:
@@ -86,7 +86,7 @@
   dividing — or the mark silently stops filling the coverage its own comment
   claims. Change a coverage and its outer transform follows.
 
-  Regenerate the rasters with hack/gen-icons.sh after touching this file — and
+  Regenerate the rasters with scripts/gen-icons.sh after touching this file — and
   mirror any shape change into the two tiled sources beside it, which are copies
   and cannot follow on their own. Then rebuild the UI with `make ui`, so the new
   bytes land in internal/hub/web/dist, which is what the binary serves.
