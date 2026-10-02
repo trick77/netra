@@ -72,7 +72,7 @@ internal/agent/collector/testdata/       fixture proc trees
 internal/agent/buffer/ring.go            bounded overwrite-oldest buffer
 internal/agent/client/client.go          POST loop, ack handling, metadata hash
 
-hack/coverage-floors, coverage-gate.sh, patch-coverage.sh
+scripts/coverage-floors, coverage-gate.sh, patch-coverage.sh
 .github/workflows/ci.yaml
 ```
 
@@ -4266,7 +4266,7 @@ git commit -m "test: add agent to hub end-to-end integration test"
 ## Task 16: CI with coverage gates
 
 **Files:**
-- Create: `.github/workflows/ci.yaml`, `hack/coverage-floors`, `hack/coverage-gate.sh`, `hack/patch-coverage.sh`
+- Create: `.github/workflows/ci.yaml`, `scripts/coverage-floors`, `scripts/coverage-gate.sh`, `scripts/patch-coverage.sh`
 
 **Interfaces:**
 - Consumes: the whole module.
@@ -4277,20 +4277,20 @@ git commit -m "test: add agent to hub end-to-end integration test"
 The two gate scripts already exist and are proven in the sibling `music` repo. Copy them verbatim, then adapt only the component names:
 
 ```bash
-mkdir -p hack
-cp ../../../music/hack/coverage-gate.sh hack/
-cp ../../../music/hack/patch-coverage.sh hack/
-chmod +x hack/coverage-gate.sh hack/patch-coverage.sh
+mkdir -p scripts
+cp ../../../music/scripts/coverage-gate.sh scripts/
+cp ../../../music/scripts/patch-coverage.sh scripts/
+chmod +x scripts/coverage-gate.sh scripts/patch-coverage.sh
 ```
 
 Adjust paths inside both scripts so they look for `coverage/<component>.xml` where component is `hub` or `agent` rather than `backend` or `ui`. Read each script and change only the component name list and the report paths; leave the diff-cover invocation and the escape-hatch logic alone.
 
 - [ ] **Step 2: Write the coverage floors**
 
-`hack/coverage-floors`:
+`scripts/coverage-floors`:
 
 ```
-# Line-coverage floors. Hard floor, not a ratchet — see hack/coverage-gate.sh.
+# Line-coverage floors. Hard floor, not a ratchet — see scripts/coverage-gate.sh.
 hub=75.0
 agent=75.0
 ```
@@ -4364,7 +4364,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      # fetch-depth: 0 — hack/patch-coverage.sh diffs the branch against the
+      # fetch-depth: 0 — scripts/patch-coverage.sh diffs the branch against the
       # PR base, which needs real history. A shallow checkout leaves the base
       # ref unresolvable and the gate exits 2.
       - uses: actions/checkout@v7
@@ -4400,9 +4400,9 @@ jobs:
       # The floor gate runs first: when a PR drops the project below the floor
       # the absolute number is the more actionable failure, and reporting it
       # before patch coverage keeps the log readable.
-      - run: ./hack/coverage-gate.sh ${{ matrix.component }}
+      - run: ./scripts/coverage-gate.sh ${{ matrix.component }}
       - name: Patch coverage
-        run: ./hack/patch-coverage.sh "origin/${{ github.base_ref || 'master' }}"
+        run: ./scripts/patch-coverage.sh "origin/${{ github.base_ref || 'master' }}"
 ```
 
 - [ ] **Step 4: Verify the gates locally**
@@ -4412,7 +4412,7 @@ mkdir -p coverage
 NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test \
   go test -p 1 -covermode=atomic -coverpkg=./... -coverprofile=coverage/hub.out ./hub/... ./internal/...
 go run github.com/boumenot/gocover-cobertura@v1.5.0 < coverage/hub.out > coverage/hub.xml
-./hack/coverage-gate.sh hub
+./scripts/coverage-gate.sh hub
 ```
 
 Expected: the gate reports a percentage at or above 75.0. If it is below, add tests for the uncovered paths before proceeding — do not lower the floor.
@@ -4426,7 +4426,7 @@ printf '%s\n' "coverage/" >> .gitignore
 - [ ] **Step 6: Commit and open the pull request**
 
 ```bash
-git add .github/ hack/ .gitignore
+git add .github/ scripts/ .gitignore
 git commit -m "ci: add build, test and coverage gate workflow"
 git push -u origin feat/phase1-foundation
 gh pr create --base master --head feat/phase1-foundation \

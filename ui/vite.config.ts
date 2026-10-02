@@ -25,7 +25,7 @@ export default defineConfig({
     setupFiles: ["./src/test-setup.ts"],
     globals: true,
     coverage: {
-      // The Go side keeps its floors in hack/coverage-floors and enforces
+      // The Go side keeps its floors in scripts/coverage-floors and enforces
       // them in coverage-gate.sh; this is the same idea in the tool that
       // measures this half. A hard floor, not a ratchet: each number sits a
       // couple of points under what the suite measures today, which is
@@ -34,7 +34,7 @@ export default defineConfig({
       provider: "v8",
       // text is for humans reading the CI log; html is the browsable report
       // a developer opens after a local run; lcov is what diff-cover reads in
-      // hack/patch-coverage.sh, the "is the code I just wrote tested?" half
+      // scripts/patch-coverage.sh, the "is the code I just wrote tested?" half
       // of the gate. The thresholds below answer the other half. Written
       // under the repo's coverage/ beside the Go reports, which is where that
       // script looks and what .gitignore already covers.

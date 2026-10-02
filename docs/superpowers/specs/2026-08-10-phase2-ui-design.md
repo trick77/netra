@@ -482,7 +482,7 @@ and an ingest path — worth doing, but it is agent work, not UI work.
   `NULL` swap renders "none", not 0.
 - **Contract**: fixtures captured from the real read API, including the tier-specific
   column names, so a schema change that renames a column fails a UI test.
-- **Coverage**: `ui/` joins `hack/coverage-floors` at the same discipline as the Go
+- **Coverage**: `ui/` joins `scripts/coverage-floors` at the same discipline as the Go
   packages.
 
 ---

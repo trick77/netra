@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hack/gen-icons.sh
+# scripts/gen-icons.sh
 #
 # Renders every favicon / PWA raster from the three SVG sources in ui/icons/.
 # Run it by hand after editing any of them and commit what it writes.

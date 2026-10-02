@@ -251,7 +251,7 @@ plumbing Group 1 needs:</p>
 </tr>
 <tr>
 <td>~~Coverage floors still 75%~~</td>
-<td><code>hack/coverage-floors</code></td>
+<td><code>scripts/coverage-floors</code></td>
 <td><strong>Raised in 1D</strong>, once the collector and read packages had landed. Both floors are set from the measured number with a point or two of margin; the gate's 0.05 grace is float-formatting slack, not headroom</td>
 </tr>
 </tbody>
@@ -273,7 +273,7 @@ NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test make test-integr
 <ul>
 <li><strong>Retargeting a PR does not trigger CI.</strong> A base change emits <code>pull_request: edited</code>, which is not in the default trigger set. Close and reopen. This is how a fixture bug survived four stacked PRs.</li>
 <li><strong><code>gh pr merge</code> fails on any PR touching <code>.github/workflows/</code></strong> unless the token carries <code>workflow</code> scope. A <code>git push</code> over SSH is not an OAuth app and is exempt.</li>
-<li><strong><code>hack/patch-coverage.sh</code> excludes <code>cmd/</code></strong>, matching <code>coverage-gate.sh</code>. <code>main()</code> wiring is reachable only by running the binary; without the exclusion, changing one constructor argument is an uncoverable red gate.</li>
+<li><strong><code>scripts/patch-coverage.sh</code> excludes <code>cmd/</code></strong>, matching <code>coverage-gate.sh</code>. <code>main()</code> wiring is reachable only by running the binary; without the exclusion, changing one constructor argument is an uncoverable red gate.</li>
 <li><strong>Verify against a fresh clone</strong>, not the working tree, whenever fixtures are involved.</li>
 </ul>
 </div></body></html>

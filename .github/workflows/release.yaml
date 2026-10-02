@@ -41,7 +41,7 @@ on:
     paths-ignore:
       - "docs/**"
       # Coverage gate scripts: CI-only, never copied into either image.
-      - "hack/**"
+      - "scripts/**"
       - ".github/**"
       - "**/*.md"
       - "LICENSE"
