@@ -797,6 +797,13 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 	}
 
 	c.pruneNetNSDenied(out)
+	// The same for the label budget latch: a gone id never comes back to
+	// clear it.
+	for id := range c.labelsCapped {
+		if _, ok := out[id]; !ok {
+			delete(c.labelsCapped, id)
+		}
+	}
 
 	// EVERY eligible container failing is a different fact from a few failing,
 	// and only the first is worth a word.
