@@ -405,6 +405,29 @@ func TestIntegrationIngestDropsImplausibleTimestampsButStoresTheRest(t *testing.
 	}
 }
 
+// Ten minutes ahead is already implausible: every minute of future a sample
+// is allowed is a minute host_current's forward-only guard ignores real data.
+func TestIntegrationIngestDropsASampleTenMinutesAhead(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq:         1,
+		HostSamples: []*netrav1.HostSample{{TsMs: time.Now().Add(10 * time.Minute).UnixMilli()}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var count int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("stored rows = %d, want 0 -- a sample 10 min ahead must be dropped", count)
+	}
+}
+
 // A broken agent_samples insert still 503s the batch, but must not freeze
 // host_current. The host samples the cache summarises landed successfully on
 // this very request, and the agent will keep retrying — so leaving last_seen

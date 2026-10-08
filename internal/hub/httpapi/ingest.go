@@ -49,10 +49,13 @@ const upgradeRequiredRetryAfter = 5 * time.Minute
 // reject the entire INSERT, the hub would 503, and the agent would re-send
 // the identical poison batch forever. A far-future sample is also dangerous
 // on its own because it would permanently poison host_current, whose
-// ON CONFLICT guard only accepts updates with a later timestamp.
+// ON CONFLICT guard only accepts updates with a later timestamp. The future
+// bound is short for the same reason: a sample that far ahead freezes every
+// forward-only current-state row (host_current, filesystem_current, systemd
+// state_ts) until real time catches up to it.
 var minPlausibleTs = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
-const maxPlausibleFuture = time.Hour
+const maxPlausibleFuture = 5 * time.Minute
 
 // IngestHandler accepts agent metric batches.
 type IngestHandler struct {
