@@ -177,6 +177,8 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := h.store.UpsertHostCurrent(ctx, hostID, s, rx, tx); err != nil {
 			slog.Error("upsert host_current", "host_id", hostID, "err", err)
 		}
+	} else if err := h.store.TouchHostCurrent(ctx, hostID); err != nil {
+		slog.Error("touch host_current", "host_id", hostID, "err", err)
 	}
 
 	if err := h.storeFamilies(ctx, hostID, &req); err != nil {
