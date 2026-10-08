@@ -147,12 +147,18 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 func (s *Store) UpsertHostCurrent(
 	ctx context.Context, hostID int32, m *netrav1.HostSample, netRx, netTx *float64,
 ) error {
+	// received_at is stamped in both arms: by the upsert when its guard lets
+	// the sample in, and by the outer UPDATE when it does not, because a post
+	// whose sample is older than last_seen still proves the host is talking.
+	// NOT EXISTS keeps the two apart; one statement may not modify a row twice.
 	_, err := s.pool.Exec(ctx, `
+		WITH fresh AS (
 		INSERT INTO host_current (host_id, last_seen, cpu_total, mem_used, mem_total, uptime_s,
 		                          net_rx_bytes, net_tx_bytes, services_total, services_failed)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (host_id) DO UPDATE SET
 			last_seen = EXCLUDED.last_seen,
+			received_at = now(),
 			cpu_total = EXCLUDED.cpu_total,
 			mem_used  = EXCLUDED.mem_used,
 			mem_total = EXCLUDED.mem_total,
@@ -173,19 +179,15 @@ func (s *Store) UpsertHostCurrent(
 			services_total  = coalesce(EXCLUDED.services_total, host_current.services_total),
 			services_failed = coalesce(EXCLUDED.services_failed, host_current.services_failed)
 		WHERE host_current.last_seen IS NULL
-		   OR host_current.last_seen <= EXCLUDED.last_seen`,
+		   OR host_current.last_seen <= EXCLUDED.last_seen
+		RETURNING host_id)
+		UPDATE host_current SET received_at = now()
+		 WHERE host_id = $1 AND NOT EXISTS (SELECT 1 FROM fresh)`,
 		hostID, time.UnixMilli(m.GetTsMs()).UTC(),
 		f64(m.CpuTotal), u64(m.MemUsed), u64(m.MemTotal), u64(m.UptimeS),
 		f64(netRx), f64(netTx), u32(m.ServicesTotal), u32(m.ServicesFailed))
 	if err != nil {
 		return fmt.Errorf("upsert host_current: %w", err)
-	}
-
-	// Outside the guard above: a post whose sample is older than last_seen
-	// still proves the host is talking.
-	if _, err := s.pool.Exec(ctx,
-		`UPDATE host_current SET received_at = now() WHERE host_id = $1`, hostID); err != nil {
-		return fmt.Errorf("stamp host_current received_at: %w", err)
 	}
 	return nil
 }

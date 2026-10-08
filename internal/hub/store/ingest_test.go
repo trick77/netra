@@ -172,6 +172,23 @@ func TestIntegrationUpsertHostCurrent(t *testing.T) {
 	if !receivedAt.After(stamped) {
 		t.Errorf("received_at = %v, want it advanced past %v by the rejected sample", receivedAt, stamped)
 	}
+
+	// And by an accepted one, which the upsert stamps itself.
+	if _, err := s.Pool().Exec(ctx,
+		`UPDATE host_current SET received_at = $2 WHERE host_id = $1`, hostID, stamped); err != nil {
+		t.Fatalf("backdate received_at: %v", err)
+	}
+	newest := &netrav1.HostSample{TsMs: 1_700_000_120_000, CpuTotal: proto.Float64(30)}
+	if err := s.UpsertHostCurrent(ctx, hostID, newest, nil, nil); err != nil {
+		t.Fatalf("newest upsert: %v", err)
+	}
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT cpu_total, received_at FROM host_current WHERE host_id = $1`, hostID).Scan(&cpu, &receivedAt); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if cpu != 30 || !receivedAt.After(stamped) {
+		t.Errorf("cpu_total = %v, received_at = %v; want 30 and past %v", cpu, receivedAt, stamped)
+	}
 }
 
 // The fleet band's failed-unit count. Two properties, matching the net pair
