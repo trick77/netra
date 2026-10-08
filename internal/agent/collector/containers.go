@@ -658,7 +658,8 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 //
 // Replicas past the first carry their compose container number, since the hub
 // keeps one row per key and scrape. Replica 1 keeps the bare key, so a service
-// that is never scaled keeps its history.
+// that is never scaled keeps its history. '#' because compose service names
+// cannot contain it, so "web#2" cannot collide with a service called web-2.
 //
 // The id is the last resort precisely because it is unstable: Docker issues a
 // new one on every recreate, so a service that merely got a new image would
@@ -667,7 +668,7 @@ func containerKey(m ContainerMeta, id string) string {
 	if m.Project != "" && m.Service != "" {
 		key := m.Project + "/" + m.Service
 		if n := m.Labels["com.docker.compose.container-number"]; n != "" && n != "1" {
-			key += "-" + n
+			key += "#" + n
 		}
 		return key
 	}

@@ -542,7 +542,12 @@ func TestContainerKeySeparatesComposeReplicas(t *testing.T) {
 	if got := containerKey(meta("1"), "id1"); got != "app/web" {
 		t.Errorf("replica 1 key = %q, want app/web", got)
 	}
-	if got := containerKey(meta("2"), "id2"); got != "app/web-2" {
-		t.Errorf("replica 2 key = %q, want app/web-2", got)
+	if got := containerKey(meta("2"), "id2"); got != "app/web#2" {
+		t.Errorf("replica 2 key = %q, want app/web#2", got)
+	}
+	// A service named web-2 is legal compose and must not share replica 2's key.
+	other := ContainerMeta{Project: "app", Service: "web-2"}
+	if containerKey(other, "id3") == containerKey(meta("2"), "id2") {
+		t.Errorf("service web-2 and replica 2 of web share key %q", containerKey(other, "id3"))
 	}
 }
