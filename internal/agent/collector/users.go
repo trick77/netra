@@ -142,14 +142,6 @@ func NewUsers(sessions SessionLister, path string) *Users {
 // Name implements Collector.
 func (u *Users) Name() string { return "users" }
 
-// SetPathForTest repoints the collector at a fixture file.
-func (u *Users) SetPathForTest(path string) { u.path = path }
-
-// SetRecordSizesForTest pins the candidate sizes, so a test can prove a
-// fixture parses under one specific layout rather than relying on detection
-// happening to pick the right one.
-func (u *Users) SetRecordSizesForTest(sizes ...int) { u.recordSizes = sizes }
-
 // Capabilities implements CapabilityReporter.
 func (u *Users) Capabilities() map[string]string {
 	u.mu.Lock()

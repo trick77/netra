@@ -56,13 +56,6 @@ func NewVMStat(procRoot string) *VMStat {
 // Name implements Collector.
 func (v *VMStat) Name() string { return "vmstat" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree so a
-// test can simulate the passage of time between two scrapes.
-func (v *VMStat) SetProcRootForTest(root string) { v.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the interval.
-func (v *VMStat) SetClockForTest(fn func() time.Time) { v.now = fn }
-
 // Collect implements Collector.
 func (v *VMStat) Collect(_ context.Context) (*Result, error) {
 	sample := &netrav1.HostSample{}

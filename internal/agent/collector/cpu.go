@@ -97,10 +97,6 @@ func NewCPU(procRoot string) *CPU {
 // Name implements Collector.
 func (c *CPU) Name() string { return "cpu" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree so a
-// test can simulate the passage of time between two scrapes.
-func (c *CPU) SetProcRootForTest(root string) { c.procRoot = root }
-
 // Collect implements Collector.
 func (c *CPU) Collect(_ context.Context) (*Result, error) {
 	cur, err := c.read()

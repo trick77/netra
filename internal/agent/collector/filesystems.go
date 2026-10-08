@@ -132,9 +132,6 @@ const markerPrefix = "/netra/fs/"
 // Name implements Collector.
 func (f *Filesystems) Name() string { return "filesystems" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (f *Filesystems) SetProcRootForTest(root string) { f.procRoot = root }
-
 // virtualFsTypes are pseudo-filesystems with no storage behind them. Reporting
 // them adds a row per kernel interface whose "usage" is meaningless -- tmpfs
 // is deliberately NOT here, because a full tmpfs really does break things.

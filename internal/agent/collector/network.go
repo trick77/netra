@@ -49,12 +49,6 @@ func NewNetwork(procRoot string) *Network {
 // Name implements Collector.
 func (n *Network) Name() string { return "network" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (n *Network) SetProcRootForTest(root string) { n.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the scrape interval.
-func (n *Network) SetClockForTest(fn func() time.Time) { n.now = fn }
-
 // Collect implements Collector.
 func (n *Network) Collect(_ context.Context) (*Result, error) {
 	cur, err := n.read()

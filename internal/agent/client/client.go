@@ -272,14 +272,6 @@ func capacityFor(window, interval time.Duration) int {
 	return capacity
 }
 
-// BufferDepth reports how many samples are waiting to be acknowledged.
-func (c *Client) BufferDepth() int { return c.ring.Depth() }
-
-// BufferCapacity reports the ring's capacity in slots. capacity *
-// config.ScrapeInterval is the effective buffered window, which capacityFor
-// keeps within cfg.BufferWindow.
-func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
-
 // ScrapeOnce runs every collector and buffers the resulting scrape.
 //
 // A collector that fails is logged and skipped, and contributes nothing at

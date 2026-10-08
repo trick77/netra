@@ -42,6 +42,9 @@ func (p *PerCoreCPU) Name() string { return "percpu" }
 
 // SetProcRootForTest repoints the collector at a different fixture tree so a
 // test can simulate the passage of time between two scrapes.
+//
+// Here rather than in export_test.go because the hub's end-to-end test calls
+// it from another package.
 func (p *PerCoreCPU) SetProcRootForTest(root string) { p.procRoot = root }
 
 // Collect implements Collector.

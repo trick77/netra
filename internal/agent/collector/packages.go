@@ -66,9 +66,6 @@ func (p *Packages) EmitsBaseline() bool { return true }
 // Name implements Collector.
 func (p *Packages) Name() string { return "packages" }
 
-// SetClockForTest replaces the clock used for the daily floor.
-func (p *Packages) SetClockForTest(fn func() time.Time) { p.now = fn }
-
 // Capabilities implements CapabilityReporter.
 //
 // An rpm host reports an unsupported format rather than a failure: a RHEL host

@@ -243,18 +243,6 @@ func NewContainers(cgroupRoot, procRoot string, lister ContainerLister, pidHost 
 // Name implements Collector.
 func (c *Containers) Name() string { return "containers" }
 
-// SetCgroupRootForTest repoints the collector at a different fixture tree.
-func (c *Containers) SetCgroupRootForTest(root string) { c.cgroupRoot = root }
-
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (c *Containers) SetProcRootForTest(root string) { c.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the scrape interval.
-func (c *Containers) SetClockForTest(fn func() time.Time) { c.now = fn }
-
-// SetReadlinkForTest replaces the readlink used to resolve namespace links.
-func (c *Containers) SetReadlinkForTest(fn func(string) (string, error)) { c.readlink = fn }
-
 // Capability values reported by Containers for per-container networking.
 const (
 	// capNetNamespaced: cgroup.procs names host PIDs, and without pid: host

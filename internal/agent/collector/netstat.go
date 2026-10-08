@@ -56,12 +56,6 @@ func NewNetstat(procRoot string) *Netstat {
 // Name implements Collector.
 func (n *Netstat) Name() string { return "netstat" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (n *Netstat) SetProcRootForTest(root string) { n.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the scrape interval.
-func (n *Netstat) SetClockForTest(fn func() time.Time) { n.now = fn }
-
 // Collect implements Collector.
 func (n *Netstat) Collect(_ context.Context) (*Result, error) {
 	sample := &netrav1.HostSample{}

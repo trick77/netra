@@ -60,12 +60,6 @@ func NewDiskIO(procRoot string) *DiskIO {
 // Name implements Collector.
 func (d *DiskIO) Name() string { return "diskio" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (d *DiskIO) SetProcRootForTest(root string) { d.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the scrape interval.
-func (d *DiskIO) SetClockForTest(fn func() time.Time) { d.now = fn }
-
 // Collect implements Collector.
 func (d *DiskIO) Collect(_ context.Context) (*Result, error) {
 	cur, err := d.read()

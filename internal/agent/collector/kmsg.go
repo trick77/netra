@@ -138,16 +138,6 @@ func (k *Kmsg) EmitsBaseline() bool { return false }
 // to re-report, and a ResendInventory that re-read the ring would replay
 // history as fresh events -- precisely what the opening seek exists to prevent.
 
-// SetSourceForTest replaces the device, the uptime anchor and the clock.
-func (k *Kmsg) SetSourceForTest(
-	open func() (KmsgSource, error),
-	uptime func() (time.Duration, error),
-	now func() time.Time,
-) {
-	k.newSource, k.uptime, k.now = open, uptime, now
-	k.src, k.openErr = nil, nil
-}
-
 // Capabilities implements CapabilityReporter.
 func (k *Kmsg) Capabilities() map[string]string {
 	switch {
@@ -366,9 +356,9 @@ func readUptime(procRoot string) (time.Duration, error) {
 
 // KmsgSource yields whole records, one per call.
 //
-// Exported because it is the seam the tests and the simulator stand in on --
-// see NewSliceSource -- and an unexported interface cannot be named from
-// either.
+// Exported because it is the seam the tests stand in on -- see
+// NewSliceSource -- and an unexported interface cannot be named from a
+// _test package.
 type KmsgSource interface {
 	// ReadRecord returns the next record. io.EOF means the drain is finished
 	// for now -- the device is non-blocking and has nothing more to give --
@@ -434,7 +424,7 @@ func (d *deviceSource) ReadRecord() ([]byte, error) {
 // Close implements KmsgSource.
 func (d *deviceSource) Close() error { return syscall.Close(d.fd) }
 
-// sliceSource serves pre-split records, for tests and for the simulator.
+// sliceSource serves pre-split records, for tests.
 type sliceSource struct {
 	records [][]byte
 	gapAt   int // index at which to return errKmsgGap once; -1 for never

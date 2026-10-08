@@ -63,14 +63,6 @@ func NewKernelStat(procRoot string) *KernelStat {
 // Name implements Collector.
 func (k *KernelStat) Name() string { return "kernelstat" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree so a
-// test can simulate the passage of time between two scrapes.
-func (k *KernelStat) SetProcRootForTest(root string) { k.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the interval between two
-// scrapes, so rate arithmetic is exact rather than timing-dependent.
-func (k *KernelStat) SetClockForTest(fn func() time.Time) { k.now = fn }
-
 // Collect implements Collector.
 func (k *KernelStat) Collect(_ context.Context) (*Result, error) {
 	sample := &netrav1.HostSample{}

@@ -179,14 +179,6 @@ func NewSystemd(lister UnitLister) *Systemd {
 	return &Systemd{lister: lister, now: time.Now}
 }
 
-// SetClockForTest replaces the clock used for the snapshot floor.
-func (s *Systemd) SetClockForTest(fn func() time.Time) { s.now = fn }
-
-// SetListerForTest swaps the unit source, so a test can change what systemd
-// reports between two scrapes without rebuilding the collector and losing the
-// previous state the transition detection depends on.
-func (s *Systemd) SetListerForTest(l UnitLister) { s.lister = l }
-
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
 // agent's startup priming. Its first Collect reports the units that are
 // already failed, and carries the snapshot besides -- the snapshot is gated on

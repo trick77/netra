@@ -333,9 +333,6 @@ func (s *Smart) usbAttached(devName string) bool {
 	return strings.Contains(string(filepath.Separator)+rel, "/usb")
 }
 
-// SetClockForTest replaces the clock used for the interval gate.
-func (s *Smart) SetClockForTest(fn func() time.Time) { s.now = fn }
-
 // due reports whether the interval has elapsed since the last run.
 //
 // The collector gates ITSELF rather than relying on the scrape loop, which

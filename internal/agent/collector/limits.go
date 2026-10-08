@@ -54,9 +54,6 @@ func NewLimits(procRoot string) *Limits {
 // Name implements Collector.
 func (l *Limits) Name() string { return "limits" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (l *Limits) SetProcRootForTest(root string) { l.procRoot = root }
-
 // Capabilities implements CapabilityReporter.
 func (l *Limits) Capabilities() map[string]string {
 	l.mu.Lock()
