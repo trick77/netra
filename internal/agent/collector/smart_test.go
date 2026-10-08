@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1091,6 +1092,46 @@ func TestSmartReportsAtaAndNvmeDrivesTogether(t *testing.T) {
 	}
 	if byDevice["nvme0"] == 0 {
 		t.Error("nvme0 rows = 0, want its health log reported alongside the SATA drive")
+	}
+}
+
+// SMART runs last in the scrape, on what the other collectors left of its
+// budget. Drives cut off by that deadline did not fail, and the run is not
+// done: the next scrape tries again rather than an hour later.
+func TestSmartRetriesNextScrapeWhenTheScrapeDeadlineCutsItShort(t *testing.T) {
+	twoDrives := `{"devices":[{"name":"/dev/sda","type":"sat"},{"name":"/dev/sdb","type":"sat"}]}`
+	var scans int
+	var cancel context.CancelFunc
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--scan") {
+			scans++
+			return []byte(twoDrives), nil
+		}
+		if cancel != nil {
+			cancel()
+			return nil, ctx.Err()
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	if _, err := testee.Collect(ctx); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "" {
+		t.Errorf("capability = %q, want none -- the drives were not read, not unreadable", got)
+	}
+
+	cancel = nil
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if scans != 2 || len(res.Smart) != 6 {
+		t.Errorf("scans = %d, rows = %d, want the next scrape to read both drives (2, 6)", scans, len(res.Smart))
 	}
 }
 

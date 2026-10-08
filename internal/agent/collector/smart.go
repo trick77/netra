@@ -536,9 +536,6 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		return &Result{}, nil //nolint:nilerr // unparseable smartctl JSON is recorded by s.fail() and retried on the next scrape rather than failing the whole scrape
 	}
 
-	s.lastRun, s.hasRun = s.now(), true
-	s.failures, s.unavailable = 0, false
-
 	// An empty scan is the quietest way SMART goes missing, and it was silent:
 	// no rows, no capability, no log. On a container agent it means no device
 	// was passed through -- the host's Storage tab then said "no drives
@@ -585,6 +582,11 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 
 		out, err := s.run(ctx, args...)
 		if err != nil {
+			if ctx.Err() != nil {
+				// Out of scrape budget, which says nothing about this drive or
+				// the ones after it. Left unstamped, so the next scrape retries.
+				return &Result{Smart: rows}, nil //nolint:nilerr // the scrape deadline is not a SMART failure; the unstamped run is retried next scrape
+			}
 			// One unreadable drive must not cost the others their reading.
 			unreadable++
 			continue
@@ -636,6 +638,9 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 			silent++
 		}
 	}
+
+	s.lastRun, s.hasRun = s.now(), true
+	s.failures, s.unavailable = 0, false
 
 	// Drives were found and the --all on every one of them failed, timed out
 	// or would not parse. A different fault from an empty scan and a different
