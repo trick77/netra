@@ -564,6 +564,11 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	silent := 0
 	var skippedUSB []string
 
+	nodes := map[string]int{}
+	for _, dev := range scan.Devices {
+		nodes[dev.Name]++
+	}
+
 	for _, dev := range scan.Devices {
 		if s.usbAttached(dev.Name) {
 			// Counted as unreadable would be a lie -- nothing was attempted.
@@ -615,7 +620,8 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		name := strings.TrimPrefix(dev.Name, "/dev/")
 		// A RAID controller's disks share one node (/dev/bus/0) and differ
 		// only by the type's ",N" disk number, which keeps them apart here.
-		if strings.Contains(dev.Type, ",") {
+		// A node listed once keeps its plain name, whatever its type says.
+		if nodes[dev.Name] > 1 {
 			name += ":" + dev.Type
 		}
 		for _, attr := range d.AtaSmartAttributes.Table {

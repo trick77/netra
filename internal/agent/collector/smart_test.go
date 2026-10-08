@@ -1153,3 +1153,20 @@ func TestSmartNamesEachDiskBehindARaidController(t *testing.T) {
 		t.Errorf("devices = %v, want bus/0:megaraid,0 and bus/0:megaraid,1", devices)
 	}
 }
+
+// Only a shared node needs the type to tell its disks apart. A lone drive
+// whose type merely carries a comma keeps its plain name.
+func TestSmartKeepsThePlainNameOfALoneDriveWithACommaType(t *testing.T) {
+	scan := `{"devices":[{"name":"/dev/sdb","type":"sat,12"}]}`
+	testee := collector.NewSmart(time.Hour, fakeSmartctl(scan, deviceJSON), "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	for _, a := range res.Smart {
+		if a.GetDevice() != "sdb" {
+			t.Fatalf("device = %q, want sdb", a.GetDevice())
+		}
+	}
+}
