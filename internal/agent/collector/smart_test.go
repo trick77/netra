@@ -1180,6 +1180,62 @@ func TestSmartResumesACutPassInsteadOfRestartingIt(t *testing.T) {
 	}
 }
 
+// A dying drive can keep smartctl in error recovery past any budget. Resuming
+// at it every scrape would spawn a smartctl a minute and never read the drives
+// behind it, so a drive that cuts two passes in a row is passed over.
+func TestSmartPassesOverADriveThatOutlastsEveryBudget(t *testing.T) {
+	threeDrives := `{"devices":[{"name":"/dev/sda","type":"sat"},{"name":"/dev/sdb","type":"sat"},{"name":"/dev/sdc","type":"sat"}]}`
+	reads := map[string]int{}
+	var cancel context.CancelFunc
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--scan") {
+			return []byte(threeDrives), nil
+		}
+		reads[args[2]]++
+		if args[2] == "/dev/sdb" {
+			cancel()
+			return nil, ctx.Err()
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+
+	for range 5 {
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		if _, err := testee.Collect(ctx); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		cancel()
+	}
+
+	if reads["/dev/sdb"] != 2 {
+		t.Errorf("/dev/sdb tried %d times, want 2", reads["/dev/sdb"])
+	}
+	if reads["/dev/sdc"] != 1 {
+		t.Errorf("/dev/sdc read %d times, want 1", reads["/dev/sdc"])
+	}
+
+	// The first drive too: a pass cut at index 0 is still a cut pass.
+	reads = map[string]int{}
+	firstHangs := `{"devices":[{"name":"/dev/sdb","type":"sat"},{"name":"/dev/sdc","type":"sat"}]}`
+	threeDrives = firstHangs
+	testee = collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+	for range 5 {
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		if _, err := testee.Collect(ctx); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		cancel()
+	}
+	if reads["/dev/sdb"] != 2 || reads["/dev/sdc"] != 1 {
+		t.Errorf("first drive hangs: reads = %v, want sdb 2 and sdc 1", reads)
+	}
+}
+
 // A MegaRAID scan lists every disk behind the controller as the same node,
 // told apart only by the type. The hub keeps one device per name.
 func TestSmartNamesEachDiskBehindARaidController(t *testing.T) {

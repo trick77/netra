@@ -255,6 +255,7 @@ type Smart struct {
 
 // smartPass is the progress of an unfinished pass over the scanned devices.
 type smartPass struct {
+	cut                      bool
 	next, unreadable, silent int
 }
 
@@ -572,6 +573,7 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	if s.cut.next > len(scan.Devices) {
 		s.cut = smartPass{}
 	}
+	resumed := s.cut.cut
 	unreadable := s.cut.unreadable
 	// silent counts devices that answered and parsed and still carried no
 	// attribute this collector stores.
@@ -605,8 +607,14 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 			if ctx.Err() != nil {
 				// Out of scrape budget, which says nothing about this drive or
 				// the ones after it. Left unstamped, so the next scrape resumes
-				// from this drive.
-				s.cut = smartPass{next: i, unreadable: unreadable, silent: silent}
+				// from this drive -- unless this drive also cut the last pass,
+				// which makes it the drive that is slow, not the budget.
+				next := i
+				if resumed && i == s.cut.next {
+					unreadable++
+					next++
+				}
+				s.cut = smartPass{cut: true, next: next, unreadable: unreadable, silent: silent}
 				return &Result{Smart: rows}, nil //nolint:nilerr // the scrape deadline is not a SMART failure; the unstamped run is retried next scrape
 			}
 			// One unreadable drive must not cost the others their reading.
