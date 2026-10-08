@@ -38,7 +38,13 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 
 	// The admin API answers 401 to an unauthenticated caller; the UI sends it
 	// to a login page instead. Both accept the same credential.
-	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now, cfg.HubURL)))
+	//
+	// SameSite=Lax still sends the session cookie on a form POST from a
+	// sibling subdomain, so a cross-origin browser mutation is refused here.
+	// A request carrying neither Sec-Fetch-Site nor Origin (curl, netra-sim)
+	// passes: it is not a browser, and cannot be riding a cookie.
+	mux.Handle("/api/v1/", http.NewCrossOriginProtection().Handler(
+		RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now, cfg.HubURL))))
 
 	// /login and /logout sit outside RequireAdmin: this is where an
 	// unauthenticated browser is sent, so gating them would loop.
