@@ -700,9 +700,8 @@ func (s *Store) scanDrives(ctx context.Context, scan *conditions.Scan) error {
 		lastSeen := hostSeen[k.hostID]
 
 		// The 7-day gate, against the HOST'S OWN last_seen rather than the wall
-		// clock -- ported from driveIsCurrent, for the mount's reason: an agent
-		// with a skewed clock must not lose its inventory to a fact about its
-		// NTP config.
+		// clock, for the mount's reason: an agent with a skewed clock must not
+		// lose its inventory to a fact about its NTP config.
 		//
 		// UNJUDGED, not absent. A drive netra has stopped receiving readings
 		// for might be pulled and might be a SMART collector that is failing;

@@ -132,8 +132,8 @@ func (s *Service) Conditions(ctx context.Context, _ time.Time) (ConditionsRespon
 //
 // The comparison has to match the scan's or the page and the engine disagree
 // about which readings are current -- and the host's clock is the reference for
-// the reason driveIsCurrent gives: an agent with a skewed clock would otherwise
-// lose its whole inventory to a fact about its NTP config.
+// the reason conditions.DriveIsCurrent gives: an agent with a skewed clock
+// would otherwise lose its whole inventory to a fact about its NTP config.
 //
 // A subject with no reading at all is NOT stale. It is a condition whose kind
 // has no subject to measure, or one whose subject row has not landed yet;

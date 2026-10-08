@@ -116,8 +116,8 @@ describe("currentFilesystems", () => {
     expect(kept?.map((fs) => fs.label)).toEqual(["pool"]);
   });
 
-  // driveIsCurrent's rule, for the same reason: with no reference point the
-  // honest answer is the reading netra holds.
+  // DriveIsCurrent's rule in the hub, for the same reason: with no reference
+  // point the honest answer is the reading netra holds.
   it("keeps a mount whose reading has no timestamp", () => {
     expect(
       currentFilesystems({

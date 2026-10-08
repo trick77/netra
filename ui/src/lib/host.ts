@@ -46,7 +46,7 @@ export const STALE_THRESHOLD_MS = 3 * SCRAPE_INTERVAL_S * 1000;
  * rather than generous, because the filesystem collector runs on EVERY scrape
  * tick rather than on an interval of its own (cmd/netra-agent/main.go) -- so
  * a mount's ts and its host's last_seen come out of the same batch. That is
- * the difference from DRIVE_STALE_MS in features/host/smart.ts, which is a
+ * the difference from DriveStaleAfter in internal/hub/conditions, which is a
  * week wide because AGENT_SMART_INTERVAL is the operator's to set.
  */
 export const MOUNT_STALE_MS = STALE_THRESHOLD_MS;
@@ -55,7 +55,7 @@ export const MOUNT_STALE_MS = STALE_THRESHOLD_MS;
  * The mounts a host still has, from the gauge the hub stores per filesystem.
  *
  * The rule is one comparison, and it is against the HOST'S OWN last_seen
- * rather than the wall clock -- the discipline driveIsCurrent already follows,
+ * rather than the wall clock -- the discipline the hub's DriveIsCurrent follows,
  * and the reason is the same: an agent with a skewed clock would otherwise
  * lose its whole inventory to a fact about its NTP config. So:
  *
@@ -75,7 +75,7 @@ export const MOUNT_STALE_MS = STALE_THRESHOLD_MS;
  * defence rather than removing it, because the window's last slot is also
  * what went blank when the host went away.
  *
- * A mount with no ts is kept, on driveIsCurrent's reasoning: with no
+ * A mount with no ts is kept, on DriveIsCurrent's reasoning: with no
  * reference point the honest answer is the reading netra holds.
  *
  * null when the host carries no `filesystems` at all -- an older hub, or one
