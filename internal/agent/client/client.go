@@ -663,10 +663,15 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	// The handshake probe runs HERE rather than around the post, which is why
 	// -- unlike post_latency_ms -- it does not lag a scrape: it lands in the
 	// sample it measured. Both gauges stay unset when no handshake completed,
-	// and the failure counter is what carries the outage.
-	if probe := c.probeHub(ctx); probe.probed {
-		agent.HubConnectUs = ptr(probe.minUs)
-		agent.HubConnectMaxUs = ptr(probe.maxUs)
+	// and the failure counter is what carries the outage. scrapeCtx, not ctx:
+	// the probe's resolve and dial timeouts summed past the tick on their own.
+	// Skipped once the collectors have spent the budget, since a probe that
+	// never ran is not a hub failure.
+	if scrapeCtx.Err() == nil {
+		if probe := c.probeHub(scrapeCtx); probe.probed {
+			agent.HubConnectUs = ptr(probe.minUs)
+			agent.HubConnectMaxUs = ptr(probe.maxUs)
+		}
 	}
 	agent.HubConnectFailuresTotal = ptr(c.hubConnectFailures)
 	sample.Agent = agent
@@ -1287,8 +1292,9 @@ func (c *Client) Run(ctx context.Context) error {
 			// refresh, ReadMemStats, and above all probeHub, which is a DNS
 			// lookup plus three sequential TCP handshakes on this same
 			// goroutine -- are invisible to the only duration netra records.
-			// A tick can therefore cost many times what the agent says a
-			// scrape cost, and nothing anywhere would say so.
+			// The probe shares the scrape deadline, so the tick stays inside
+			// the interval, but it can still cost many times what the agent
+			// says a scrape cost, and nothing anywhere would say so.
 			tickStart := time.Now()
 
 			c.ScrapeOnce(ctx)
