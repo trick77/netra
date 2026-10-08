@@ -279,7 +279,7 @@ export function diskState(
 ): { pct: number; severity: DiskSeverity } | null {
   if (used === null || free === null) return null;
   const capacity = used + free;
-  if (capacity === 0) return null;
+  if (capacity <= 0) return null;
   const pct = (used / capacity) * 100;
   return { pct, severity: diskSeverityFor(pct, free, thresholds) };
 }

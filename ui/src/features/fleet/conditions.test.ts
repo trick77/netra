@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   catalogueOf,
   diskSeverityFor,
+  diskState,
   diskThresholds,
   EMPTY_CATALOGUE,
   failedUnitsShown,
@@ -515,6 +516,14 @@ describe("the disk thresholds", () => {
     const t = diskThresholds(CATALOGUE);
     expect(diskSeverityFor(97, null, t)).toBe("critical");
     expect(diskSeverityFor(91, undefined, t)).toBe("warning");
+  });
+
+  // A FUSE filesystem can report more free blocks than it has, underflowing
+  // used. The hub's UsePct gives up on capacity <= 0, so this does too.
+  it("judges nothing behind a negative capacity", () => {
+    const t = diskThresholds(CATALOGUE);
+    expect(diskState(-10 * GB, 5 * GB, t)).toBeNull();
+    expect(diskState(0, 0, t)).toBeNull();
   });
 });
 

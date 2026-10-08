@@ -286,8 +286,8 @@ export function fullestFilesystem(
     asOf: string | null,
     index: number,
   ) => {
-    if (used === null || free === null || used + free === 0) return;
-    const state = diskState(used, free, thresholds)!;
+    const state = diskState(used, free, thresholds);
+    if (state === null || free === null) return;
     const candidate = {
       mount,
       pct: state.pct,

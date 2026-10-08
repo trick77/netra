@@ -930,6 +930,20 @@ describe("the disk reading on a host that is not permanently up", () => {
     expect(got?.series).toEqual([]);
   });
 
+  // A FUSE filesystem reporting more free blocks than it has: nothing to rank.
+  it("skips a mount whose capacity underflowed", () => {
+    const got = fullestFilesystem(
+      null,
+      [
+        gauge({ label: "fuse", used: -10, free: 5 }),
+        gauge({ label: "pool", used: 87, free: 13 }),
+      ],
+      THRESHOLDS,
+    );
+
+    expect(got?.mount).toBe("/mnt/pool");
+  });
+
   // The commoner case, and the one the reader sees: off since this morning,
   // so the window holds the shape up to the moment it stopped. The line keeps
   // its gap and the bar keeps the last figure.
