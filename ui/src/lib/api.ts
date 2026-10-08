@@ -28,6 +28,9 @@ export type Host = {
   id: number;
   hostname: string;
   last_seen: string | null;
+  // When the hub last took a batch, on the hub's clock; last_seen is the
+  // agent's. Optional: an older hub does not send it.
+  received_at?: string | null;
   cpu_total: number | null;
   mem_used: number | null;
   mem_total: number | null;

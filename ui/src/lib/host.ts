@@ -132,17 +132,20 @@ export type HostStatus = {
 // features/fleet/hostColumns.tsx.
 
 export function hostStatus(
-  host: Pick<Host, "last_seen">,
+  host: Pick<Host, "last_seen" | "received_at">,
   now: Date = new Date(),
 ): HostStatus {
-  if (host.last_seen === null) {
+  // received_at is the hub's clock; last_seen is the agent's, and a slow
+  // agent clock would otherwise read as offline while it is still talking.
+  const seen = host.received_at ?? host.last_seen;
+  if (seen === null) {
     // Never seen is not the same fact as gone quiet, and the host admin page
     // shows it as the expected state right after creation -- but for
     // anything watching the fleet, a host that has never reported is exactly
     // as absent as one that stopped.
     return { severity: "critical", label: "never seen" };
   }
-  const ageMs = now.getTime() - new Date(host.last_seen).getTime();
+  const ageMs = now.getTime() - new Date(seen).getTime();
   if (!Number.isFinite(ageMs) || ageMs > STALE_THRESHOLD_MS) {
     return { severity: "critical", label: "offline" };
   }
@@ -155,7 +158,7 @@ export function hostStatus(
  * tile counts hosts the hub is hearing from. Its trouble is said in its own
  * row rather than by subtracting it from a headline count. */
 export function isReporting(
-  host: Pick<Host, "last_seen">,
+  host: Pick<Host, "last_seen" | "received_at">,
   now: Date = new Date(),
 ): boolean {
   return hostStatus(host, now).severity !== "critical";

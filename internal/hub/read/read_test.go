@@ -1882,3 +1882,30 @@ func TestIntegrationFleetDrivesRejectsAnEmptyHostList(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
 }
+
+// The online pill judges against received_at, the hub's clock, because
+// last_seen is the agent's: a host whose clock runs 5 min slow is reporting,
+// and its last_seen still reads 5 min old.
+func TestIntegrationHostCarriesReceivedAtOnTheHubClock(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	id := seedHost(t, pool, "slowclock")
+	exec(t, pool, `
+		INSERT INTO host_current (host_id, last_seen, received_at)
+		VALUES ($1, now() - interval '5 minutes', now())`, id)
+
+	hosts, err := svc.ListHosts(ctx)
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	host, err := svc.Host(ctx, id)
+	if err != nil {
+		t.Fatalf("Host: %v", err)
+	}
+	for name, got := range map[string]*time.Time{"list": hosts[0].ReceivedAt, "detail": host.ReceivedAt} {
+		if got == nil || time.Since(*got) > time.Minute {
+			t.Errorf("%s received_at = %v, want about now", name, got)
+		}
+	}
+}

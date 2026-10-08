@@ -22,10 +22,13 @@ type HostSummary struct {
 	ID       int32      `json:"id"`
 	Hostname string     `json:"hostname"`
 	LastSeen *time.Time `json:"last_seen"`
-	CPUTotal *float64   `json:"cpu_total"`
-	MemUsed  *int64     `json:"mem_used"`
-	MemTotal *int64     `json:"mem_total"`
-	UptimeS  *int64     `json:"uptime_s"`
+	// ReceivedAt is when the hub last took a batch from this host, on the
+	// hub's clock; last_seen is the agent's. Online/offline is judged on it.
+	ReceivedAt *time.Time `json:"received_at"`
+	CPUTotal   *float64   `json:"cpu_total"`
+	MemUsed    *int64     `json:"mem_used"`
+	MemTotal   *int64     `json:"mem_total"`
+	UptimeS    *int64     `json:"uptime_s"`
 	// NetRxBytes and NetTxBytes are the host's traffic summed over its
 	// interfaces at its last scrape, in bytes per second.
 	//
@@ -263,7 +266,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	// endpoint applies the same predicate from the same place.
 	rows, err := s.pool.Query(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''),
-		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
+		       c.last_seen, c.received_at, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.threads, coalesce(h.capabilities, '{}'::jsonb),
 		       h.location, h.provider, h.facility, h.os_name,
@@ -292,7 +295,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	for rows.Next() {
 		var h HostSummary
 		if err := rows.Scan(&h.ID, &h.Hostname,
-			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
+			&h.LastSeen, &h.ReceivedAt, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 			&h.Threads, &h.Capabilities,
 			&h.Location, &h.Provider, &h.Facility, &h.OSName,
@@ -320,7 +323,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 	// services_failed exists to catch.
 	err := s.pool.QueryRow(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''),
-		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
+		       c.last_seen, c.received_at, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.location, h.provider, h.facility,
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
@@ -341,7 +344,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		  ) fu ON TRUE`+filesystemsLateral+`
 		 WHERE h.id = $1`, hostID, failedUnitNames).Scan(
 		&h.ID, &h.Hostname,
-		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
+		&h.LastSeen, &h.ReceivedAt, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 		&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 		&h.Location, &h.Provider, &h.Facility,
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
