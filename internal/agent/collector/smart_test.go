@@ -1135,6 +1135,51 @@ func TestSmartRetriesNextScrapeWhenTheScrapeDeadlineCutsItShort(t *testing.T) {
 	}
 }
 
+// A pass that never fits one scrape's budget resumes where the last one was
+// cut, rather than re-reading the first drives every scrape and never
+// reaching the rest. Each drive is read once, then the interval holds.
+func TestSmartResumesACutPassInsteadOfRestartingIt(t *testing.T) {
+	threeDrives := `{"devices":[{"name":"/dev/sda","type":"sat"},{"name":"/dev/sdb","type":"sat"},{"name":"/dev/sdc","type":"sat"}]}`
+	reads := map[string]int{}
+	var scans, readsThisScrape int
+	var cancel context.CancelFunc
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--scan") {
+			scans++
+			readsThisScrape = 0
+			return []byte(threeDrives), nil
+		}
+		// One drive fits each scrape's budget; the next one hits the deadline.
+		if readsThisScrape == 1 {
+			cancel()
+			return nil, ctx.Err()
+		}
+		readsThisScrape++
+		reads[args[2]]++
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+
+	for range 4 {
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		if _, err := testee.Collect(ctx); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		cancel()
+	}
+
+	for _, d := range []string{"/dev/sda", "/dev/sdb", "/dev/sdc"} {
+		if reads[d] != 1 {
+			t.Errorf("%s read %d times, want 1 (reads = %v)", d, reads[d], reads)
+		}
+	}
+	if scans != 3 {
+		t.Errorf("scans = %d, want 3 -- the interval holds once every drive is read", scans)
+	}
+}
+
 // A MegaRAID scan lists every disk behind the controller as the same node,
 // told apart only by the type. The hub keeps one device per name.
 func TestSmartNamesEachDiskBehindARaidController(t *testing.T) {
