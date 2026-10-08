@@ -614,6 +614,11 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		before := len(rows)
 
 		name := strings.TrimPrefix(dev.Name, "/dev/")
+		// A RAID controller's disks share one node (/dev/bus/0) and differ
+		// only by the type's ",N" disk number, which keeps them apart here.
+		if strings.Contains(dev.Type, ",") {
+			name += ":" + dev.Type
+		}
 		for _, attr := range d.AtaSmartAttributes.Table {
 			rows = append(rows, &netrav1.SmartAttribute{
 				TsMs:       ts,

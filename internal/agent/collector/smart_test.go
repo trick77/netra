@@ -1093,3 +1093,22 @@ func TestSmartReportsAtaAndNvmeDrivesTogether(t *testing.T) {
 		t.Error("nvme0 rows = 0, want its health log reported alongside the SATA drive")
 	}
 }
+
+// A MegaRAID scan lists every disk behind the controller as the same node,
+// told apart only by the type. The hub keeps one device per name.
+func TestSmartNamesEachDiskBehindARaidController(t *testing.T) {
+	scan := `{"devices":[{"name":"/dev/bus/0","type":"megaraid,0"},{"name":"/dev/bus/0","type":"megaraid,1"}]}`
+	testee := collector.NewSmart(time.Hour, fakeSmartctl(scan, deviceJSON), "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	devices := map[string]bool{}
+	for _, a := range res.Smart {
+		devices[a.GetDevice()] = true
+	}
+	if !devices["bus/0:megaraid,0"] || !devices["bus/0:megaraid,1"] || len(devices) != 2 {
+		t.Errorf("devices = %v, want bus/0:megaraid,0 and bus/0:megaraid,1", devices)
+	}
+}
