@@ -842,7 +842,7 @@ func TestIntegrationUnitsListOnlyWhatNeedsAttention(t *testing.T) {
 
 	// Only the failed unit. backup.service is sitting in systemd's restart
 	// backoff, which sounds like it belongs here but is a single sighting
-	// rather than a rate -- see systemdstate.Notable. A unit that really is
+	// rather than a rate -- see systemdstate.NotableSQL. A unit that really is
 	// looping is caught by its transition count instead, which
 	// TestIntegrationUnitsListAUnitThatKeepsRestarting covers.
 	if len(got) != 1 {

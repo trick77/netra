@@ -7,10 +7,10 @@
 // returns. A copy in each would be two copies of a product rule that has to
 // agree, and nothing would catch them drifting apart.
 //
-// There is a THIRD copy, in TypeScript, at ui/src/features/host/tabs/
-// Overview.tsx (see notableUnit there). It cannot import this one, and no
-// compiler or linter in this repo can see across that boundary -- so a change
-// here is only half a change. The comment on the other side says the same.
+// There is a THIRD copy, in TypeScript, inline in needsAttention in
+// ui/src/features/host/tabs/Overview.tsx (`unit.state === "failed"`). It
+// cannot import this one, and no compiler or linter in this repo can see
+// across that boundary -- so a change here is only half a change.
 package systemdstate
 
 import "time"
@@ -19,8 +19,8 @@ import "time"
 // RESTARTING REPEATEDLY. Those are the two halves of one rule, and they are
 // answered differently:
 //
-//   - failed is a property of the unit's current state, which is what Notable
-//     below tests.
+//   - failed is a property of the unit's current state, which is what
+//     NotableSQL below tests.
 //   - restarting repeatedly is a RATE, so no amount of looking at the current
 //     state can answer it. It is counted from the event log, against
 //     FlapThreshold, in read.Units.
@@ -30,7 +30,9 @@ import "time"
 // panel that lists a unit the band calls fine is worse than either answer on
 // its own.
 
-// Notable reports whether a unit's state, on its own, deserves attention.
+// NotableSQL is the SQL predicate for whether a unit's state, on its own,
+// deserves attention. alias is the table alias the columns hang off ("u" or the
+// bare table name); pass "" when the columns are unqualified.
 //
 // Deliberately narrow: a host runs 300-400 loaded services, and a healthy one
 // is overwhelmingly `active/running` (a daemon) or `inactive/dead` (a oneshot
@@ -48,17 +50,6 @@ import "time"
 // looping slowly enough to miss the start limit is caught by the transition
 // count. Listing on the sighting would put a red badge on a service that is
 // most likely fine, on the one panel that exists to show only what is not.
-func Notable(state, _ string) bool {
-	return state == "failed"
-}
-
-// NotableSQL is Notable as a SQL predicate, for the callers that must apply it
-// to a set of rows rather than one value. alias is the table alias the columns
-// hang off ("u" or the bare table name); pass "" when the columns are
-// unqualified.
-//
-// Kept beside Notable rather than inlined at its call sites so the Go and SQL
-// forms are read together and cannot quietly diverge.
 func NotableSQL(alias string) string {
 	if alias != "" {
 		alias += "."
@@ -85,13 +76,13 @@ func NotableSQL(alias string) string {
 // a service dying and restarting every few minutes produces.
 //
 // This does NOT cover a unit crash-looping in milliseconds -- systemd's
-// StartLimitBurst escalates that to `failed` within seconds, and Notable
+// StartLimitBurst escalates that to `failed` within seconds, and NotableSQL
 // already catches it. What it covers is the slow loop that never trips the
 // start limit: a service that runs for a few minutes, dies, and comes back,
 // which today shows up as a healthy unit at every single scrape.
 //
-// The UI has its own copy of the threshold, in needsAttention in
-// ui/src/features/host/tabs/Overview.tsx. Change both.
+// The UI has its own copy of the threshold, FLAP_THRESHOLD in
+// ui/src/lib/host.ts. Change both.
 const (
 	FlapWindow    = time.Hour
 	FlapThreshold = 4
