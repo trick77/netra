@@ -959,7 +959,7 @@ func TestIntegrationAWedgedMountIsStillSeen(t *testing.T) {
 // Even a mount silent for days stays UNJUDGED rather than being declared gone.
 //
 // The hub cannot tell a hung NFS export from an unmounted volume: a mount the
-// agent cannot stat produces no sample at all, and markWedged re-arms its
+// agent cannot stat produces no sample at all, and wedgeTracker.mark re-arms its
 // backoff on every failed retry, so the reading freezes indefinitely in both
 // cases. Any age-based "it must be gone by now" would eventually resolve a
 // still-mounted, still-full disk without the hysteresis and destroy its onset.

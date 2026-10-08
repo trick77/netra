@@ -3,7 +3,6 @@ package collector
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -68,14 +67,8 @@ type Filesystems struct {
 	warnedEmpty bool
 
 	// wedged holds the backoff state of mountpoints whose statfs did not
-	// return in time, keyed by target. Same shape and same reasoning as the
-	// hwmon tracking in sensors.go -- the two are deliberately not shared yet,
-	// because unifying them means changing a collector that works.
-	wedged map[string]*wedgedPath
-
-	// scrapes counts Collect calls, which is the clock the backoff is measured
-	// in -- a retry is only meaningful when a scrape actually happens.
-	scrapes uint64
+	// return in time, keyed by target, for the reasons Sensors.wedged gives.
+	wedged wedgeTracker
 
 	// statfsTimeout bounds one statfs call. Always the statfsTimeout constant
 	// in production; a field so a test need not spend two seconds per wedged
@@ -112,6 +105,7 @@ func NewFilesystems(procRoot string, fsMounts map[string]string, statfs StatfsFu
 		fsMounts:      fsMounts,
 		statfs:        statfs,
 		statfsTimeout: statfsTimeout,
+		wedged:        wedgeTracker{noun: "mountpoint", key: "mountpoint"},
 	}
 }
 
@@ -162,89 +156,18 @@ var virtualFsTypes = map[string]bool{
 // D-state syscall cannot be cancelled -- not by a context, not by a signal. It
 // unblocks if and when the kernel lets it, and the buffered channel inside
 // deadlined lets it send and exit even though nothing is waiting. Stranding it
-// is the price of keeping the scrape loop alive, and skipWedged is what keeps
+// is the price of keeping the scrape loop alive, and the wedged backoff keeps
 // that price bounded: without the backoff, a permanently dead mount would
 // strand one goroutine per scrape for the life of the agent.
 func (f *Filesystems) statfsDeadlined(ctx context.Context, target string) (FsStat, error) {
-	if f.skipWedged(target) {
-		return FsStat{}, errWedged
-	}
-	// No budget left, so nothing is started. deadlined would otherwise launch
-	// the statfs anyway and abandon it at once -- on a scrape that keeps
-	// running out of time (a slow collector ahead of this one), a dead mount
-	// would strand one goroutine EVERY scrape while never being marked wedged,
-	// since markWedged deliberately skips an expired scrape. That is exactly
-	// the unbounded accumulation the backoff exists to prevent. It also makes
-	// the healthy mounts deterministic: with an already-done context both
-	// select cases are ready, so deadlined would return a value or a deadline
-	// error at random.
-	if err := ctx.Err(); err != nil {
-		return FsStat{}, err
-	}
-
-	st, err := deadlined(ctx, f.statfsTimeout, func() (FsStat, error) {
+	return wedgeDeadlined(ctx, &f.wedged, f.statfsTimeout, target, func() (FsStat, error) {
 		return f.statfs(target)
 	})
-	if errors.Is(err, context.DeadlineExceeded) {
-		// Only if THIS call's own deadline is what expired. deadlined derives
-		// its context from the scrape's, so a scrape that has already run out
-		// of budget -- or is being torn down -- returns DeadlineExceeded here
-		// for every remaining mountpoint. Marking those would back off healthy
-		// filesystems because some earlier collector was slow, and a marker on
-		// a busy host would drift into a seventeen-hour cadence having never
-		// once blocked.
-		if ctx.Err() == nil {
-			f.markWedged(target)
-		}
-		return FsStat{}, err
-	}
-	// Cleared on any outcome that was not a timeout, including an error: a
-	// mount that returns ENOENT promptly is not wedged, it is gone.
-	f.clearWedged(target)
-
-	return st, err
-}
-
-// skipWedged reports whether this target is still inside its backoff window.
-func (f *Filesystems) skipWedged(target string) bool {
-	w := f.wedged[target]
-	return w != nil && f.scrapes < w.retryAt
-}
-
-// markWedged records a statfs that did not return in time and schedules when
-// the mountpoint may be tried again.
-func (f *Filesystems) markWedged(target string) {
-	if f.wedged == nil {
-		f.wedged = make(map[string]*wedgedPath)
-	}
-
-	w := f.wedged[target]
-	if w == nil {
-		w = &wedgedPath{}
-		f.wedged[target] = w
-	}
-	w.failures++
-
-	backoff := uint64(1) << min(w.failures-1, wedgedBackoffShifts)
-	w.retryAt = f.scrapes + backoff
-
-	slog.Warn("statfs timed out; backing off this mountpoint",
-		"mountpoint", target, "timeout", f.statfsTimeout,
-		"failures", w.failures, "skipping_scrapes", backoff)
-}
-
-// clearWedged forgets a target's backoff once it answers again, so a server
-// that comes back is not held at a seventeen-hour cadence forever.
-func (f *Filesystems) clearWedged(target string) {
-	if f.wedged[target] != nil {
-		slog.Info("mountpoint recovered", "mountpoint", target)
-		delete(f.wedged, target)
-	}
 }
 
 // Collect implements Collector.
 func (f *Filesystems) Collect(ctx context.Context) (*Result, error) {
-	f.scrapes++
+	f.wedged.scrapes++
 
 	mounts, err := f.readMounts()
 	if err != nil {

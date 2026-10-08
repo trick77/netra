@@ -224,7 +224,7 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan, open
 		// The tempting rule is "stale beyond what the backoff explains, so the
 		// mount is gone" -- and the hub cannot support it. A mount the agent
 		// cannot stat produces NO sample at all (Filesystems.Collect skips it),
-		// and markWedged re-arms the backoff on every failed retry, so a hung
+		// and wedgeTracker.mark re-arms the backoff on every failed retry, so a hung
 		// NFS export freezes fc.ts indefinitely. From here that is
 		// byte-for-byte what an unmounted volume looks like. Any horizon picked
 		// would eventually call a still-mounted, still-full disk "no longer
