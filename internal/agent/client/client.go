@@ -366,6 +366,12 @@ func (c *Client) resendInventory() {
 func (c *Client) Prime(ctx context.Context) {
 	primed, failed, skipped := 0, 0, 0
 	ran := make([]collector.Collector, 0, len(c.collectors))
+
+	// The same group deadline collect() uses: ctx here is main's signal-only
+	// context, and a collector wedged at boot would otherwise keep CheckHub and
+	// Run from ever starting.
+	ctx, cancel := context.WithTimeout(ctx, c.scrapeTimeout)
+	defer cancel()
 	for _, col := range c.collectors {
 		if b, ok := col.(collector.BaselineEmitter); ok && b.EmitsBaseline() {
 			// Counted, not silently dropped: ok + failed would otherwise fall
