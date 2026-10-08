@@ -71,7 +71,7 @@ func Load() (Config, error) {
 		LogLevel:    envOr("BACKEND_LOG_LEVEL", "info"),
 		HubURL:      strings.TrimRight(os.Getenv("BACKEND_HUB_URL"), "/"),
 		OIDC: OIDCConfig{
-			Issuer:       strings.TrimRight(os.Getenv("BACKEND_OIDC_ISSUER"), "/"),
+			Issuer:       os.Getenv("BACKEND_OIDC_ISSUER"),
 			ClientID:     os.Getenv("BACKEND_OIDC_CLIENT_ID"),
 			ClientSecret: os.Getenv("BACKEND_OIDC_CLIENT_SECRET"),
 		},
