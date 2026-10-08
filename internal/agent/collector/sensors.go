@@ -553,12 +553,19 @@ func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) 
 	if s.skipWedged(path) {
 		return "", errWedged
 	}
+	// No budget left: start nothing, for the reason statfsDeadlined gives.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 
 	data, err := deadlined(ctx, s.readTimeout, func() ([]byte, error) {
 		return os.ReadFile(path) //nolint:gosec // reads the host pseudo-filesystem under procRoot/sysRoot, which come from AGENT_PROC_ROOT / AGENT_SYSFS_ROOT at startup, never from request data
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
-		s.markWedged(path)
+		// Only when this read's own deadline expired, not the scrape's.
+		if ctx.Err() == nil {
+			s.markWedged(path)
+		}
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 
@@ -586,12 +593,17 @@ func (s *Sensors) readDir(ctx context.Context, path string) ([]os.DirEntry, erro
 	if s.skipWedged(path) {
 		return nil, errWedged
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	entries, err := deadlined(ctx, s.readTimeout, func() ([]os.DirEntry, error) {
 		return os.ReadDir(path)
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
-		s.markWedged(path)
+		if ctx.Err() == nil {
+			s.markWedged(path)
+		}
 		return nil, fmt.Errorf("read dir %s: %w", path, err)
 	}
 

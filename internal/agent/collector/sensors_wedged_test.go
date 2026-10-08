@@ -272,3 +272,28 @@ func TestSensorsClearsTheBackoffWhenAWedgedPathDisappears(t *testing.T) {
 		t.Errorf("capability = %v after the path vanished, want none -- ENOENT is an answer, not a wedge", got)
 	}
 }
+
+// A scrape whose budget an earlier collector already spent reports every read
+// as DeadlineExceeded. None of those paths blocked, and backing them off would
+// hold a healthy hwmon tree at a doubling cadence.
+func TestSensorsDoesNotMarkAPathWedgedWhenTheScrapeItselfExpired(t *testing.T) {
+	root := t.TempDir()
+	chip := filepath.Join(root, "class", "hwmon", "hwmon0")
+	if err := os.MkdirAll(chip, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(chip, "name"), []byte("coretemp\n"), 0o644); err != nil {
+		t.Fatalf("write name: %v", err)
+	}
+
+	testee := collector.NewSensors(root, time.Second)
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if _, err := testee.Collect(expired); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities(); got != nil {
+		t.Errorf("capability = %v after an expired scrape, want none -- nothing was wedged", got)
+	}
+}
