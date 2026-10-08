@@ -668,12 +668,20 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 // containerKey is compose project + service, falling back to the container
 // name, and finally to the id.
 //
+// Replicas past the first carry their compose container number, since the hub
+// keeps one row per key and scrape. Replica 1 keeps the bare key, so a service
+// that is never scaled keeps its history.
+//
 // The id is the last resort precisely because it is unstable: Docker issues a
 // new one on every recreate, so a service that merely got a new image would
 // start a fresh series and lose its history.
 func containerKey(m ContainerMeta, id string) string {
 	if m.Project != "" && m.Service != "" {
-		return m.Project + "/" + m.Service
+		key := m.Project + "/" + m.Service
+		if n := m.Labels["com.docker.compose.container-number"]; n != "" && n != "1" {
+			key += "-" + n
+		}
+		return key
 	}
 	if m.Name != "" {
 		return m.Name
