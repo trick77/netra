@@ -1,6 +1,6 @@
-// Package admin holds the operations behind the hub's admin API: creating
-// hosts, minting and rotating their agent tokens, and editing the site and
-// provider dimensions.
+// Package admin holds the operations behind the hub's admin API: creating,
+// listing and deleting hosts, minting and rotating their agent tokens, and
+// deleting containers.
 //
 // The logic lives here rather than in the HTTP handlers so it can be tested
 // against a real database without an HTTP server, and so the handlers stay
