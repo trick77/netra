@@ -130,7 +130,7 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 		// agent is never installed raises nothing, and that is the right
 		// direction -- an empty row in the hosts list already says it, without
 		// putting a false outage in the log.
-		if lastSeen == nil {
+		if lastSeen == nil || receivedAt == nil {
 			scan.Unjudged[key] = true
 			continue
 		}

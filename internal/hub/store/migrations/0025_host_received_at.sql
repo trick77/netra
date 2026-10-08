@@ -6,7 +6,9 @@
 -- on this; last_seen stays for display.
 --
 -- Backfilled from last_seen so no host changes state at deploy. The default
--- stamps the row an ingest first inserts.
+-- stamps the row an ingest first inserts. NOT NULL because the silent scan
+-- reads it for every host with a row.
 ALTER TABLE host_current ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
-UPDATE host_current SET received_at = last_seen WHERE received_at IS NULL;
-ALTER TABLE host_current ALTER COLUMN received_at SET DEFAULT now();
+UPDATE host_current SET received_at = coalesce(last_seen, now()) WHERE received_at IS NULL;
+ALTER TABLE host_current ALTER COLUMN received_at SET DEFAULT now(),
+                         ALTER COLUMN received_at SET NOT NULL;

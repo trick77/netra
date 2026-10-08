@@ -3,8 +3,11 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/store"
@@ -471,6 +474,20 @@ func TestIntegrationScanFindsASilentHost(t *testing.T) {
 	}
 	if !f.OpenedTS.UTC().Equal(quiet.Truncate(time.Microsecond)) {
 		t.Errorf("opened_ts = %v, want received_at %v", f.OpenedTS.UTC(), quiet)
+	}
+}
+
+// The silent scan dereferences received_at for every host with a row, so the
+// column must not hold a NULL for it to find.
+func TestIntegrationHostCurrentRefusesANullReceivedAt(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(ctx, t, s, "cond-null-received")
+
+	_, err := s.Pool().Exec(ctx,
+		`INSERT INTO host_current (host_id, last_seen, received_at) VALUES ($1, now(), NULL)`, host)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23502" {
+		t.Fatalf("insert with NULL received_at: err = %v, want a not-null violation", err)
 	}
 }
 
