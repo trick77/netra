@@ -2077,10 +2077,12 @@ render_env() {
 
 # _env_value NAME VALUE — validate and export AGENT_VAL_<NAME>.
 #
-# Values are written UNQUOTED, because compose's env_file parser takes the rest
-# of the line literally and quotes would become part of the value. A newline or
-# carriage return therefore cannot be represented at all and is rejected rather
-# than mangled.
+# Compose's env_file parser strips an inline ` #...` comment from an unquoted
+# value and expands `$VAR` in it, so a value containing `#` or `$` (or starting
+# with a quote) is written single-quoted, which compose takes literally. Single
+# quotes have no escape, so such a value may not contain one. A newline or
+# carriage return cannot be represented at all and is rejected rather than
+# mangled.
 _env_value() {
     # A newline cannot be tested with `case "$2" in *"$(printf '\n')"*`: command
     # substitution strips trailing newlines, so the pattern would collapse to
@@ -2096,7 +2098,19 @@ _env_value() {
             "an env_file. Fix it and re-run."
         ;;
     esac
-    eval "AGENT_VAL_$1=\$2"
+    _ev_val=$2
+    case "$2" in
+    *'#'* | *'$'* | \'* | \"*)
+        case "$2" in
+        *"'"*)
+            die "the value for $1 contains # or \$ and a single quote, which cannot be" \
+                "represented together in an env_file. Fix it and re-run."
+            ;;
+        esac
+        _ev_val="'$2'"
+        ;;
+    esac
+    eval "AGENT_VAL_$1=\$_ev_val"
     eval "export AGENT_VAL_$1"
 }
 
@@ -2750,7 +2764,11 @@ resolve_token() {
 env_file_value() {
     [ -r "$1" ] || return 0
     _efv=$(sed -n "s/^[[:space:]]*${2}=//p" "$1" | sed -n '$p')
-    printf '%s' "${_efv%"${_efv##*[![:space:]]}"}"
+    _efv=${_efv%"${_efv##*[![:space:]]}"}
+    case "$_efv" in
+    \'*\') _efv=${_efv#\'} _efv=${_efv%\'} ;;
+    esac
+    printf '%s' "$_efv"
 }
 
 # force_seeded VAR — did --force take VAR's value from the existing .env?
@@ -3388,7 +3406,7 @@ sync_pid_host() {
 sync_fs_mounts() {
     [ -f "$1" ] || return 0
     _sf_want="${AGENT_BLK_FS_MOUNTS:-}"
-    _sf_have=$(sed -n 's/^AGENT_FS_MOUNTS=//p' "$1" | head -1)
+    _sf_have=$(env_file_value "$1" AGENT_FS_MOUNTS)
     if [ -n "$(sed -n '/^AGENT_FS_MOUNTS=/p' "$1")" ] && [ "$_sf_have" = "$_sf_want" ]; then
         return 0
     fi
@@ -3416,7 +3434,7 @@ sync_fs_mounts() {
 _check_env_value() {
     [ -n "$2" ] || return 0
     [ -f "$3" ] || return 0
-    if ! grep -qF "$1=$2" "$3"; then
+    if ! grep -qF -e "$1=$2" -e "$1='$2'" "$3"; then
         warn "$1 is not in the rendered .env, although you gave a value for it. The env" \
             "template fetched at ${REF} has no placeholder for it — most likely this" \
             "script is newer than the release its templates come from. Set $1 in" \
