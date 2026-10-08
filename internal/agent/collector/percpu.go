@@ -122,6 +122,9 @@ func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 	var firstSkipErr error
 
 	scanner := bufio.NewScanner(f)
+	// The intr line carries one counter per IRQ and can exceed bufio's 64 KiB
+	// default on a host with many of them.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) == 0 || !strings.HasPrefix(fields[0], "cpu") {

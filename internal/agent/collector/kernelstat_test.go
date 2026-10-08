@@ -1,6 +1,7 @@
 package collector_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -241,5 +242,23 @@ func TestKernelStatMissingProcRootIsAnError(t *testing.T) {
 	var sample netrav1.HostSample
 	if err := collectInto(k, &sample); err == nil {
 		t.Fatal("Collect() = nil, want an error when /proc/stat cannot be opened")
+	}
+}
+
+// The intr line lists one counter per IRQ, and on a many-IRQ host it outgrows
+// bufio's 64 KiB default line.
+func TestKernelStatReadsAnIntrLineLongerThan64KiB(t *testing.T) {
+	dir := t.TempDir()
+	intr := "intr 1" + strings.Repeat(" 12345678901", 7000)
+	writeFile(t, dir+"/stat", "cpu  1 2 3 4 5 6 7 8 0 0\n"+intr+"\nprocs_running 2\n")
+
+	k := newKernelStat(t, dir, fixedClock(time.Unix(1000, 0), time.Minute))
+
+	var sample netrav1.HostSample
+	if err := collectInto(k, &sample); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if sample.ProcsRunning == nil || *sample.ProcsRunning != 2 {
+		t.Errorf("ProcsRunning = %v, want 2 from the line after intr", sample.ProcsRunning)
 	}
 }
