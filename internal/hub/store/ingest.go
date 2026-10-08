@@ -192,16 +192,6 @@ func (s *Store) UpsertHostCurrent(
 	return nil
 }
 
-// TouchHostCurrent stamps received_at for a post that carried no host sample
-// worth keeping. Every sample dropped as implausible is still a host talking.
-func (s *Store) TouchHostCurrent(ctx context.Context, hostID int32) error {
-	if _, err := s.pool.Exec(ctx,
-		`UPDATE host_current SET received_at = now() WHERE host_id = $1`, hostID); err != nil {
-		return fmt.Errorf("touch host_current received_at: %w", err)
-	}
-	return nil
-}
-
 // InsertCPUCoreSamples writes one row per CPU core.
 //
 // Unlike the host families above, these rows carry their own timestamps: a

@@ -429,10 +429,10 @@ func TestIntegrationIngestDropsASampleTenMinutesAhead(t *testing.T) {
 	}
 }
 
-// An agent whose clock runs fast has every sample dropped, and is still
-// talking: the post must stamp received_at, or the host reads as silent while
-// it posts every minute.
-func TestIntegrationIngestWithEverySampleDroppedStillStampsReceivedAt(t *testing.T) {
+// An agent whose clock runs fast has every sample dropped. Nothing it sends
+// lands, so it must read as silent: counting the post as heard showed the host
+// online beside gauges frozen at its last accepted sample.
+func TestIntegrationIngestWithEverySampleDroppedIsNotHeard(t *testing.T) {
 	srv, token, s := newFixture(t)
 	ctx := context.Background()
 
@@ -464,16 +464,16 @@ func TestIntegrationIngestWithEverySampleDroppedStillStampsReceivedAt(t *testing
 		`SELECT received_at FROM host_current WHERE host_id = $1`, hostID).Scan(&receivedAt); err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	if !receivedAt.After(old) {
-		t.Errorf("received_at = %v, want it advanced past %v by the post", receivedAt, old)
+	if !receivedAt.Equal(old.Truncate(time.Microsecond)) {
+		t.Errorf("received_at = %v, want it left at %v", receivedAt, old)
 	}
 
 	scan, err := s.ScanConditions(ctx, time.Now(), nil, time.Now().Add(-24*time.Hour))
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if f, ok := scan.Bad[conditions.Key{HostID: hostID, Kind: conditions.KindSilent}]; ok {
-		t.Errorf("silent raised for a host that just posted: %+v", f)
+	if _, ok := scan.Bad[conditions.Key{HostID: hostID, Kind: conditions.KindSilent}]; !ok {
+		t.Errorf("no silent for a host none of whose samples landed")
 	}
 }
 
