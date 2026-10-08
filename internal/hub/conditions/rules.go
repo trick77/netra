@@ -73,6 +73,13 @@ const ScrapeInterval = 60 * time.Second
 // missed scrape is a lost packet; three is a machine that is not talking.
 const StaleAfter = 3 * ScrapeInterval
 
+// CurrentWindow is how far back the deviation scans look for a subject's
+// current reading, and so how old a temperature may be before the page calls
+// it stale. Five scrapes: wide enough that a host whose ingest arrived late
+// still has a reading, narrow enough that the scan never mistakes a stale
+// sample for a current one.
+const CurrentWindow = 5 * ScrapeInterval
+
 // Reporting says whether a host's data is current enough to conclude anything
 // from.
 //

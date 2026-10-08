@@ -149,9 +149,9 @@ func subjectIsStale(kind string, measured, lastSeen *time.Time) bool {
 	case conditions.KindDrive:
 		return lastSeen.Sub(*measured) > conditions.DriveStaleAfter
 	default:
-		// Temperature, on the same rule the disk uses: it is read from a
-		// 60-second series, so a reading older than three scrapes is the same
-		// "measured, long ago" a stale mount is.
+		// Temperature, on the window scanSensors reads its current reading
+		// from: a reading older than that is the same "measured, long ago" a
+		// stale mount is, and one inside it is what the scan just judged.
 		//
 		// Without this the row keeps quoting a temperature as though it were
 		// current. scanSensors deliberately marks a sensor that stopped
@@ -166,7 +166,7 @@ func subjectIsStale(kind string, measured, lastSeen *time.Time) bool {
 		// full. A second "not measured since" on the load row underneath would
 		// be the same fact twice.
 		if kind == conditions.KindTemperature {
-			return lastSeen.Sub(*measured) > conditions.StaleAfter
+			return lastSeen.Sub(*measured) > conditions.CurrentWindow
 		}
 		return false
 	}

@@ -21,12 +21,9 @@ import (
 // touches exactly one chunk, and the alternative was three more gauge tables
 // and the ingest writes to keep them true.
 //
-// currentWindow is how far back that look goes. Five scrapes: wide enough that
-// a host whose ingest arrived late still has a reading, narrow enough that the
-// scan never mistakes a stale sample for a current one -- and the staleness
-// check below does not rely on it anyway, because a window is not a judgement
-// about whether a subject is still there.
-const currentWindow = 5 * conditions.ScrapeInterval
+// conditions.CurrentWindow is how far back that look goes. The staleness check
+// below does not rely on it, because a window is not a judgement about whether
+// a subject is still there.
 
 // scanSensors raises the temperature condition.
 //
@@ -77,7 +74,7 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		        AND eh.subject = e.subject
 		        AND eh.hour    = EXTRACT(HOUR FROM l.ts AT TIME ZONE 'UTC')::smallint
 		 WHERE sen.kind = 'temperature'`,
-		currentWindow, conditions.KindTemperature)
+		conditions.CurrentWindow, conditions.KindTemperature)
 	if err != nil {
 		return fmt.Errorf("query sensors: %w", err)
 	}
@@ -146,7 +143,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		  LEFT JOIN metric_ewma_hour ehl
 		         ON ehl.host_id = h.id AND ehl.kind = $3 AND ehl.subject = ''
 		        AND ehl.hour = EXTRACT(HOUR FROM l.ts AT TIME ZONE 'UTC')::smallint`,
-		currentWindow, conditions.KindProcesses, conditions.KindLoad)
+		conditions.CurrentWindow, conditions.KindProcesses, conditions.KindLoad)
 	if err != nil {
 		return fmt.Errorf("query host gauges: %w", err)
 	}
