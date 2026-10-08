@@ -468,17 +468,17 @@ export function failedUnitsShown(
  * `detail` is `unknown` on the wire on purpose -- its shape belongs to the
  * observer that produced it, not to the API -- so anything that is not a plain
  * object simply says nothing, exactly as the event log's own reader does. */
-function fields(row: ConditionRow): Record<string, unknown> {
+export function fields(row: ConditionRow): Record<string, unknown> {
   if (typeof row.detail !== "object" || row.detail === null) return {};
   if (Array.isArray(row.detail)) return {};
   return row.detail as Record<string, unknown>;
 }
 
-function num(v: unknown): number | null {
+export function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function str(v: unknown): string | null {
+export function str(v: unknown): string | null {
   return typeof v === "string" && v !== "" ? v : null;
 }
 
@@ -501,6 +501,41 @@ function deviationValue(value: number | null, unit: string): string {
   return unit === "" ? text : `${text} ${unit}`;
 }
 
+/**
+ * A deviation row's reading and what it normally reads -- "61 C — normally
+ * under 46 C". null when the detail lost its reading.
+ */
+export function deviationReading(row: ConditionRow): string | null {
+  const detail = fields(row);
+  const value = num(detail.value);
+  if (value === null) return null;
+  const unit = str(detail.unit) ?? "";
+  // `normal` first, then `p99`: an open condition keeps the detail it opened
+  // with, and 0021 starts the moving average empty, so a row raised under the
+  // old percentile threshold survives its subject's whole re-warm -- a week
+  // for the host kinds. This one degrades gracefully without the fallback
+  // (the clause is simply dropped) but it degrades to LESS than it knows.
+  const normally = num(detail.normal) ?? num(detail.p99);
+
+  // The vendor's own limit is a different sentence from a calibrated one,
+  // and an operator deciding whether to act reads them differently: past the
+  // drive's stated limit is a fact about the hardware, above its usual range
+  // is a fact about the week.
+  // "at this hour", because the normal is now the normal for the hour the
+  // reading was taken in, and without saying so the threshold appears to
+  // wander through the day for no reason a reader can see. Only when the
+  // detail carries an hour: a row raised under the un-bucketed design has
+  // no hour and its sentence must not claim one.
+  const hourly = num(detail.hour) === null ? "" : " at this hour";
+  const because =
+    str(detail.source) === "device"
+      ? `past its ${deviationValue(num(detail.crit), unit)} limit`
+      : normally === null
+        ? ""
+        : `normally under ${deviationValue(normally, unit)}${hourly}`;
+  return `${deviationValue(value, unit)}${because === "" ? "" : ` — ${because}`}`;
+}
+
 function names(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.filter((one): one is string => typeof one === "string");
@@ -513,7 +548,7 @@ function names(v: unknown): string[] {
  * never arrive here -- a condition is definitionally something wrong, and the
  * hub's own CHECK constraint allows only these two.
  */
-function severityOf(row: ConditionRow): Severity {
+export function severityOf(row: ConditionRow): Severity {
   return row.severity === "critical" ? "critical" : "warning";
 }
 
@@ -551,7 +586,7 @@ function worstRow(rows: readonly ConditionRow[]): ConditionRow {
  * volume look identical from where it stands. So the row stays and the reader
  * is told the number beside it is old.
  */
-function staleNote(row: ConditionRow, now: Date): string {
+export function staleNote(row: ConditionRow, now: Date): string {
   if (!row.stale) return "";
   return ` — not measured since ${relative(row.measured_ts, now)}`;
 }
@@ -733,8 +768,7 @@ export function hostConditions(
     const all = byKind.get(kind);
     if (all === undefined || all.length === 0) continue;
     const row = worstRow(all);
-    const detail = fields(row);
-    const value = num(detail.value);
+    const reading = deviationReading(row);
 
     // A row whose detail lost its reading STILL APPEARS, named by the
     // catalogue. Skipping it would be the one failure this module is built to
@@ -742,7 +776,7 @@ export function hostConditions(
     // that rescues unrecognised kinds does not run for them either, and the
     // host would read clean on the fleet page while the hub had a condition
     // open on it. Terse beats absent -- see the note above `written`.
-    if (value === null) {
+    if (reading === null) {
       out.push({
         ...common(row),
         what: kindLabel(catalogue, kind),
@@ -752,42 +786,17 @@ export function hostConditions(
       continue;
     }
 
-    const unit = str(detail.unit) ?? "";
     // Every sensor over its own line, not just the worst. A host with three
     // hot drives is three things wrong, and collapsing to one row silently
     // loses the other two -- the same count the drive row a few lines up
     // carries, for the same reason.
     const more = all.length - 1;
     const subject = kind === "temperature" ? `${row.subject} ` : "";
-    // `normal` first, then `p99`: an open condition keeps the detail it opened
-    // with, and 0021 starts the moving average empty, so a row raised under the
-    // old percentile threshold survives its subject's whole re-warm -- a week
-    // for the host kinds. This one degrades gracefully without the fallback
-    // (the clause is simply dropped) but it degrades to LESS than it knows.
-    const normally = num(detail.normal) ?? num(detail.p99);
-
-    // The vendor's own limit is a different sentence from a calibrated one,
-    // and an operator deciding whether to act reads them differently: past the
-    // drive's stated limit is a fact about the hardware, above its usual range
-    // is a fact about the week.
-    // "at this hour", because the normal is now the normal for the hour the
-    // reading was taken in, and without saying so the threshold appears to
-    // wander through the day for no reason a reader can see. Only when the
-    // detail carries an hour: a row raised under the un-bucketed design has
-    // no hour and its sentence must not claim one.
-    const hourly = num(detail.hour) === null ? "" : " at this hour";
-    const because =
-      str(detail.source) === "device"
-        ? `past its ${deviationValue(num(detail.crit), unit)} limit`
-        : normally === null
-          ? ""
-          : `normally under ${deviationValue(normally, unit)}${hourly}`;
 
     out.push({
       ...common(row),
       what:
-        `${subject}${silent !== undefined ? "was" : "is"} ` +
-        `${deviationValue(value, unit)}${because === "" ? "" : ` — ${because}`}` +
+        `${subject}${silent !== undefined ? "was" : "is"} ${reading}` +
         (more > 0 ? ` (+${more} more)` : "") +
         staleNote(row, now),
       // Deliberately none. Evidence's marks are meter, units and reporting: a
