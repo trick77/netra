@@ -218,6 +218,38 @@ func TestLoginCoverIsServedWithoutASession(t *testing.T) {
 	}
 }
 
+// A form on a sibling subdomain must not log the admin out, or log a browser
+// in with the attacker's token.
+func TestIntegrationLoginAndLogoutRefuseCrossOriginPosts(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	for _, tc := range []struct {
+		path, site string
+		want       int
+	}{
+		{"/logout", "cross-site", http.StatusForbidden},
+		{"/logout", "same-site", http.StatusForbidden},
+		{"/login", "cross-site", http.StatusForbidden},
+		{"/logout", "same-origin", http.StatusSeeOther},
+	} {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+tc.path,
+			strings.NewReader(url.Values{"token": {testAdminToken}}.Encode()))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", tc.site)
+		resp, err := noRedirectClient(srv).Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Errorf("POST %s from %s: status = %d, want %d", tc.path, tc.site, resp.StatusCode, tc.want)
+		}
+	}
+}
+
 func TestIntegrationLogoutClearsTheSession(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 
