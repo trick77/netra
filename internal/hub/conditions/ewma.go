@@ -367,7 +367,7 @@ func (e EWMA) Update(x float64, ts time.Time, rule FamilyRule, lim Limits) EWMA 
 	// legitimate shift to 0.57 units a day -- a 14-unit step would take
 	// twenty-five days to be accepted.
 	//
-	// The band is the CAPPED one, computed the way judgeDeviation computes it,
+	// The band is the CAPPED one, computed the way JudgeDeviation computes it,
 	// from the bucket as it stood before this reading. When the fold decided
 	// against the uncapped band instead, the two disagreed wherever a cap bit:
 	// a drivetemp subject at normal 50 with an sd of 4 has an uncapped warn of

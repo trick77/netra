@@ -112,7 +112,7 @@ func (s *Store) FoldSamples(ctx context.Context) error {
 	//
 	// Returning early made one family's failure silently stop the other two:
 	// a persistent error in the temperature fold left processes and load never
-	// advancing, and three minutes later the freshness gate in judgeDeviation
+	// advancing, and three minutes later the freshness gate in conditions.JudgeDeviation
 	// filed every host-kind subject as unjudged -- with a log line naming only
 	// `temperature`, so the two kinds that had actually gone blind were the two
 	// nothing mentioned. It skipped the prune as well, so the state grew
@@ -192,7 +192,7 @@ func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
 		//
 		// The band decides whether `fast` counts as outside it, and
 		// excursion_since is stamped from that -- so a band any wider here than
-		// judgeDeviation's leaves a departure the judge can see with no
+		// conditions.JudgeDeviation's leaves a departure the judge can see with no
 		// excursion recorded against it, and the subject is filed unjudged for
 		// as long as it lasts. Getting the floor right is not enough: the caps
 		// move the band much further, and a drivetemp subject capped to its 60 C
