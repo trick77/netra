@@ -604,7 +604,10 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 
 		// GREATEST, so an out-of-order replay cannot walk last_seen backwards
 		// and mark a container gone in the UI while its newest sample is
-		// current.
+		// current. Every other column is kept as stored when the batch is
+		// older than last_seen, for the same reason: a count walked back by a
+		// late batch would read as a restart on the next fresh one. A CASE per
+		// column rather than DO UPDATE ... WHERE, which would return no id.
 		// What Docker said about this container, from the same newest row the
 		// name and image come from.
 		//
@@ -643,15 +646,26 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 			                        started_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $6, $11)
 			ON CONFLICT (host_id, container_key) DO UPDATE
-			   SET name = EXCLUDED.name, image = EXCLUDED.image, is_agent = EXCLUDED.is_agent,
+			   SET name = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                   THEN EXCLUDED.name ELSE containers.name END,
+			       image = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                    THEN EXCLUDED.image ELSE containers.image END,
+			       is_agent = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                       THEN EXCLUDED.is_agent ELSE containers.is_agent END,
 			       last_seen = GREATEST(containers.last_seen, EXCLUDED.last_seen),
-			       docker_state = EXCLUDED.docker_state,
-			       health = EXCLUDED.health,
-			       labels = EXCLUDED.labels,
-			       restart_count = EXCLUDED.restart_count,
-			       started_at = EXCLUDED.started_at,
+			       docker_state = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                           THEN EXCLUDED.docker_state ELSE containers.docker_state END,
+			       health = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                     THEN EXCLUDED.health ELSE containers.health END,
+			       labels = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                     THEN EXCLUDED.labels ELSE containers.labels END,
+			       restart_count = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                            THEN EXCLUDED.restart_count ELSE containers.restart_count END,
+			       started_at = CASE WHEN EXCLUDED.last_seen >= containers.last_seen
+			                         THEN EXCLUDED.started_at ELSE containers.started_at END,
 			       state_ts = CASE
-			           WHEN containers.docker_state IS DISTINCT FROM EXCLUDED.docker_state
+			           WHEN EXCLUDED.last_seen >= containers.last_seen
+			            AND containers.docker_state IS DISTINCT FROM EXCLUDED.docker_state
 			           THEN EXCLUDED.last_seen
 			           ELSE containers.state_ts
 			       END

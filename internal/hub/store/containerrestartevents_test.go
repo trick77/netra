@@ -228,6 +228,50 @@ func TestIntegrationAnOutOfOrderBatchIsNotARecreate(t *testing.T) {
 	}
 }
 
+// The late batch must not overwrite the stored count either: the next fresh
+// batch is measured from it, and a count walked back to 3 reads 3 -> 5 as two
+// restarts that never happened.
+func TestIntegrationAnOutOfOrderBatchLeavesTheStoredCountAlone(t *testing.T) {
+	ctx := context.Background()
+	st := openMigrated(t)
+	id := seedInterfaceHost(t, st, "restart-late-count")
+
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	for _, row := range []*netrav1.ContainerSample{
+		restartSample("shop/web", base.Add(10*time.Minute), "nginx:2", u64(5), nil),
+		restartSample("shop/web", base.Add(5*time.Minute), "nginx:1", u64(3), nil),
+	} {
+		if _, err := st.InsertContainerSamples(ctx, id, []*netrav1.ContainerSample{row}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	var count int64
+	var image string
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT restart_count, image FROM containers WHERE host_id = $1`, id).Scan(&count, &image); err != nil {
+		t.Fatalf("query container: %v", err)
+	}
+	if count != 5 || image != "nginx:2" {
+		t.Errorf("stored count, image = %d, %q after a late batch, want 5, nginx:2", count, image)
+	}
+
+	if _, err := st.InsertContainerSamples(ctx, id, []*netrav1.ContainerSample{
+		restartSample("shop/web", base.Add(11*time.Minute), "nginx:2", u64(5), nil),
+	}); err != nil {
+		t.Fatalf("insert fresh: %v", err)
+	}
+	var rows int64
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM events WHERE host_id = $1 AND type LIKE 'container_%'`, id).
+		Scan(&rows); err != nil {
+		t.Fatalf("query events: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("recorded %d events after a late batch, want 0", rows)
+	}
+}
+
 // A decrease is a redeploy, and the images it replaced are worth naming.
 func TestIntegrationAFallingRestartCountIsARecreate(t *testing.T) {
 	ctx := context.Background()

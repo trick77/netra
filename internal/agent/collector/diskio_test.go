@@ -2,6 +2,7 @@ package collector_test
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -212,5 +213,25 @@ func TestDiskIOReportsAnUnreadableDiskstats(t *testing.T) {
 	}
 	if res != nil {
 		t.Errorf("Collect returned %+v alongside an error; want nil", res)
+	}
+}
+
+// The kernel prints the millisecond fields as 32-bit %u, so on a busy disk
+// they wrap at 2^32 while the op and sector counts keep climbing. That is not a
+// reset, and the delta runs across the wrap: 4294967290 -> 5 is 11 ms.
+func TestDiskIOReadsAMillisecondFieldAcrossItsWrap(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	writeFile(t, dir+"/diskstats", "8 0 sda 1000 0 2000 3000 4000 0 5000 6000 0 7000 4294967290\n")
+	testee := collector.NewDiskIO(dir)
+	diskioAt(t, testee, base)
+
+	writeFile(t, dir+"/diskstats", "8 0 sda 1100 0 6000 3200 4050 0 7000 6250 0 12000 5\n")
+	res := diskioAt(t, testee, base.Add(10*time.Second))
+
+	row := diskRow(t, res.Disks, "sda")
+	// 11 ms over 10 s.
+	if got := row.GetWeightedIoPct(); math.Abs(got-0.11) > 1e-9 {
+		t.Errorf("weighted_io_pct = %v, want 0.11", got)
 	}
 }

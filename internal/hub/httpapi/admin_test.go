@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trick77/netra/internal/hub/auth"
+	"github.com/trick77/netra/internal/hub/httpapi"
 )
 
 // "Shown once" is a property of the whole system, not of one handler: it is
@@ -150,6 +152,50 @@ func TestIntegrationAdminRotateReturnsANewWorkingToken(t *testing.T) {
 	}
 	if _, err := a.Authenticate(context.Background(), first); err == nil {
 		t.Error("the pre-rotation token still authenticates")
+	}
+}
+
+// SameSite=Lax still sends the session cookie on a form POST from a sibling
+// subdomain, so a cross-origin browser request must be refused before it can
+// revoke a host's token. Requests without browser headers (curl, netra-sim)
+// and the UI's own same-origin requests must still pass.
+func TestIntegrationAdminRefusesCrossOriginMutations(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	id, _ := createHost(t, srv, "web01")
+	path := fmt.Sprintf("/api/v1/hosts/%d/token", id)
+
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		want    int
+	}{
+		{"sibling subdomain", map[string]string{"Sec-Fetch-Site": "same-site"}, http.StatusForbidden},
+		{"foreign origin", map[string]string{"Origin": "https://evil.example"}, http.StatusForbidden},
+		{"same origin", map[string]string{"Sec-Fetch-Site": "same-origin"}, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			req.AddCookie(httpapi.NewSessionCookieForTest(testAdminToken, "", time.Now()))
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			resp, err := noRedirectClient(srv).Do(req)
+			if err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+		})
+	}
+
+	resp := doAdmin(t, srv, http.MethodPost, path, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("bearer with no browser headers: status = %d, want 200", resp.StatusCode)
 	}
 }
 

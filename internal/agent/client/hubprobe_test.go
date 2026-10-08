@@ -252,3 +252,57 @@ func TestHubProbeClosesEveryConnectionItOpens(t *testing.T) {
 		t.Fatal("no connection was closed by the probe; they would accumulate for the life of the agent")
 	}
 }
+
+// The probe spends the scrape's budget, not its own on top of it. With the
+// probe on Run's context, a blackholed hub stretched a scrape past the tick.
+func TestHubProbeStaysInsideTheScrapeDeadline(t *testing.T) {
+	c := probeClient(t, "http://hub.invalid:9999")
+	c.SetScrapeTimeoutForTest(100 * time.Millisecond)
+	c.SetResolverForTest(&net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	})
+
+	start := time.Now()
+	c.ScrapeOnce(context.Background())
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("scrape took %s with a 100ms scrape timeout; the probe ran outside it", elapsed)
+	}
+}
+
+// A probe the scrape deadline cuts off mid-way was not answered by the hub, it
+// ran out of time. Counting it would report a hub outage the network never had.
+func TestHubProbeCutByTheScrapeDeadlineIsNotAFailure(t *testing.T) {
+	c := probeClient(t, "http://hub.invalid:9999")
+	c.SetScrapeTimeoutForTest(100 * time.Millisecond)
+	c.SetResolverForTest(&net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	})
+
+	agent := c.ScrapeOnce(context.Background()).GetAgent()
+	if agent.HubConnectUs != nil {
+		t.Errorf("hub_connect_us = %d after a cut probe; want unset", agent.GetHubConnectUs())
+	}
+	if got := agent.GetHubConnectFailuresTotal(); got != 0 {
+		t.Errorf("hub_connect_failures_total = %d after the scrape deadline cut the probe; want 0", got)
+	}
+}
+
+// A scrape whose collectors spent the whole budget skips the probe rather than
+// counting a hub failure the network never had.
+func TestHubProbeSkippedNotFailedWhenCollectorsSpendTheBudget(t *testing.T) {
+	// A name, not an IP literal: resolving it is what an expired context fails.
+	c := client.New(testConfig("http://localhost:1"), []collector.Collector{newBlockingCollector()})
+	c.SetScrapeTimeoutForTest(100 * time.Millisecond)
+
+	if got := c.ScrapeOnce(context.Background()).GetAgent().GetHubConnectFailuresTotal(); got != 0 {
+		t.Errorf("hub_connect_failures_total = %d after a collector timeout; want 0", got)
+	}
+}

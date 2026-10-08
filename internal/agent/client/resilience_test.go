@@ -301,6 +301,25 @@ func TestPrimePanicIsRecovered(t *testing.T) {
 	}
 }
 
+// Prime runs on main's signal-only context, so without its own deadline a
+// collector waiting on a hung bus at boot kept CheckHub and Run from starting.
+func TestWedgedCollectorDoesNotStallPrime(t *testing.T) {
+	c := client.New(testConfig("http://127.0.0.1:1"), []collector.Collector{newBlockingCollector()})
+	c.SetScrapeTimeoutForTest(100 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		c.Prime(context.Background())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Prime did not return; a wedged collector blocks agent startup")
+	}
+}
+
 // A 503 is the opposite case and must keep its retry semantics -- the hub is
 // down, not refusing this body.
 func TestTransientRejectionRetainsTheBuffer(t *testing.T) {

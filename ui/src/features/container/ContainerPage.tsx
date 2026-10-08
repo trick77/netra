@@ -8,7 +8,11 @@
 import { Fragment, useState } from "react";
 import { Badge, type Severity } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
-import { containerIsGone, containerSamplesBlocked } from "./columns";
+import {
+  containerIsGone,
+  containerSamplesBlocked,
+  onHubClock,
+} from "./columns";
 import { networkUnavailable } from "../../lib/containers";
 import { purgeContainer } from "../../lib/api";
 import { Card } from "../../ui/Card";
@@ -323,6 +327,7 @@ export interface ContainerPageProps {
     id: number;
     hostname: string;
     last_seen: string | null;
+    received_at?: string | null;
     capabilities?: Record<string, string>;
   };
   /** A family=container response. The series for this container is picked
@@ -417,7 +422,15 @@ export function ContainerPage({
   // posting host samples while no container sample can land, so last_seen
   // ages forever. containerIsGone returns false on exactly that host and this
   // page must not call the container Silent instead.
-  const lastSeenMs = Date.parse(container.last_seen);
+  //
+  // On the hub's clock, as the lists read it: last_seen is the agent's, and a
+  // slow agent clock would read Silent while the hub is still taking samples.
+  const lastSeen = onHubClock(
+    container.last_seen,
+    host.last_seen,
+    host.received_at,
+  );
+  const lastSeenMs = Date.parse(lastSeen);
   const lastSampleMs =
     sampled &&
     !Number.isNaN(lastSeenMs) &&
@@ -457,7 +470,7 @@ export function ContainerPage({
   // header is how a page comes to say "up 20 m" beside "Silent".
   const uptime = uptimeSeconds({
     startedAt: container.started_at,
-    lastSeen: container.last_seen,
+    lastSeen,
     now,
   });
 

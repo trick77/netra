@@ -60,7 +60,7 @@ import type { DiskSeverity } from "./conditions";
  * construction (GET /api/v1/hosts/{id}/metrics), so there was no single call
  * that answered this, and the fleet-wide endpoint named here as the fix now
  * exists: GET /api/v1/metrics. fetchFleetTrends below asks it once per
- * family, and fetchHostTrends is the single-host form of the same question.
+ * family.
  *
  * Every request is settled independently. One host answering 500 must cost
  * that host's sparklines, not the fleet's.
@@ -286,8 +286,8 @@ export function fullestFilesystem(
     asOf: string | null,
     index: number,
   ) => {
-    if (used === null || free === null || used + free === 0) return;
-    const state = diskState(used, free, thresholds)!;
+    const state = diskState(used, free, thresholds);
+    if (state === null || free === null) return;
     const candidate = {
       mount,
       pct: state.pct,
@@ -384,8 +384,6 @@ function outranks(
   return a.pct > b.pct;
 }
 
-// Generic over what it swallows, so the per-host fetch (one MetricsResponse)
-// and the fleet fetch (a Map of them) share one failure rule.
 async function orNull<T>(p: Promise<T>): Promise<T | null> {
   try {
     return await p;
@@ -410,7 +408,7 @@ export const MAX_PER_CORE = 32;
 /**
  * One family at one range, for a chart enlarged out of a fleet row.
  *
- * The same rangeWindow-then-getMetrics shape the fan-out below uses, so a
+ * The same rangeWindow-then-ask shape the fan-out below uses, so a
  * widened dialog and a widened page ask the hub the same question -- and
  * deliberately NOT wrapped in orNull(): the fan-out swallows a failure into
  * a missing column because a fleet row has nineteen others to draw, while a
@@ -630,37 +628,6 @@ const FLEET_COLUMNS: Record<string, string[]> = {
   container: ["cpu_pct", "mem_used", "mem_limit"],
 };
 
-export async function fetchHostTrends(
-  hostId: number,
-  range: Range,
-  now?: Date,
-  /** The host's logical CPU count, deciding whether the per-core stack is
-   * worth fetching. Unknown means don't: an unbounded fetch on a host whose
-   * size nobody knows is exactly the case this guard is for. */
-  threads?: number | null,
-): Promise<HostTrends> {
-  const window = rangeWindow(range, now);
-  const ask = (family: string) =>
-    orNull(
-      getMetrics(hostId, {
-        family,
-        from: window.from,
-        to: window.to,
-        step: window.step,
-        columns: FLEET_COLUMNS[family],
-      }),
-    );
-
-  const [host, net, filesystem, cores] = await Promise.all([
-    ask("host"),
-    ask("net"),
-    ask("filesystem"),
-    wantsCores(threads) ? ask("cpu_core") : Promise.resolve(null),
-  ]);
-
-  return hostTrendsFrom(host, net, filesystem, cores);
-}
-
 /**
  * Whether a host is small enough for the per-core stack to be worth asking
  * for. Unknown thread count means don't: an unbounded fetch on a host whose
@@ -673,9 +640,8 @@ function wantsCores(threads?: number | null): boolean {
 /**
  * The five family responses turned into one row's trends.
  *
- * Split out of the fetch so the per-host and the fleet-wide paths cannot
- * disagree about what a row means: they ask the hub differently -- N requests
- * or one -- and then run the identical code over the identical response shape.
+ * Split out of the fetch: fetchFleetTrends hands it each host's share of the
+ * fleet-wide answers, in the per-host response shape.
  */
 export function hostTrendsFrom(
   host: MetricsResponse | null,

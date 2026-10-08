@@ -245,6 +245,18 @@ type Smart struct {
 	// genuine SAS host, whose drives answer with SCSI health pages rather than
 	// an attribute table -- so it has to be sayable rather than merely fixed.
 	noAttributes bool
+
+	// cut is where a pass the scrape deadline cut short stopped, with the
+	// tallies of the drives it did read. The next scrape resumes there: a pass
+	// that never fits one budget restarted from the first drive every scrape,
+	// waking it each minute and never reaching the drives behind it.
+	cut smartPass
+}
+
+// smartPass is the progress of an unfinished pass over the scanned devices.
+type smartPass struct {
+	cut                      bool
+	next, unreadable, silent int
 }
 
 // failureBackoff is the wait after a failed --scan, doubling per consecutive
@@ -332,9 +344,6 @@ func (s *Smart) usbAttached(devName string) bool {
 	}
 	return strings.Contains(string(filepath.Separator)+rel, "/usb")
 }
-
-// SetClockForTest replaces the clock used for the interval gate.
-func (s *Smart) SetClockForTest(fn func() time.Time) { s.now = fn }
 
 // due reports whether the interval has elapsed since the last run.
 //
@@ -536,9 +545,6 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		return &Result{}, nil //nolint:nilerr // unparseable smartctl JSON is recorded by s.fail() and retried on the next scrape rather than failing the whole scrape
 	}
 
-	s.lastRun, s.hasRun = s.now(), true
-	s.failures, s.unavailable = 0, false
-
 	// An empty scan is the quietest way SMART goes missing, and it was silent:
 	// no rows, no capability, no log. On a container agent it means no device
 	// was passed through -- the host's Storage tab then said "no drives
@@ -564,17 +570,30 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 
 	ts := time.Now().UnixMilli()
 	var rows []*netrav1.SmartAttribute
-	unreadable := 0
+	if s.cut.next > len(scan.Devices) {
+		s.cut = smartPass{}
+	}
+	resumed := s.cut.cut
+	unreadable := s.cut.unreadable
 	// silent counts devices that answered and parsed and still carried no
 	// attribute this collector stores.
-	silent := 0
+	silent := s.cut.silent
 	var skippedUSB []string
 
+	nodes := map[string]int{}
 	for _, dev := range scan.Devices {
+		nodes[dev.Name]++
+	}
+
+	for i, dev := range scan.Devices {
 		if s.usbAttached(dev.Name) {
 			// Counted as unreadable would be a lie -- nothing was attempted.
 			// It is simply not a drive this collector drives.
 			skippedUSB = append(skippedUSB, dev.Name)
+			continue
+		}
+		if i < s.cut.next {
+			// Read by the pass the last scrape's deadline cut short.
 			continue
 		}
 
@@ -585,6 +604,19 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 
 		out, err := s.run(ctx, args...)
 		if err != nil {
+			if ctx.Err() != nil {
+				// Out of scrape budget, which says nothing about this drive or
+				// the ones after it. Left unstamped, so the next scrape resumes
+				// from this drive -- unless this drive also cut the last pass,
+				// which makes it the drive that is slow, not the budget.
+				next := i
+				if resumed && i == s.cut.next {
+					unreadable++
+					next++
+				}
+				s.cut = smartPass{cut: true, next: next, unreadable: unreadable, silent: silent}
+				return &Result{Smart: rows}, nil //nolint:nilerr // the scrape deadline is not a SMART failure; the unstamped run is retried next scrape
+			}
 			// One unreadable drive must not cost the others their reading.
 			unreadable++
 			continue
@@ -614,6 +646,12 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		before := len(rows)
 
 		name := strings.TrimPrefix(dev.Name, "/dev/")
+		// A RAID controller's disks share one node (/dev/bus/0) and differ
+		// only by the type's ",N" disk number, which keeps them apart here.
+		// A node listed once keeps its plain name, whatever its type says.
+		if nodes[dev.Name] > 1 {
+			name += ":" + dev.Type
+		}
 		for _, attr := range d.AtaSmartAttributes.Table {
 			rows = append(rows, &netrav1.SmartAttribute{
 				TsMs:       ts,
@@ -631,6 +669,10 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 			silent++
 		}
 	}
+
+	s.lastRun, s.hasRun = s.now(), true
+	s.failures, s.unavailable = 0, false
+	s.cut = smartPass{}
 
 	// Drives were found and the --all on every one of them failed, timed out
 	// or would not parse. A different fault from an empty scan and a different

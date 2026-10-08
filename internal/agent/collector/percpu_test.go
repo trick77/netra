@@ -2,6 +2,7 @@ package collector_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/trick77/netra/internal/agent/collector"
@@ -178,5 +179,17 @@ func TestPerCoreCPUSkipsAnOddLineAndKeepsTheOtherCores(t *testing.T) {
 	}
 	if busy[1] {
 		t.Error("core 1 reported; its line is too short to read")
+	}
+}
+
+// The intr line on a many-IRQ host outgrows bufio's 64 KiB default line.
+func TestPerCoreCPUReadsPastAnIntrLineLongerThan64KiB(t *testing.T) {
+	dir := t.TempDir()
+	intr := "intr 1" + strings.Repeat(" 12345678901", 7000)
+	writeFile(t, dir+"/stat", "cpu0 500 10 150 4000 50 0 25 5 0 0\n"+intr+"\n")
+
+	testee := collector.NewPerCoreCPU(dir)
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
 	}
 }

@@ -72,5 +72,11 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	// itself routes a 401 the same way, and the two must agree.
 	mux.Handle("/", RequireAdmin(cfg.AdminToken, true, web.Handler()))
 
-	return mux
+	// SameSite=Lax still sends the session cookie on a form POST from a
+	// sibling subdomain, so a cross-origin browser mutation is refused on
+	// every route: the admin API, and /login and /logout too. A request
+	// carrying neither Sec-Fetch-Site nor Origin (an agent, curl, netra-sim)
+	// passes: it is not a browser, and cannot be riding a cookie. GET is never
+	// checked, so the OIDC callback is unaffected.
+	return http.NewCrossOriginProtection().Handler(mux)
 }

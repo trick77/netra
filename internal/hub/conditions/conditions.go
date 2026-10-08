@@ -35,19 +35,6 @@ const (
 	KindLoad        = "load"
 )
 
-// DeviationKinds are the kinds judged against a moving average of their own
-// history (metric_ewma) rather than against a constant.
-//
-// Named as a set because three separate places need the same answer: the
-// evaluator applies the open delay only to these, the catalogue orders them
-// together, and the scan reads baselines only for them. A list is cheaper to
-// keep honest than three switch statements that must agree.
-var DeviationKinds = map[string]bool{
-	KindTemperature: true,
-	KindProcesses:   true,
-	KindLoad:        true,
-}
-
 // Severities. `ok` and `neutral` are UI vocabulary for the absence of a
 // condition and never reach a row: a condition is definitionally something
 // wrong.

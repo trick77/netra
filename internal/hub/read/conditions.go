@@ -132,8 +132,8 @@ func (s *Service) Conditions(ctx context.Context, _ time.Time) (ConditionsRespon
 //
 // The comparison has to match the scan's or the page and the engine disagree
 // about which readings are current -- and the host's clock is the reference for
-// the reason driveIsCurrent gives: an agent with a skewed clock would otherwise
-// lose its whole inventory to a fact about its NTP config.
+// the reason conditions.DriveIsCurrent gives: an agent with a skewed clock
+// would otherwise lose its whole inventory to a fact about its NTP config.
 //
 // A subject with no reading at all is NOT stale. It is a condition whose kind
 // has no subject to measure, or one whose subject row has not landed yet;
@@ -149,9 +149,9 @@ func subjectIsStale(kind string, measured, lastSeen *time.Time) bool {
 	case conditions.KindDrive:
 		return lastSeen.Sub(*measured) > conditions.DriveStaleAfter
 	default:
-		// Temperature, on the same rule the disk uses: it is read from a
-		// 60-second series, so a reading older than three scrapes is the same
-		// "measured, long ago" a stale mount is.
+		// Temperature, on the window scanSensors reads its current reading
+		// from: a reading older than that is the same "measured, long ago" a
+		// stale mount is, and one inside it is what the scan just judged.
 		//
 		// Without this the row keeps quoting a temperature as though it were
 		// current. scanSensors deliberately marks a sensor that stopped
@@ -166,7 +166,7 @@ func subjectIsStale(kind string, measured, lastSeen *time.Time) bool {
 		// full. A second "not measured since" on the load row underneath would
 		// be the same fact twice.
 		if kind == conditions.KindTemperature {
-			return lastSeen.Sub(*measured) > conditions.StaleAfter
+			return lastSeen.Sub(*measured) > conditions.CurrentWindow
 		}
 		return false
 	}

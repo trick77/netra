@@ -144,8 +144,8 @@ func seedEqualityFixture(ctx context.Context, t *testing.T, s *store.Store,
 			lastSeen = &at
 		}
 		if _, err := s.Pool().Exec(ctx, `
-			INSERT INTO host_current (host_id, last_seen, services_failed)
-			VALUES ($1, $2, $3)`, id, lastSeen, h.ServicesFailed); err != nil {
+			INSERT INTO host_current (host_id, last_seen, received_at, services_failed)
+			VALUES ($1, $2, $2, $3)`, id, lastSeen, h.ServicesFailed); err != nil {
 			t.Fatalf("host_current %s: %v", h.Hostname, err)
 		}
 

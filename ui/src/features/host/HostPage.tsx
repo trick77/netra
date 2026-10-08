@@ -753,6 +753,8 @@ export function HostPage({
             id: host.id,
             hostname: host.hostname,
             last_seen: host.last_seen,
+            // Reporting is judged on the hub's clock, as the fleet does.
+            received_at: host.received_at,
             // The two denominators the saturation cells read against. This
             // page holds a HostDetail, which names them cores/memory_total
             // where the fleet's list row says threads/mem_total -- the same

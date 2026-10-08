@@ -60,6 +60,11 @@ type hubLatency struct {
 // synthetic probes, at no extra packets.
 func (c *Client) probeHub(ctx context.Context) hubLatency {
 	addrs, ok := c.hubTargets(ctx)
+	if !ok && ctx.Err() != nil {
+		// The scrape deadline ran out, which says nothing about the hub.
+		// Left as "not probed" rather than counted as an outage.
+		return hubLatency{}
+	}
 	if !ok {
 		// A hub URL that cannot be parsed or resolved is a failure to reach
 		// it, not an absence of measurement. Counting it is what keeps the
@@ -76,6 +81,9 @@ func (c *Client) probeHub(ctx context.Context) hubLatency {
 		}
 
 		rtt, ok := c.handshake(ctx, addrs)
+		if !ok && ctx.Err() != nil {
+			break
+		}
 		if !ok {
 			// A failed handshake is not a slow one. Recording it as a latency
 			// would put a 5000ms spike on the chart at the moment the link

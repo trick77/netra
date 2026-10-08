@@ -93,7 +93,7 @@ func (s *Store) ScanConditions(ctx context.Context, now time.Time,
 // has stopped talking, so nothing else would ever look.
 func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.Time) error {
 	rows, err := s.pool.Query(ctx, `
-		SELECT h.id, c.last_seen
+		SELECT h.id, c.last_seen, c.received_at
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id`)
 	if err != nil {
@@ -103,12 +103,14 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 
 	for rows.Next() {
 		var id int32
-		var lastSeen *time.Time
-		if err := rows.Scan(&id, &lastSeen); err != nil {
+		var lastSeen, receivedAt *time.Time
+		if err := rows.Scan(&id, &lastSeen, &receivedAt); err != nil {
 			return fmt.Errorf("scan host: %w", err)
 		}
 
-		reporting := conditions.Reporting(lastSeen, now)
+		// On received_at, the hub's clock, because now is too: last_seen is
+		// the agent's, and a slow one would read as silence.
+		reporting := conditions.Reporting(receivedAt, now)
 		scan.Reporting[id] = reporting
 
 		key := conditions.Key{HostID: id, Kind: conditions.KindSilent}
@@ -128,24 +130,24 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 		// agent is never installed raises nothing, and that is the right
 		// direction -- an empty row in the hosts list already says it, without
 		// putting a false outage in the log.
-		if lastSeen == nil {
+		if lastSeen == nil || receivedAt == nil {
 			scan.Unjudged[key] = true
 			continue
 		}
 
 		scan.Seen[key] = true
 
-		severity := conditions.SilentSeverity(lastSeen, now)
+		severity := conditions.SilentSeverity(receivedAt, now)
 		if severity == "" {
 			continue
 		}
 
-		// The one condition whose onset needs no derivation: last_seen IS the
-		// moment it began.
+		// The one condition whose onset needs no derivation: the last post
+		// received IS the moment it began.
 		scan.Bad[key] = conditions.Finding{
 			Key:      key,
 			Severity: severity,
-			OpenedTS: *lastSeen,
+			OpenedTS: *receivedAt,
 			Detail: map[string]any{
 				"last_seen": lastSeen.UTC().Format(time.RFC3339),
 			},
@@ -222,7 +224,7 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan, open
 		// The tempting rule is "stale beyond what the backoff explains, so the
 		// mount is gone" -- and the hub cannot support it. A mount the agent
 		// cannot stat produces NO sample at all (Filesystems.Collect skips it),
-		// and markWedged re-arms the backoff on every failed retry, so a hung
+		// and wedgeTracker.mark re-arms the backoff on every failed retry, so a hung
 		// NFS export freezes fc.ts indefinitely. From here that is
 		// byte-for-byte what an unmounted volume looks like. Any horizon picked
 		// would eventually call a still-mounted, still-full disk "no longer
@@ -609,24 +611,6 @@ func (s *Store) scanReporting(ctx context.Context, scan *conditions.Scan,
 	return nil
 }
 
-// judgedAttrIDs is every SMART attribute conditions.DriveFindings reads.
-//
-// The query filters on them because this is JUDGING, not rendering: read.Drives
-// selects every attribute a drive reported because it draws a table of them,
-// and an id DriveFindings has never heard of cannot change the verdict.
-var judgedAttrIDs = []int16{
-	conditions.ATAReallocatedSectors,
-	conditions.ATAReportedUncorrect,
-	conditions.ATACurrentPending,
-	conditions.ATAOfflineUncorrectable,
-	conditions.ATACRCErrors,
-	conditions.NVMeCriticalWarning,
-	conditions.NVMePercentageUsed,
-	conditions.NVMeAvailableSpare,
-	conditions.NVMeAvailableSpareThreshold,
-	conditions.NVMeMediaErrors,
-}
-
 // scanDrives raises the drive condition, one subject per DEVICE.
 //
 // Per device rather than per host, like disk and unlike failed-units. The fleet
@@ -638,6 +622,9 @@ func (s *Store) scanDrives(ctx context.Context, scan *conditions.Scan) error {
 	// LEFT JOIN LATERAL so a drive with no attributes still appears: the hub
 	// upserts a device before its attribute rows land, and such a drive is
 	// present-and-unmeasurable rather than absent.
+	//
+	// Filtered to conditions.JudgedAttrIDs because this is JUDGING, not
+	// rendering: read.Drives selects every attribute because it draws a table.
 	rows, err := s.pool.Query(ctx, `
 		SELECT d.host_id, d.device, d.last_seen, a.attr_id, a.raw, hc.last_seen
 		  FROM devices d
@@ -650,7 +637,7 @@ func (s *Store) scanDrives(ctx context.Context, scan *conditions.Scan) error {
 		        ORDER BY s.attr_id, s.ts DESC
 		  ) a ON TRUE
 		 WHERE hc.last_seen IS NOT NULL
-		 ORDER BY d.host_id, d.device`, judgedAttrIDs)
+		 ORDER BY d.host_id, d.device`, conditions.JudgedAttrIDs)
 	if err != nil {
 		return fmt.Errorf("query drives: %w", err)
 	}
@@ -698,9 +685,8 @@ func (s *Store) scanDrives(ctx context.Context, scan *conditions.Scan) error {
 		lastSeen := hostSeen[k.hostID]
 
 		// The 7-day gate, against the HOST'S OWN last_seen rather than the wall
-		// clock -- ported from driveIsCurrent, for the mount's reason: an agent
-		// with a skewed clock must not lose its inventory to a fact about its
-		// NTP config.
+		// clock, for the mount's reason: an agent with a skewed clock must not
+		// lose its inventory to a fact about its NTP config.
 		//
 		// UNJUDGED, not absent. A drive netra has stopped receiving readings
 		// for might be pulled and might be a SMART collector that is failing;

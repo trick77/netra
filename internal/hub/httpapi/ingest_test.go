@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/trick77/netra/internal/hub/auth"
+	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/store"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
@@ -402,6 +403,77 @@ func TestIntegrationIngestDropsImplausibleTimestampsButStoresTheRest(t *testing.
 	if lastSeen.Sub(wantLastSeen).Abs() > time.Second {
 		t.Fatalf("host_current.last_seen = %v, want ~%v (the plausible sample, not the far-future one)",
 			lastSeen, wantLastSeen)
+	}
+}
+
+// Ten minutes ahead is already implausible: every minute of future a sample
+// is allowed is a minute host_current's forward-only guard ignores real data.
+func TestIntegrationIngestDropsASampleTenMinutesAhead(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq:         1,
+		HostSamples: []*netrav1.HostSample{{TsMs: time.Now().Add(10 * time.Minute).UnixMilli()}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var count int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("stored rows = %d, want 0 -- a sample 10 min ahead must be dropped", count)
+	}
+}
+
+// An agent whose clock runs fast has every sample dropped. Nothing it sends
+// lands, so it must read as silent: counting the post as heard showed the host
+// online beside gauges frozen at its last accepted sample.
+func TestIntegrationIngestWithEverySampleDroppedIsNotHeard(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+
+	var hostID int32
+	if err := s.Pool().QueryRow(ctx, `SELECT id FROM hosts`).Scan(&hostID); err != nil {
+		t.Fatalf("host id: %v", err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO host_current (host_id, last_seen, received_at) VALUES ($1, $2, $2)`,
+		hostID, old); err != nil {
+		t.Fatalf("host_current: %v", err)
+	}
+
+	ahead := time.Now().Add(6 * time.Minute)
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq: 1,
+		HostSamples: []*netrav1.HostSample{
+			{TsMs: ahead.UnixMilli()},
+			{TsMs: ahead.Add(time.Minute).UnixMilli()},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var receivedAt time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT received_at FROM host_current WHERE host_id = $1`, hostID).Scan(&receivedAt); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !receivedAt.Equal(old.Truncate(time.Microsecond)) {
+		t.Errorf("received_at = %v, want it left at %v", receivedAt, old)
+	}
+
+	scan, err := s.ScanConditions(ctx, time.Now(), nil, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if _, ok := scan.Bad[conditions.Key{HostID: hostID, Kind: conditions.KindSilent}]; !ok {
+		t.Errorf("no silent for a host none of whose samples landed")
 	}
 }
 

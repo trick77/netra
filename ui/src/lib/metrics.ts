@@ -579,15 +579,10 @@ export function reduceToColumns(
   return out;
 }
 
-/** True when any value in the series is null -- the host reported nothing. */
-export function hasGaps(vals: readonly (number | null)[]): boolean {
-  return vals.some((v) => v === null);
-}
-
 /**
  * True when the series has a hole BETWEEN two readings.
  *
- * hasGaps counts the nulls at the ends too, and on a gridded series those are
+ * Nulls at the ends do not count, because on a gridded series those are
  * routine: griddedValues fills the whole window, so a container created an
  * hour into a 24-hour grid has twenty-three hours of leading nulls and one
  * that stopped has trailing ones. "Series gap" is a claim about a hole in
@@ -689,29 +684,6 @@ export function counterDeltas(
     out[i] = curr - prev;
   }
   return out;
-}
-
-/**
- * How much a cumulative counter grew across the whole window.
- *
- * Sums counterDeltas, so it inherits its rules: gaps and resets contribute
- * nothing rather than a fabricated jump. Returns null when the window
- * carries no usable pair at all, which is the difference between "no kills
- * happened" and "we cannot say whether any did" -- the caller renders the
- * first as silence and must not render the second as a clean bill of health.
- */
-export function counterIncrease(
-  values: readonly (number | null)[],
-): number | null {
-  const deltas = counterDeltas(values);
-  let total = 0;
-  let seen = false;
-  for (const d of deltas) {
-    if (d === null) continue;
-    total += d;
-    seen = true;
-  }
-  return seen ? total : null;
 }
 
 /**

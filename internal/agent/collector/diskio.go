@@ -60,12 +60,6 @@ func NewDiskIO(procRoot string) *DiskIO {
 // Name implements Collector.
 func (d *DiskIO) Name() string { return "diskio" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (d *DiskIO) SetProcRootForTest(root string) { d.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the scrape interval.
-func (d *DiskIO) SetClockForTest(fn func() time.Time) { d.now = fn }
-
 // Collect implements Collector.
 func (d *DiskIO) Collect(_ context.Context) (*Result, error) {
 	cur, err := d.read()
@@ -123,18 +117,18 @@ func (d *DiskIO) Collect(_ context.Context) (*Result, error) {
 			WriteBytes:    ptrTo(float64(c.sectorsWritten-p.sectorsWritten) * sectorBytes / elapsed),
 			ReadOps:       ptrTo(readOps / elapsed),
 			WriteOps:      ptrTo(writeOps / elapsed),
-			IoUtilPct:     ptrTo(float64(c.msDoingIO-p.msDoingIO) / (elapsed * 1000) * 100),
-			WeightedIoPct: ptrTo(float64(c.weightedMsIO-p.weightedMsIO) / (elapsed * 1000) * 100),
+			IoUtilPct:     ptrTo(msSince(p.msDoingIO, c.msDoingIO) / (elapsed * 1000) * 100),
+			WeightedIoPct: ptrTo(msSince(p.weightedMsIO, c.weightedMsIO) / (elapsed * 1000) * 100),
 		}
 
 		// Await is milliseconds PER OPERATION, so with no operations there is
 		// nothing to average. Dividing by zero would yield NaN, which is a
 		// value the database would store rather than the absence of one.
 		if readOps > 0 {
-			row.RAwaitMs = ptrTo(float64(c.msReading-p.msReading) / readOps)
+			row.RAwaitMs = ptrTo(msSince(p.msReading, c.msReading) / readOps)
 		}
 		if writeOps > 0 {
-			row.WAwaitMs = ptrTo(float64(c.msWriting-p.msWriting) / writeOps)
+			row.WAwaitMs = ptrTo(msSince(p.msWriting, c.msWriting) / writeOps)
 		}
 
 		rows = append(rows, row)
@@ -147,18 +141,23 @@ func (d *DiskIO) Collect(_ context.Context) (*Result, error) {
 // the optional protobuf scalars that distinguish "not measured" from zero.
 func ptrTo[T any](v T) *T { return &v }
 
-// resetSince reports whether any counter went backwards, which means the host
-// rebooted (or the device was removed and re-added) between the two readings.
-// One counter is enough: they all reset together.
+// resetSince reports whether an op or sector counter went backwards, which
+// means the host rebooted (or the device was removed and re-added) between the
+// two readings. One counter is enough: they all reset together.
+//
+// The millisecond fields are not consulted: see msSince.
 func resetSince(p, c diskCounters) bool {
 	return c.readsCompleted < p.readsCompleted ||
 		c.sectorsRead < p.sectorsRead ||
-		c.msReading < p.msReading ||
 		c.writesCompleted < p.writesCompleted ||
-		c.sectorsWritten < p.sectorsWritten ||
-		c.msWriting < p.msWriting ||
-		c.msDoingIO < p.msDoingIO ||
-		c.weightedMsIO < p.weightedMsIO
+		c.sectorsWritten < p.sectorsWritten
+}
+
+// msSince is the delta of a millisecond field. The kernel prints those as
+// 32-bit %u, so they wrap at 2^32 on a busy disk while the op and sector
+// counts keep climbing; the delta is taken modulo 2^32 to run across the wrap.
+func msSince(p, c uint64) float64 {
+	return float64(uint32(c - p)) //nolint:gosec // truncation to 32 bits is the point: it is the kernel's own width for these fields
 }
 
 // reportable reports whether a device name is a whole physical device worth

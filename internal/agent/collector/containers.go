@@ -243,18 +243,6 @@ func NewContainers(cgroupRoot, procRoot string, lister ContainerLister, pidHost 
 // Name implements Collector.
 func (c *Containers) Name() string { return "containers" }
 
-// SetCgroupRootForTest repoints the collector at a different fixture tree.
-func (c *Containers) SetCgroupRootForTest(root string) { c.cgroupRoot = root }
-
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (c *Containers) SetProcRootForTest(root string) { c.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the scrape interval.
-func (c *Containers) SetClockForTest(fn func() time.Time) { c.now = fn }
-
-// SetReadlinkForTest replaces the readlink used to resolve namespace links.
-func (c *Containers) SetReadlinkForTest(fn func(string) (string, error)) { c.readlink = fn }
-
 // Capability values reported by Containers for per-container networking.
 const (
 	// capNetNamespaced: cgroup.procs names host PIDs, and without pid: host
@@ -668,12 +656,21 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 // containerKey is compose project + service, falling back to the container
 // name, and finally to the id.
 //
+// Replicas past the first carry their compose container number, since the hub
+// keeps one row per key and scrape. Replica 1 keeps the bare key, so a service
+// that is never scaled keeps its history. '#' because compose service names
+// cannot contain it, so "web#2" cannot collide with a service called web-2.
+//
 // The id is the last resort precisely because it is unstable: Docker issues a
 // new one on every recreate, so a service that merely got a new image would
 // start a fresh series and lose its history.
 func containerKey(m ContainerMeta, id string) string {
 	if m.Project != "" && m.Service != "" {
-		return m.Project + "/" + m.Service
+		key := m.Project + "/" + m.Service
+		if n := m.Labels["com.docker.compose.container-number"]; n != "" && n != "1" {
+			key += "#" + n
+		}
+		return key
 	}
 	if m.Name != "" {
 		return m.Name
@@ -789,6 +786,13 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 	}
 
 	c.pruneNetNSDenied(out)
+	// The same for the label budget latch: a gone id never comes back to
+	// clear it.
+	for id := range c.labelsCapped {
+		if _, ok := out[id]; !ok {
+			delete(c.labelsCapped, id)
+		}
+	}
 
 	// EVERY eligible container failing is a different fact from a few failing,
 	// and only the first is worth a word.

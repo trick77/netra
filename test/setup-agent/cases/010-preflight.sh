@@ -287,7 +287,7 @@ assert_exit_code 1 netra_exec false \
 # pinned here rather than left to be discovered by a typo in phase B.
 parse_args --force --start --token t1 --hub-url https://h \
     --ref v9.9.9 --template-dir /tpl --output-dir /out \
-    --primary-sensor coretemp/Package_id_0 --include-network-fs
+    --include-network-fs
 assert_eq 1 "$FORCE" "--force sets FORCE"
 assert_eq 1 "$START" "--start sets START"
 assert_eq "t1" "$TOKEN" "--token sets TOKEN"
@@ -296,7 +296,6 @@ assert_eq "https://h" "$HUB_URL" "--hub-url sets HUB_URL"
 assert_eq "v9.9.9" "$REF" "--ref sets REF"
 assert_eq "/tpl" "$TEMPLATE_DIR" "--template-dir sets TEMPLATE_DIR"
 assert_eq "/out" "$OUTPUT_DIR" "--output-dir sets OUTPUT_DIR"
-assert_eq "coretemp/Package_id_0" "$PRIMARY_SENSOR" "--primary-sensor sets PRIMARY_SENSOR"
 assert_eq 1 "$INCLUDE_NETWORK_FS" "--include-network-fs sets INCLUDE_NETWORK_FS"
 
 # A REAL file: parse_args now reads the token file rather than deferring it to
@@ -311,7 +310,6 @@ assert_eq 0 "$START" "START defaults to 0"
 assert_eq 0 "$INCLUDE_NETWORK_FS" "INCLUDE_NETWORK_FS defaults to 0"
 assert_eq "./netra-agent" "$OUTPUT_DIR" \
     "OUTPUT_DIR defaults to ./netra-agent, not the working directory itself"
-assert_eq "" "$PRIMARY_SENSOR" "PRIMARY_SENSOR defaults to empty (auto)"
 assert_contains "$REF" "v" "REF defaults to a version tag, never master"
 assert_not_contains "$REF" "master" "REF never defaults to master"
 # REF_EXPLICIT is what lets the renderer tell "not given" apart from "given as

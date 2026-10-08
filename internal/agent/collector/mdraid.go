@@ -149,9 +149,6 @@ func (m *Mdraid) Name() string { return "mdraid" }
 // event.
 func (m *Mdraid) ResendInventory() { m.prev = nil }
 
-// SetSysRootForTest repoints the collector at a different fixture tree.
-func (m *Mdraid) SetSysRootForTest(root string) { m.sysRoot = root }
-
 // Collect implements Collector.
 func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 	cur, err := m.read()

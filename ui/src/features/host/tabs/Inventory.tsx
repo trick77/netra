@@ -305,6 +305,8 @@ export function Containers({
     id: number;
     hostname: string;
     last_seen: string | null;
+    /** On the hub's clock; whether anything is reporting is judged on it. */
+    received_at?: string | null;
     /** Logical CPUs, for the CPU cell's "of N cores". Optional so a caller
      * that has none still renders: the cell then prints the figure without a
      * bar rather than a bar against nothing. */
@@ -368,6 +370,7 @@ export function Containers({
     // with it has not gone anywhere, and neither has one on a host that
     // cannot collect containers at all. See containerIsGone.
     host_last_seen: host.last_seen,
+    host_received_at: host.received_at,
     host_containers_capability: capabilities?.containers,
     // The saturation cells' denominators, so this tab and the fleet's list
     // draw one container identically -- which is the whole reason both render
@@ -707,7 +710,7 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
     // full than df does. Same definition as the fleet list's disk meter, and
     // now the same SEVERITY rule as well: see the severity prop below.
     cell: (row) =>
-      row.used === null || row.free === null || row.used + row.free === 0 ? (
+      row.used === null || row.free === null || row.used + row.free <= 0 ? (
         ABSENT
       ) : (
         // Wrapped, for the reason .disk-cell and .usage-cell are: Meter brings
@@ -734,7 +737,7 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
     // read back off the bar. A mount the metrics have not answered for draws
     // ABSENT and sorts as unknown, not as empty.
     sortValue: (row) =>
-      row.used === null || row.free === null || row.used + row.free === 0
+      row.used === null || row.free === null || row.used + row.free <= 0
         ? null
         : (row.used / (row.used + row.free)) * 100,
   },

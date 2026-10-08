@@ -3,11 +3,15 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/store"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 func condCtx(t *testing.T) (context.Context, *store.Store) {
@@ -442,7 +446,8 @@ func TestIntegrationScanLeavesABigArrayAlone(t *testing.T) {
 	}
 }
 
-// A host nobody has heard from is silent, and its onset is last_seen itself.
+// A host nobody has heard from is silent, and its onset is the last post the
+// hub received, not the agent-clocked last_seen.
 func TestIntegrationScanFindsASilentHost(t *testing.T) {
 	ctx, s := condCtx(t)
 	host := newHost(ctx, t, s, "cond-silent")
@@ -450,7 +455,8 @@ func TestIntegrationScanFindsASilentHost(t *testing.T) {
 	quiet := now.Add(-time.Hour)
 
 	if _, err := s.Pool().Exec(ctx,
-		`INSERT INTO host_current (host_id, last_seen) VALUES ($1, $2)`, host, quiet); err != nil {
+		`INSERT INTO host_current (host_id, last_seen, received_at) VALUES ($1, $2, $3)`,
+		host, quiet.Add(-10*time.Minute), quiet); err != nil {
 		t.Fatalf("host_current: %v", err)
 	}
 
@@ -467,7 +473,47 @@ func TestIntegrationScanFindsASilentHost(t *testing.T) {
 		t.Fatalf("a silent host was not flagged: %+v", scan.Bad)
 	}
 	if !f.OpenedTS.UTC().Equal(quiet.Truncate(time.Microsecond)) {
-		t.Errorf("opened_ts = %v, want last_seen %v", f.OpenedTS.UTC(), quiet)
+		t.Errorf("opened_ts = %v, want received_at %v", f.OpenedTS.UTC(), quiet)
+	}
+}
+
+// The silent scan dereferences received_at for every host with a row, so the
+// column must not hold a NULL for it to find.
+func TestIntegrationHostCurrentRefusesANullReceivedAt(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(ctx, t, s, "cond-null-received")
+
+	_, err := s.Pool().Exec(ctx,
+		`INSERT INTO host_current (host_id, last_seen, received_at) VALUES ($1, now(), NULL)`, host)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23502" {
+		t.Fatalf("insert with NULL received_at: err = %v, want a not-null violation", err)
+	}
+}
+
+// Silence is judged on when the hub received the data, not on the agent's own
+// clock: an agent running five minutes slow that posts every minute is talking.
+func TestIntegrationSlowAgentClockIsNotSilent(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(ctx, t, s, "cond-slow-clock")
+	now := time.Now().UTC()
+
+	for i := 2; i >= 0; i-- {
+		ts := now.Add(-5*time.Minute - time.Duration(i)*time.Minute)
+		if err := s.UpsertHostCurrent(ctx, host, &netrav1.HostSample{TsMs: ts.UnixMilli()}, nil, nil); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !scan.Reporting[host] {
+		t.Error("a host posting every minute was not called reporting")
+	}
+	if f, bad := scan.Bad[conditions.Key{HostID: host, Kind: conditions.KindSilent}]; bad {
+		t.Errorf("a host posting every minute was flagged silent: %+v", f)
 	}
 }
 
@@ -930,7 +976,7 @@ func TestIntegrationAWedgedMountIsStillSeen(t *testing.T) {
 // Even a mount silent for days stays UNJUDGED rather than being declared gone.
 //
 // The hub cannot tell a hung NFS export from an unmounted volume: a mount the
-// agent cannot stat produces no sample at all, and markWedged re-arms its
+// agent cannot stat produces no sample at all, and wedgeTracker.mark re-arms its
 // backoff on every failed retry, so the reading freezes indefinitely in both
 // cases. Any age-based "it must be gone by now" would eventually resolve a
 // still-mounted, still-full disk without the hysteresis and destroy its onset.

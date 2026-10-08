@@ -13,6 +13,7 @@ import {
   GONE_AFTER_S,
   lastReported,
   memDenominator,
+  onHubClock,
   trendScales,
   type ContainerRow,
 } from "./columns";
@@ -69,6 +70,27 @@ describe("composeIdentity", () => {
       project: ABSENT,
       service: "a1b2c3d4e5f6",
     });
+  });
+});
+
+describe("onHubClock", () => {
+  it("shifts by the host's skew", () => {
+    expect(
+      onHubClock(
+        "2026-08-10T13:55:00.000Z",
+        "2026-08-10T13:56:00.000Z",
+        "2026-08-10T14:00:00.000Z",
+      ),
+    ).toBe("2026-08-10T13:59:00.000Z");
+  });
+
+  // No skew to apply, so the agent's own reading is the honest answer.
+  it("leaves last_seen alone when a host time is missing or unreadable", () => {
+    const seen = "2026-08-10T13:55:00.000Z";
+    expect(onHubClock(seen, null, "2026-08-10T14:00:00.000Z")).toBe(seen);
+    expect(onHubClock(seen, "not a date", "2026-08-10T14:00:00.000Z")).toBe(
+      seen,
+    );
   });
 });
 
@@ -253,6 +275,25 @@ describe("containerColumns", () => {
         { now: NOW },
       );
       expect(screen.getByText("silent")).toBeInTheDocument();
+    });
+
+    // An agent clock four minutes slow: last_seen trails now on both rows,
+    // while the hub took the batch just now. The fleet judges the host on
+    // received_at and reads it online; this list must not say otherwise.
+    it("judges a slow host clock on the hub's clock, as the fleet does", () => {
+      const { container } = renderRows(
+        [
+          makeRow({
+            started_at: "2026-08-10T13:40:00Z",
+            last_seen: "2026-08-10T13:56:00Z",
+            host_last_seen: "2026-08-10T13:56:00Z",
+            host_received_at: "2026-08-10T14:00:00Z",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("reporting")).toBeInTheDocument();
+      expect(container.querySelector(".upmark")).not.toBeNull();
     });
 
     // And past the gone window it is the stronger word, not both words.

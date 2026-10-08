@@ -272,14 +272,6 @@ func capacityFor(window, interval time.Duration) int {
 	return capacity
 }
 
-// BufferDepth reports how many samples are waiting to be acknowledged.
-func (c *Client) BufferDepth() int { return c.ring.Depth() }
-
-// BufferCapacity reports the ring's capacity in slots. capacity *
-// config.ScrapeInterval is the effective buffered window, which capacityFor
-// keeps within cfg.BufferWindow.
-func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
-
 // ScrapeOnce runs every collector and buffers the resulting scrape.
 //
 // A collector that fails is logged and skipped, and contributes nothing at
@@ -366,6 +358,12 @@ func (c *Client) resendInventory() {
 func (c *Client) Prime(ctx context.Context) {
 	primed, failed, skipped := 0, 0, 0
 	ran := make([]collector.Collector, 0, len(c.collectors))
+
+	// The same group deadline collect() uses: ctx here is main's signal-only
+	// context, and a collector wedged at boot would otherwise keep CheckHub and
+	// Run from ever starting.
+	ctx, cancel := context.WithTimeout(ctx, c.scrapeTimeout)
+	defer cancel()
 	for _, col := range c.collectors {
 		if b, ok := col.(collector.BaselineEmitter); ok && b.EmitsBaseline() {
 			// Counted, not silently dropped: ok + failed would otherwise fall
@@ -657,10 +655,15 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	// The handshake probe runs HERE rather than around the post, which is why
 	// -- unlike post_latency_ms -- it does not lag a scrape: it lands in the
 	// sample it measured. Both gauges stay unset when no handshake completed,
-	// and the failure counter is what carries the outage.
-	if probe := c.probeHub(ctx); probe.probed {
-		agent.HubConnectUs = ptr(probe.minUs)
-		agent.HubConnectMaxUs = ptr(probe.maxUs)
+	// and the failure counter is what carries the outage. scrapeCtx, not ctx:
+	// the probe's resolve and dial timeouts summed past the tick on their own.
+	// Skipped once the collectors have spent the budget, since a probe that
+	// never ran is not a hub failure.
+	if scrapeCtx.Err() == nil {
+		if probe := c.probeHub(scrapeCtx); probe.probed {
+			agent.HubConnectUs = ptr(probe.minUs)
+			agent.HubConnectMaxUs = ptr(probe.maxUs)
+		}
 	}
 	agent.HubConnectFailuresTotal = ptr(c.hubConnectFailures)
 	sample.Agent = agent
@@ -1281,8 +1284,9 @@ func (c *Client) Run(ctx context.Context) error {
 			// refresh, ReadMemStats, and above all probeHub, which is a DNS
 			// lookup plus three sequential TCP handshakes on this same
 			// goroutine -- are invisible to the only duration netra records.
-			// A tick can therefore cost many times what the agent says a
-			// scrape cost, and nothing anywhere would say so.
+			// The probe shares the scrape deadline, so the tick stays inside
+			// the interval, but it can still cost many times what the agent
+			// says a scrape cost, and nothing anywhere would say so.
 			tickStart := time.Now()
 
 			c.ScrapeOnce(ctx)

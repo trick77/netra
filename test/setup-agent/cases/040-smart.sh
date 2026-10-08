@@ -23,8 +23,6 @@ export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
-PRIMARY_SENSOR=""
-
 # --- 0. the block-device probes that survived, and their root strip -----------
 #
 # block_devices and device_transport no longer feed a devices: list, but they

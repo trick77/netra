@@ -39,6 +39,14 @@ describe("hostStatus", () => {
     );
   });
 
+  // last_seen is the agent's clock, received_at the hub's: an agent 5 min
+  // slow is still talking, and only received_at says so.
+  it("judges on the hub's received_at when it is there", () => {
+    expect(
+      hostStatus({ last_seen: ago(300), received_at: ago(10) }, now).severity,
+    ).toBe("ok");
+  });
+
   it("answers the reporting tile's question with the same rule", () => {
     expect(isReporting({ last_seen: ago(10) }, now)).toBe(true);
     expect(isReporting({ last_seen: ago(600) }, now)).toBe(false);
@@ -108,8 +116,8 @@ describe("currentFilesystems", () => {
     expect(kept?.map((fs) => fs.label)).toEqual(["pool"]);
   });
 
-  // driveIsCurrent's rule, for the same reason: with no reference point the
-  // honest answer is the reading netra holds.
+  // DriveIsCurrent's rule in the hub, for the same reason: with no reference
+  // point the honest answer is the reading netra holds.
   it("keeps a mount whose reading has no timestamp", () => {
     expect(
       currentFilesystems({

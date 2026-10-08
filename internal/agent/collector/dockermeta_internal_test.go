@@ -528,3 +528,26 @@ func TestDockerInspectWithoutStateStillCarriesTheCount(t *testing.T) {
 		t.Errorf("StartedAt = %v, want the zero time", got.StartedAt)
 	}
 }
+
+// Compose replicas share project and service, and the hub keeps one row per
+// container_key per scrape, so `--scale web=3` recorded one replica.
+func TestContainerKeySeparatesComposeReplicas(t *testing.T) {
+	meta := func(number string) ContainerMeta {
+		return ContainerMeta{
+			Project: "app", Service: "web",
+			Labels: map[string]string{"com.docker.compose.container-number": number},
+		}
+	}
+
+	if got := containerKey(meta("1"), "id1"); got != "app/web" {
+		t.Errorf("replica 1 key = %q, want app/web", got)
+	}
+	if got := containerKey(meta("2"), "id2"); got != "app/web#2" {
+		t.Errorf("replica 2 key = %q, want app/web#2", got)
+	}
+	// A service named web-2 is legal compose and must not share replica 2's key.
+	other := ContainerMeta{Project: "app", Service: "web-2"}
+	if containerKey(other, "id3") == containerKey(meta("2"), "id2") {
+		t.Errorf("service web-2 and replica 2 of web share key %q", containerKey(other, "id3"))
+	}
+}

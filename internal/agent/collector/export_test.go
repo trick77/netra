@@ -178,3 +178,96 @@ const (
 // ErrKmsgGapForTest is the EPIPE sentinel, so a stand-in source can report a
 // ring that wrapped past the reader.
 var ErrKmsgGapForTest = errKmsgGap
+
+// SetCgroupRootForTest repoints the collector at a different fixture tree.
+func (c *Containers) SetCgroupRootForTest(root string) { c.cgroupRoot = root }
+
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (c *Containers) SetProcRootForTest(root string) { c.procRoot = root }
+
+// SetClockForTest replaces the clock used to measure the scrape interval.
+func (c *Containers) SetClockForTest(fn func() time.Time) { c.now = fn }
+
+// SetReadlinkForTest replaces the readlink used to resolve namespace links.
+func (c *Containers) SetReadlinkForTest(fn func(string) (string, error)) { c.readlink = fn }
+
+// SetProcRootForTest repoints the collector at a different fixture tree so a
+// test can simulate the passage of time between two scrapes.
+func (c *CPU) SetProcRootForTest(root string) { c.procRoot = root }
+
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (d *DiskIO) SetProcRootForTest(root string) { d.procRoot = root }
+
+// SetClockForTest replaces the clock used to measure the scrape interval.
+func (d *DiskIO) SetClockForTest(fn func() time.Time) { d.now = fn }
+
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (f *Filesystems) SetProcRootForTest(root string) { f.procRoot = root }
+
+// SetProcRootForTest repoints the collector at a different fixture tree so a
+// test can simulate the passage of time between two scrapes.
+func (k *KernelStat) SetProcRootForTest(root string) { k.procRoot = root }
+
+// SetClockForTest replaces the clock used to measure the interval between two
+// scrapes, so rate arithmetic is exact rather than timing-dependent.
+func (k *KernelStat) SetClockForTest(fn func() time.Time) { k.now = fn }
+
+// SetSourceForTest replaces the device, the uptime anchor and the clock.
+func (k *Kmsg) SetSourceForTest(
+	open func() (KmsgSource, error),
+	uptime func() (time.Duration, error),
+	now func() time.Time,
+) {
+	k.newSource, k.uptime, k.now = open, uptime, now
+	k.src, k.openErr = nil, nil
+}
+
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (l *Limits) SetProcRootForTest(root string) { l.procRoot = root }
+
+// SetSysRootForTest repoints the collector at a different fixture tree.
+func (m *Mdraid) SetSysRootForTest(root string) { m.sysRoot = root }
+
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (n *Netstat) SetProcRootForTest(root string) { n.procRoot = root }
+
+// SetClockForTest replaces the clock used to measure the scrape interval.
+func (n *Netstat) SetClockForTest(fn func() time.Time) { n.now = fn }
+
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (n *Network) SetProcRootForTest(root string) { n.procRoot = root }
+
+// SetClockForTest replaces the clock used to measure the scrape interval.
+func (n *Network) SetClockForTest(fn func() time.Time) { n.now = fn }
+
+// SetClockForTest replaces the clock used for the daily floor.
+func (p *Packages) SetClockForTest(fn func() time.Time) { p.now = fn }
+
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (p *Procs) SetProcRootForTest(root string) { p.procRoot = root }
+
+// SetClockForTest replaces the clock used for the interval gate.
+func (s *Smart) SetClockForTest(fn func() time.Time) { s.now = fn }
+
+// SetClockForTest replaces the clock used for the snapshot floor.
+func (s *Systemd) SetClockForTest(fn func() time.Time) { s.now = fn }
+
+// SetListerForTest swaps the unit source, so a test can change what systemd
+// reports between two scrapes without rebuilding the collector and losing the
+// previous state the transition detection depends on.
+func (s *Systemd) SetListerForTest(l UnitLister) { s.lister = l }
+
+// SetPathForTest repoints the collector at a fixture file.
+func (u *Users) SetPathForTest(path string) { u.path = path }
+
+// SetRecordSizesForTest pins the candidate sizes, so a test can prove a
+// fixture parses under one specific layout rather than relying on detection
+// happening to pick the right one.
+func (u *Users) SetRecordSizesForTest(sizes ...int) { u.recordSizes = sizes }
+
+// SetProcRootForTest repoints the collector at a different fixture tree so a
+// test can simulate the passage of time between two scrapes.
+func (v *VMStat) SetProcRootForTest(root string) { v.procRoot = root }
+
+// SetClockForTest replaces the clock used to measure the interval.
+func (v *VMStat) SetClockForTest(fn func() time.Time) { v.now = fn }

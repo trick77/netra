@@ -43,7 +43,7 @@ func seedFilesystemSample(ctx context.Context, t *testing.T, s *store.Store,
 func seedHostCurrent(ctx context.Context, t *testing.T, s *store.Store, host int32, lastSeen time.Time) {
 	t.Helper()
 	if _, err := s.Pool().Exec(ctx,
-		`INSERT INTO host_current (host_id, last_seen) VALUES ($1, $2)`, host, lastSeen); err != nil {
+		`INSERT INTO host_current (host_id, last_seen, received_at) VALUES ($1, $2, $2)`, host, lastSeen); err != nil {
 		t.Fatalf("host_current: %v", err)
 	}
 }

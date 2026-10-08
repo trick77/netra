@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1091,5 +1092,182 @@ func TestSmartReportsAtaAndNvmeDrivesTogether(t *testing.T) {
 	}
 	if byDevice["nvme0"] == 0 {
 		t.Error("nvme0 rows = 0, want its health log reported alongside the SATA drive")
+	}
+}
+
+// SMART runs last in the scrape, on what the other collectors left of its
+// budget. Drives cut off by that deadline did not fail, and the run is not
+// done: the next scrape tries again rather than an hour later.
+func TestSmartRetriesNextScrapeWhenTheScrapeDeadlineCutsItShort(t *testing.T) {
+	twoDrives := `{"devices":[{"name":"/dev/sda","type":"sat"},{"name":"/dev/sdb","type":"sat"}]}`
+	var scans int
+	var cancel context.CancelFunc
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--scan") {
+			scans++
+			return []byte(twoDrives), nil
+		}
+		if cancel != nil {
+			cancel()
+			return nil, ctx.Err()
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	if _, err := testee.Collect(ctx); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "" {
+		t.Errorf("capability = %q, want none -- the drives were not read, not unreadable", got)
+	}
+
+	cancel = nil
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if scans != 2 || len(res.Smart) != 6 {
+		t.Errorf("scans = %d, rows = %d, want the next scrape to read both drives (2, 6)", scans, len(res.Smart))
+	}
+}
+
+// A pass that never fits one scrape's budget resumes where the last one was
+// cut, rather than re-reading the first drives every scrape and never
+// reaching the rest. Each drive is read once, then the interval holds.
+func TestSmartResumesACutPassInsteadOfRestartingIt(t *testing.T) {
+	threeDrives := `{"devices":[{"name":"/dev/sda","type":"sat"},{"name":"/dev/sdb","type":"sat"},{"name":"/dev/sdc","type":"sat"}]}`
+	reads := map[string]int{}
+	var scans, readsThisScrape int
+	var cancel context.CancelFunc
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--scan") {
+			scans++
+			readsThisScrape = 0
+			return []byte(threeDrives), nil
+		}
+		// One drive fits each scrape's budget; the next one hits the deadline.
+		if readsThisScrape == 1 {
+			cancel()
+			return nil, ctx.Err()
+		}
+		readsThisScrape++
+		reads[args[2]]++
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+
+	for range 4 {
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		if _, err := testee.Collect(ctx); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		cancel()
+	}
+
+	for _, d := range []string{"/dev/sda", "/dev/sdb", "/dev/sdc"} {
+		if reads[d] != 1 {
+			t.Errorf("%s read %d times, want 1 (reads = %v)", d, reads[d], reads)
+		}
+	}
+	if scans != 3 {
+		t.Errorf("scans = %d, want 3 -- the interval holds once every drive is read", scans)
+	}
+}
+
+// A dying drive can keep smartctl in error recovery past any budget. Resuming
+// at it every scrape would spawn a smartctl a minute and never read the drives
+// behind it, so a drive that cuts two passes in a row is passed over.
+func TestSmartPassesOverADriveThatOutlastsEveryBudget(t *testing.T) {
+	threeDrives := `{"devices":[{"name":"/dev/sda","type":"sat"},{"name":"/dev/sdb","type":"sat"},{"name":"/dev/sdc","type":"sat"}]}`
+	reads := map[string]int{}
+	var cancel context.CancelFunc
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		if slices.Contains(args, "--scan") {
+			return []byte(threeDrives), nil
+		}
+		reads[args[2]]++
+		if args[2] == "/dev/sdb" {
+			cancel()
+			return nil, ctx.Err()
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+
+	for range 5 {
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		if _, err := testee.Collect(ctx); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		cancel()
+	}
+
+	if reads["/dev/sdb"] != 2 {
+		t.Errorf("/dev/sdb tried %d times, want 2", reads["/dev/sdb"])
+	}
+	if reads["/dev/sdc"] != 1 {
+		t.Errorf("/dev/sdc read %d times, want 1", reads["/dev/sdc"])
+	}
+
+	// The first drive too: a pass cut at index 0 is still a cut pass.
+	reads = map[string]int{}
+	firstHangs := `{"devices":[{"name":"/dev/sdb","type":"sat"},{"name":"/dev/sdc","type":"sat"}]}`
+	threeDrives = firstHangs
+	testee = collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC) })
+	for range 5 {
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		if _, err := testee.Collect(ctx); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		cancel()
+	}
+	if reads["/dev/sdb"] != 2 || reads["/dev/sdc"] != 1 {
+		t.Errorf("first drive hangs: reads = %v, want sdb 2 and sdc 1", reads)
+	}
+}
+
+// A MegaRAID scan lists every disk behind the controller as the same node,
+// told apart only by the type. The hub keeps one device per name.
+func TestSmartNamesEachDiskBehindARaidController(t *testing.T) {
+	scan := `{"devices":[{"name":"/dev/bus/0","type":"megaraid,0"},{"name":"/dev/bus/0","type":"megaraid,1"}]}`
+	testee := collector.NewSmart(time.Hour, fakeSmartctl(scan, deviceJSON), "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	devices := map[string]bool{}
+	for _, a := range res.Smart {
+		devices[a.GetDevice()] = true
+	}
+	if !devices["bus/0:megaraid,0"] || !devices["bus/0:megaraid,1"] || len(devices) != 2 {
+		t.Errorf("devices = %v, want bus/0:megaraid,0 and bus/0:megaraid,1", devices)
+	}
+}
+
+// Only a shared node needs the type to tell its disks apart. A lone drive
+// whose type merely carries a comma keeps its plain name.
+func TestSmartKeepsThePlainNameOfALoneDriveWithACommaType(t *testing.T) {
+	scan := `{"devices":[{"name":"/dev/sdb","type":"sat,12"}]}`
+	testee := collector.NewSmart(time.Hour, fakeSmartctl(scan, deviceJSON), "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	for _, a := range res.Smart {
+		if a.GetDevice() != "sdb" {
+			t.Fatalf("device = %q, want sdb", a.GetDevice())
+		}
 	}
 }

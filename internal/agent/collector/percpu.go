@@ -42,6 +42,9 @@ func (p *PerCoreCPU) Name() string { return "percpu" }
 
 // SetProcRootForTest repoints the collector at a different fixture tree so a
 // test can simulate the passage of time between two scrapes.
+//
+// Here rather than in export_test.go because the hub's end-to-end test calls
+// it from another package.
 func (p *PerCoreCPU) SetProcRootForTest(root string) { p.procRoot = root }
 
 // Collect implements Collector.
@@ -122,6 +125,9 @@ func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 	var firstSkipErr error
 
 	scanner := bufio.NewScanner(f)
+	// The intr line carries one counter per IRQ and can exceed bufio's 64 KiB
+	// default on a host with many of them.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) == 0 || !strings.HasPrefix(fields[0], "cpu") {

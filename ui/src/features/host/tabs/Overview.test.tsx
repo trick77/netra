@@ -30,6 +30,17 @@ const KINDS: ConditionKindInfo[] = [
     },
   },
   { kind: "drive", label: "Drive errors", severity: "critical" },
+  {
+    kind: "temperature",
+    label: "Temperature above normal",
+    severity: "warning",
+  },
+  {
+    kind: "processes",
+    label: "Process count above normal",
+    severity: "warning",
+  },
+  { kind: "load", label: "Load above normal", severity: "warning" },
 ];
 const CATALOGUE = catalogueOf(KINDS);
 import { STALE_THRESHOLD_MS } from "../../../lib/host";
@@ -1037,6 +1048,57 @@ describe("the attention band", () => {
         since: "2026-08-09T22:00:00Z",
       },
     ]);
+  });
+
+  // The deviation kinds read the same sentence the fleet page writes: the
+  // reading, what it normally is, and whether it is still being measured.
+  it("prints a deviation's reading and its normal, as the fleet page does", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [
+        row({
+          kind: "temperature",
+          subject: "drivetemp/temp1/sda",
+          severity: "warning",
+          detail: { value: 61, normal: 46, source: "baseline", unit: "C" },
+          stale: true,
+          measured_ts: "2026-08-09T21:00:00Z",
+        }),
+        row({
+          id: 2,
+          kind: "load",
+          subject: "",
+          severity: "warning",
+          detail: { value: 14.23, normal: 6.1, source: "baseline", unit: "" },
+        }),
+      ],
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+    const what = testee.map((a) => String(a.what));
+    expect(what[0]).toMatch(
+      /^drivetemp\/temp1\/sda is 61 C — normally under 46 C/,
+    );
+    expect(what[0]).toMatch(/not measured since 4 h ago$/);
+    expect(what[1]).toMatch(/is 14\.2 — normally under 6\.1$/);
+  });
+
+  // A deviation row whose detail lost its reading still appears.
+  it("keeps a deviation row with no reading, named by the catalogue", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [
+        row({
+          kind: "processes",
+          subject: "",
+          severity: "warning",
+          detail: {},
+        }),
+      ],
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+    expect(String(testee[0]!.what)).toBe("process count above normal");
   });
 
   // A kind the hub raised that this file has no sentence for still appears.

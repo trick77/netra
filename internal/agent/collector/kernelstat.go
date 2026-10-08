@@ -63,14 +63,6 @@ func NewKernelStat(procRoot string) *KernelStat {
 // Name implements Collector.
 func (k *KernelStat) Name() string { return "kernelstat" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree so a
-// test can simulate the passage of time between two scrapes.
-func (k *KernelStat) SetProcRootForTest(root string) { k.procRoot = root }
-
-// SetClockForTest replaces the clock used to measure the interval between two
-// scrapes, so rate arithmetic is exact rather than timing-dependent.
-func (k *KernelStat) SetClockForTest(fn func() time.Time) { k.now = fn }
-
 // Collect implements Collector.
 func (k *KernelStat) Collect(_ context.Context) (*Result, error) {
 	sample := &netrav1.HostSample{}
@@ -136,6 +128,9 @@ func (k *KernelStat) read() (kernelCounters, kernelGauges, error) {
 	)
 
 	scanner := bufio.NewScanner(f)
+	// The intr line carries one counter per IRQ and can exceed bufio's 64 KiB
+	// default on a host with many of them.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 2 {

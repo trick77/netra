@@ -454,6 +454,21 @@ func TestCapLabels(t *testing.T) {
 	})
 }
 
+// The over-budget latch is per container id, and ids do not come back: one
+// left behind for every container that ever went away grows without bound.
+func TestLabelsCappedForgetsContainersThatAreGone(t *testing.T) {
+	c := NewContainers("testdata/cgroup/first/sys/fs/cgroup", "testdata/proc-absent",
+		func(context.Context) ([]ContainerMeta, error) { return nil, nil }, true)
+	c.labelsCapped = map[string]bool{"a": true}
+
+	if _, err := c.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(c.labelsCapped) != 0 {
+		t.Errorf("labelsCapped = %v, want the vanished container forgotten", c.labelsCapped)
+	}
+}
+
 // The invariant ContainerStatus exists to hold: the two fields come from one
 // decode of one response, so they arrive together and are forgotten together.
 //

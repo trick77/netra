@@ -109,7 +109,7 @@ func TestAReplayedSampleIsIgnored(t *testing.T) {
 
 // THE FOLD AND THE JUDGE MUST AGREE ON WHERE THE BAND IS, and for a while they
 // did not: the fold decided excursions against the UNCAPPED band while
-// judgeDeviation judges against the capped one.
+// JudgeDeviation judges against the capped one.
 //
 // Wherever a cap bites, the judge sees a severity the fold recorded no excursion
 // for, ExcursionSince stays zero, and the subject is filed unjudged for as long
@@ -245,7 +245,7 @@ func TestABriefSpikeDoesNotMoveTheNormal(t *testing.T) {
 //
 // A large short burst crosses the band easily: two minutes at twenty-eight
 // sigma carries fast 63% of the way there. Only the DURATION of the excursion
-// separates that from a real one, which is why judgeDeviation files an
+// separates that from a real one, which is why JudgeDeviation files an
 // excursion younger than OpenFor as unjudged instead of leaning on TauFast.
 // Lengthening TauFast until the burst were suppressed would make every genuine
 // excursion an hour late.

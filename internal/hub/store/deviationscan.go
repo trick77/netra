@@ -21,12 +21,9 @@ import (
 // touches exactly one chunk, and the alternative was three more gauge tables
 // and the ingest writes to keep them true.
 //
-// currentWindow is how far back that look goes. Five scrapes: wide enough that
-// a host whose ingest arrived late still has a reading, narrow enough that the
-// scan never mistakes a stale sample for a current one -- and the staleness
-// check below does not rely on it anyway, because a window is not a judgement
-// about whether a subject is still there.
-const currentWindow = 5 * conditions.ScrapeInterval
+// conditions.CurrentWindow is how far back that look goes. The staleness check
+// below does not rely on it, because a window is not a judgement about whether
+// a subject is still there.
 
 // scanSensors raises the temperature condition.
 //
@@ -77,7 +74,7 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 		        AND eh.subject = e.subject
 		        AND eh.hour    = EXTRACT(HOUR FROM l.ts AT TIME ZONE 'UTC')::smallint
 		 WHERE sen.kind = 'temperature'`,
-		currentWindow, conditions.KindTemperature)
+		conditions.CurrentWindow, conditions.KindTemperature)
 	if err != nil {
 		return fmt.Errorf("query sensors: %w", err)
 	}
@@ -97,14 +94,14 @@ func (s *Store) scanSensors(ctx context.Context, scan *conditions.Scan,
 
 		key := conditions.Key{HostID: hostID, Kind: conditions.KindTemperature, Subject: subject}
 
-		judgeDeviation(scan, key, deviationInput{
-			value:     temp,
-			readingTS: readingTS,
-			state:     ewmaOf(hourOf(readingTS), slow, fast, variance, weight, exc, firstTS, updatedTS, excursion),
-			isOpen:    open[key],
-			rule:      conditions.RuleFor(conditions.KindTemperature, chip),
-			limits:    conditions.Limits{High: limitHigh, HighCrit: limitCrit},
-			detail:    map[string]any{"chip": chip},
+		conditions.JudgeDeviation(scan, key, conditions.DeviationInput{
+			Value:     temp,
+			ReadingTS: readingTS,
+			State:     ewmaOf(hourOf(readingTS), slow, fast, variance, weight, exc, firstTS, updatedTS, excursion),
+			IsOpen:    open[key],
+			Rule:      conditions.RuleFor(conditions.KindTemperature, chip),
+			Limits:    conditions.Limits{High: limitHigh, HighCrit: limitCrit},
+			Detail:    map[string]any{"chip": chip},
 		})
 	}
 	return rows.Err()
@@ -146,7 +143,7 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		  LEFT JOIN metric_ewma_hour ehl
 		         ON ehl.host_id = h.id AND ehl.kind = $3 AND ehl.subject = ''
 		        AND ehl.hour = EXTRACT(HOUR FROM l.ts AT TIME ZONE 'UTC')::smallint`,
-		currentWindow, conditions.KindProcesses, conditions.KindLoad)
+		conditions.CurrentWindow, conditions.KindProcesses, conditions.KindLoad)
 	if err != nil {
 		return fmt.Errorf("query host gauges: %w", err)
 	}
@@ -174,53 +171,24 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		}
 
 		procKey := conditions.Key{HostID: hostID, Kind: conditions.KindProcesses}
-		judgeDeviation(scan, procKey, deviationInput{
-			value:     procValue,
-			readingTS: readingTS,
-			state:     ewmaOf(hourOf(readingTS), pSlow, pFast, pVar, pWeight, pExc, pFirst, pUpdated, pExcursion),
-			isOpen:    open[procKey],
-			rule:      conditions.RuleFor(conditions.KindProcesses, ""),
+		conditions.JudgeDeviation(scan, procKey, conditions.DeviationInput{
+			Value:     procValue,
+			ReadingTS: readingTS,
+			State:     ewmaOf(hourOf(readingTS), pSlow, pFast, pVar, pWeight, pExc, pFirst, pUpdated, pExcursion),
+			IsOpen:    open[procKey],
+			Rule:      conditions.RuleFor(conditions.KindProcesses, ""),
 		})
 
 		loadKey := conditions.Key{HostID: hostID, Kind: conditions.KindLoad}
-		judgeDeviation(scan, loadKey, deviationInput{
-			value:     load,
-			readingTS: readingTS,
-			state:     ewmaOf(hourOf(readingTS), lSlow, lFast, lVar, lWeight, lExc, lFirst, lUpdated, lExcursion),
-			isOpen:    open[loadKey],
-			rule:      conditions.RuleFor(conditions.KindLoad, ""),
+		conditions.JudgeDeviation(scan, loadKey, conditions.DeviationInput{
+			Value:     load,
+			ReadingTS: readingTS,
+			State:     ewmaOf(hourOf(readingTS), lSlow, lFast, lVar, lWeight, lExc, lFirst, lUpdated, lExcursion),
+			IsOpen:    open[loadKey],
+			Rule:      conditions.RuleFor(conditions.KindLoad, ""),
 		})
 	}
 	return rows.Err()
-}
-
-// deviationInput is one subject's reading and everything needed to judge it.
-//
-// Pointers where absence is a fact, because each absence means something
-// different: no reading is a subject that did not report, an unseeded state is
-// a subject not yet watched, and a NULL column is a kernel that does not
-// publish the metric. Collapsing any of them to a zero would judge a host
-// against a number nobody measured.
-type deviationInput struct {
-	value     *float64
-	readingTS *time.Time
-	state     conditions.EWMA
-	// isOpen is whether this subject already has a condition open.
-	//
-	// The OpenFor gate below must not apply to it. The in-memory counter this
-	// replaced skipped open keys explicitly -- it decided when to start
-	// looking, never whether to keep looking -- and without that a signal
-	// flapping around its warn line resolves and reopens forever: a tick
-	// inside the band counts one miss, the tick back outside restamps
-	// excursion_since and files the subject unjudged for three minutes, and
-	// Diff leaves the miss counter untouched through all of it. So the next dip
-	// reaches clearAfter, the condition closes, and it reopens minutes later
-	// with a fresh onset -- the transition-pair spam this whole engine exists
-	// to avoid.
-	isOpen bool
-	rule   conditions.FamilyRule
-	limits conditions.Limits
-	detail map[string]any
 }
 
 // ewmaOf rebuilds one subject's state from its LEFT JOINed columns.
@@ -232,7 +200,7 @@ type deviationInput struct {
 // excursion is the exception: it is nullable IN the row, because a subject
 // sitting inside its band has no excursion to record. It also has to be read
 // and passed here, which is easy to leave out and silent when you do -- the
-// suppression in judgeDeviation is measured from it, so a zero value makes
+// suppression in conditions.JudgeDeviation is measured from it, so a zero value makes
 // every departure look either brand new or infinitely old depending on which
 // way the comparison falls. The CI failure that found this had both.
 func ewmaOf(hour int, slow, fast, variance, weight, exc *float64,
@@ -244,7 +212,7 @@ func ewmaOf(hour int, slow, fast, variance, weight, exc *float64,
 		// The subject is watched but this HOUR is not: a state seeded less than
 		// a day ago has most of its buckets empty. Returned with the
 		// per-subject half intact so the span gate still sees the real history,
-		// and with the bucket unseeded so judgeDeviation files it unjudged --
+		// and with the bucket unseeded so conditions.JudgeDeviation files it unjudged --
 		// not healthy, because nothing is known about this hour yet.
 		return conditions.EWMA{Fast: *fast, FirstTS: *firstTS, UpdatedTS: *updatedTS}
 	}
@@ -266,7 +234,7 @@ func ewmaOf(hour int, slow, fast, variance, weight, exc *float64,
 // hourOf is the bucket index for a reading, or -1 when there is no reading.
 //
 // -1 rather than 0, because 0 is midnight: a subject that did not report would
-// otherwise be given midnight's bucket and judged against it. judgeDeviation
+// otherwise be given midnight's bucket and judged against it. conditions.JudgeDeviation
 // files a subject with no reading as unjudged before the bucket is consulted, so
 // this only has to be a value that cannot be mistaken for an hour.
 func hourOf(ts *time.Time) int {
@@ -274,166 +242,4 @@ func hourOf(ts *time.Time) int {
 		return -1
 	}
 	return conditions.HourOf(*ts)
-}
-
-// judgeDeviation applies the rule to one subject and files it under Seen,
-// Unjudged or Bad.
-//
-// THE THREE-STATE DISCIPLINE IS THE WHOLE FUNCTION. "Not over the line" and
-// "cannot say" are different answers, and only the first may clear a
-// condition. A subject with no reading this pass, or with no baseline yet, has
-// not been found healthy -- it has not been looked at, and Scan.Unjudged is
-// the state that says so. Writing either into Seen would let a sensor that
-// stopped reporting, or one whose baseline was rebuilt, close a live condition
-// as a recovery that never happened.
-func judgeDeviation(scan *conditions.Scan, key conditions.Key, in deviationInput) {
-	// No reading, or a metric this kernel does not publish.
-	if in.value == nil || in.readingTS == nil {
-		scan.Unjudged[key] = true
-		return
-	}
-
-	// Not watched long enough. A subject netra has only just started averaging
-	// is not a subject netra has found to be fine.
-	//
-	// A SPAN, not a sample count, and the difference is the point of the
-	// change: it tolerates gaps completely, so a host that drops scrapes is
-	// judged on the same footing as one that never does, and the constant says
-	// what it means. See FamilyRule.MinSpan.
-	if !in.state.Seeded() || in.state.Span() < in.rule.MinSpan {
-		scan.Unjudged[key] = true
-		return
-	}
-
-	// The average has to be as current as the reading being judged against it.
-	//
-	// foldLimit bounds one pass, so a fleet catching up after the migration --
-	// or after a long outage -- has state that lags the newest sample by hours.
-	// Judging then compares today's reading against last week's normal and
-	// stamps the finding OpenedTS = now, so a week-old excursion is reported as
-	// having just started, with a `value` from today and a `smoothed` from
-	// whenever the fold last reached. Unjudged until the fold catches up, which
-	// is the honest answer and self-clearing.
-	if in.readingTS.Sub(in.state.UpdatedTS) > conditions.OpenFor {
-		scan.Unjudged[key] = true
-		return
-	}
-
-	// The bucket for the hour this reading was taken in. An hour the subject
-	// has not been observed through yet is UNJUDGED: a state seeded yesterday
-	// afternoon knows nothing about this morning, and judging against an empty
-	// bucket would compare the reading against zero.
-	bucket := in.state.Bucket(conditions.HourOf(*in.readingTS))
-	if !bucket.Ready() {
-		// Unseeded, or seeded on too little. An hour the subject has not been
-		// observed through enough is not one it can be judged in -- and this is
-		// also what keeps a bucket that was seeded ON a fault from clearing the
-		// condition: a drive at 61 C on a host booted at 03:00 for the first
-		// time seeds the 03:00 bucket at 61, and judging against that band
-		// would file the subject healthy, which is a miss against its open
-		// condition. Unjudged leaves the condition alone.
-		scan.Unjudged[key] = true
-		return
-	}
-
-	scan.Seen[key] = true
-
-	warn, crit := bucket.Band(in.rule.Floor)
-	bounds := conditions.DeviationThresholds(warn, crit, in.limits, in.rule.Ceilings)
-
-	// Fast, not the raw reading: the smoothing keeps sensor jitter and a single
-	// odd sample out of the judgement.
-	severity := conditions.DeviationSeverity(in.state.Fast, bounds)
-	if severity == "" {
-		return
-	}
-
-	// Outside the band, but not for long enough to mean anything yet.
-	//
-	// UNJUDGED RATHER THAN SEEN, and the distinction is the one the old
-	// in-memory counter had to be told about explicitly. Filing a brief
-	// excursion as healthy would count as a MISS against any condition already
-	// open on this subject, and two misses close it -- so a subject genuinely
-	// in trouble would be opened, closed and reopened forever, losing its onset
-	// each time. "Not for long enough to say" is exactly the third state.
-	//
-	// A new subject simply does not open, which is the point: a nightly cron
-	// burst writes nothing at all.
-	//
-	// NOT FOR A SUBJECT ALREADY OPEN: this decides when to start looking, never
-	// whether to keep looking. See deviationInput.isOpen for what applying it
-	// to an open condition costs.
-	//
-	// The IsZero check is not redundant with the comparison beside it, and
-	// leaving it out is a silent failure rather than a loud one: Sub against a
-	// zero timestamp is an enormous duration, which passes OpenFor and opens
-	// the condition on its very first reading with no suppression whatever.
-	// Fail closed, so a state the fold has not marked cannot be raised.
-	if !in.isOpen && (in.state.ExcursionSince.IsZero() ||
-		in.readingTS.Sub(in.state.ExcursionSince) < conditions.OpenFor) {
-		scan.Unjudged[key] = true
-		delete(scan.Seen, key)
-		return
-	}
-
-	detail := map[string]any{
-		// The raw reading, because that is the number an operator will check
-		// against `uptime` or `sensors` and has to recognise. `fast` is what
-		// was judged, and saying so separately keeps the row honest without
-		// making the headline a figure that appears nowhere else.
-		"value":     *in.value,
-		"smoothed":  in.state.Fast,
-		"warn":      bounds.Warn,
-		"crit":      bounds.Crit,
-		"normal":    bucket.Slow,
-		"hour":      conditions.HourOf(*in.readingTS),
-		"source":    bounds.Source,
-		"span_days": int(in.state.Span() / (24 * time.Hour)),
-		// When this reading was taken, which is what the API serves as
-		// measured_ts for a temperature condition.
-		//
-		// It rides the detail because the detail is refreshed on every pass
-		// that finds the subject still bad and FROZEN on a pass that could not
-		// judge it -- so it answers "when was this last actually measured"
-		// exactly, and without the API joining a hypertable once per open row
-		// on every fleet page load.
-		"measured_ts": in.readingTS.UTC().Format(time.RFC3339),
-	}
-	if in.rule.Unit != "" {
-		detail["unit"] = in.rule.Unit
-	}
-	for k, v := range in.detail {
-		detail[k] = v
-	}
-
-	onset, atLeast := *in.readingTS, true
-	if e := in.state.ExcursionSince; !e.IsZero() && e.Before(onset) {
-		onset, atLeast = e, false
-	}
-
-	scan.Bad[key] = conditions.Finding{
-		Key:      key,
-		Severity: severity,
-		Detail:   detail,
-		// WHEN THE READING ACTUALLY LEFT THE BAND, which the state already
-		// knows and no walk has to reconstruct.
-		//
-		// The previous comment here argued that the onset was unknowable
-		// because the threshold is a moving average and was a different number
-		// at every past instant -- true, and beside the point: excursion_since
-		// is stamped at the moment fast crossed, by the fold, at the time it
-		// happened. Using now() instead reported every open at least OpenFor
-		// late, and arbitrarily late behind a fold catching up on a backlog:
-		// an excursion stamped twenty hours ago would open claiming it had just
-		// started.
-		//
-		// Exact rather than a floor when it comes from the state, so
-		// OpenedAtLeast is false there and the UI prints the time instead of
-		// "over". The reading's own timestamp stays the fallback for a subject
-		// whose condition is already open and whose excursion has since been
-		// restamped, and it is a floor because it is the oldest instant this
-		// pass can actually vouch for.
-		OpenedTS:      onset,
-		OpenedAtLeast: atLeast,
-	}
 }

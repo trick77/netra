@@ -4,7 +4,6 @@ import {
   absolute,
   absoluteMs,
   binaryBytes,
-  binaryBytesPair,
   bitrate,
   byterate,
   bytes,
@@ -193,16 +192,10 @@ describe("a value against its ceiling", () => {
     );
   });
 
-  it("keeps memory binary, like binaryBytes", () => {
-    expect(binaryBytesPair(21_900_000_000, 33_260_000_000)).toBe(
-      "20.4 · 31 GiB",
-    );
-  });
-
   // An absent reading is still absent next to a ceiling that is known: the
-  // host has 31 GiB whether or not it reported what it is using.
+  // host has 16 GB whether or not it reported what it is using.
   it("marks an absent value without losing the ceiling", () => {
-    expect(binaryBytesPair(null, 33_260_000_000)).toBe("– · 31 GiB");
+    expect(bytesPair(null, 16_000_000_000)).toBe("– · 16 GB");
   });
 
   // No ceiling is not a pair. The value alone is still a measurement.
@@ -211,18 +204,17 @@ describe("a value against its ceiling", () => {
     expect(bytesPair(null, null)).toBe("–");
   });
 
-  // 4 MB of swap against 8 GiB is 0.0037 GiB. Printed at the ceiling's unit
-  // that is "0 · 8 GiB", which says the host is not swapping -- and on swap,
-  // that it is swapping at all is the entire reading.
+  // 30 MB against 4 GB is 0.0075 GB. Printed at the ceiling's unit that is
+  // "0 · 4 GB", which says nothing is there -- and that something is there
+  // at all is the entire reading.
   it("keeps a value the shared unit would round to zero", () => {
-    expect(binaryBytesPair(4_000_000, 8_589_934_592)).toBe("3.8 MiB · 8 GiB");
     expect(bytesPair(30_000_000, 4_000_000_000)).toBe("30 MB · 4 GB");
   });
 
   // A true zero is not the same case: it says the host has none, and "0"
   // against the ceiling is the clearest way to say so.
   it("still shares the unit for a true zero", () => {
-    expect(binaryBytesPair(0, 8_589_934_592)).toBe("0 · 8 GiB");
+    expect(bytesPair(0, 8_000_000_000)).toBe("0 · 8 GB");
   });
 
   it("promotes a ceiling that rounds up to the base", () => {

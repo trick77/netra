@@ -81,3 +81,11 @@ const ScrapeTimeoutForTest = scrapeTimeout
 // assert what an operator is told about a collector that reported a
 // capability.
 func LogStartupInventoryForTest(ran []collector.Collector) { logStartupInventory(ran) }
+
+// BufferDepth reports how many samples are waiting to be acknowledged.
+func (c *Client) BufferDepth() int { return c.ring.Depth() }
+
+// BufferCapacity reports the ring's capacity in slots. capacity *
+// config.ScrapeInterval is the effective buffered window, which capacityFor
+// keeps within cfg.BufferWindow.
+func (c *Client) BufferCapacity() int { return c.ring.Capacity() }

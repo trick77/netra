@@ -216,7 +216,7 @@ export function Meter({
   // Absent is not zero, and it is not a guess either: with no value or no
   // max there is no percentage to draw, so render the absent marker
   // instead of dividing by an invented denominator.
-  if (value === null || max === null || max === 0) {
+  if (value === null || max === null || max <= 0) {
     return <Row label={label} bar={null} valueText={ABSENT} />;
   }
 

@@ -19,7 +19,6 @@ export AGENT_SOURCED
 # No SATA devices in these fixtures unless a case sets it, so plan_drivetemp
 # returns before it can prompt or shell out.
 SMART_ATA_DEVICES=""
-PRIMARY_SENSOR=""
 
 # mkchip ROOT N NAME — a hwmon chip with a name file.
 mkchip() {
@@ -91,52 +90,6 @@ init_paths
 assert_contains "$(hwmon_chips)" "hwmon0|nvme|temp1_input" \
     "a chip with no name file falls back to device/name"
 
-# --- 3. the sensor phase is INFORMATIONAL ------------------------------------
-#
-# The agent auto-selects at runtime with this same preference order. Freezing a
-# setup-time guess into .env would outlive the CPU swap or kernel upgrade that
-# invalidated it, so AGENT_PRIMARY_SENSOR stays unset unless the operator asked
-# for it explicitly.
-AGENT_SETUP_ROOT="$TMP/r1"
-export AGENT_SETUP_ROOT
-init_paths
-PRIMARY_SENSOR=""
-SKIPPED_NOTES=""
-detect_sensors >/dev/null 2>&1
-assert_eq "" "$PRIMARY_SENSOR" \
-    "an unambiguous auto-pick is NOT written to .env"
-
-PRIMARY_SENSOR="coretemp/Package id 0"
-detect_sensors >/dev/null 2>&1
-assert_eq "coretemp/Package id 0" "$PRIMARY_SENSOR" "--primary-sensor is preserved verbatim"
-
-# Two equally-ranked chips of the same name: the only case where the operator
-# has something to decide.
-R="$TMP/r3"
-mkchip "$R" 0 coretemp
-mktemp_sensor "$R" 0 1 41000 "Package id 0"
-mkchip "$R" 1 coretemp
-mktemp_sensor "$R" 1 1 43000 "Package id 1"
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
-PRIMARY_SENSOR=""
-SKIPPED_NOTES=""
-AGENT_ANSWER_INDEX=0
-: >"$TMP/ans-sensors"
-AGENT_ANSWERS_FILE="$TMP/ans-sensors"
-export AGENT_ANSWERS_FILE
-detect_sensors >/dev/null 2>&1
-# A tie is REPORTED, never prompted. Asking about it made the prompt sequence
-# variable-length - a dual-socket box has two, a four-socket box four - and the
-# answer was a guess frozen into .env that outlives the hardware justifying it.
-# The empty answers file is the proof: a surviving prompt would die exhausted.
-assert_eq "" "$PRIMARY_SENSOR" "a tie is left unpinned rather than guessed at"
-assert_eq 0 "$AGENT_ANSWER_INDEX" "a tie consumes no answer, because it asks nothing"
-assert_contains "$SKIPPED_NOTES" "equally-ranked" "the tie is reported as a note"
-assert_contains "$SKIPPED_NOTES" "--primary-sensor" "the note names the flag that pins one"
-unset AGENT_ANSWERS_FILE
-
 # --- 4. a missing hwmon directory is a note, not an error ---------------------
 R="$TMP/r4"
 mkdir -p "$R/sys/class"
@@ -144,7 +97,6 @@ AGENT_SETUP_ROOT="$R"
 export AGENT_SETUP_ROOT
 init_paths
 SKIPPED_NOTES=""
-PRIMARY_SENSOR=""
 run_capture detect_sensors
 assert_eq 0 "$RUN_RC" "a host with no /sys/class/hwmon is not an error"
 assert_contains "$RUN_OUT" "does not exist" "the missing hwmon directory is reported"

@@ -76,9 +76,6 @@ func NewProcs(procRoot string, pidHost bool) *Procs {
 // Name implements Collector.
 func (p *Procs) Name() string { return "procs" }
 
-// SetProcRootForTest repoints the collector at a different fixture tree.
-func (p *Procs) SetProcRootForTest(root string) { p.procRoot = root }
-
 // Capabilities implements CapabilityReporter.
 func (p *Procs) Capabilities() map[string]string {
 	p.mu.Lock()

@@ -44,9 +44,15 @@ import type { Range } from "../../../lib/range";
 // mentioning, or a host warns in one place and reads clean in the other (#92)
 // -- and the way they agree now is that neither of them decides.
 import {
+  deviationReading,
   diskThresholds,
   EMPTY_CATALOGUE,
+  fields,
   kindLabel,
+  num,
+  severityOf,
+  staleNote,
+  str,
   type Catalogue,
 } from "../../fleet/conditions";
 // The tiles' own module: what each one reads, what it says when the column is
@@ -203,24 +209,6 @@ export function needsAttention(input: {
     else byKind.set(row.kind, [row]);
   }
   const rowsOf = (kind: string): ConditionRow[] => byKind.get(kind) ?? [];
-  const severityOf = (row: ConditionRow): Severity =>
-    row.severity === "critical" ? "critical" : "warning";
-  const detailOf = (row: ConditionRow): Record<string, unknown> => {
-    if (typeof row.detail !== "object" || row.detail === null) return {};
-    if (Array.isArray(row.detail)) return {};
-    return row.detail as Record<string, unknown>;
-  };
-  const numberOf = (v: unknown): number | null =>
-    typeof v === "number" && Number.isFinite(v) ? v : null;
-  const textOf = (v: unknown): string | null =>
-    typeof v === "string" && v !== "" ? v : null;
-  // "— not measured since 4 h ago". Said rather than hidden: the page used to
-  // drop a mount whose reading had stopped moving, which silently retired the
-  // condition on it. The hub will not make that call at all, because a hung
-  // NFS export and an unmounted volume are indistinguishable from where it
-  // stands, so the reader is told the number beside it is old.
-  const staleNote = (row: ConditionRow): string =>
-    row.stale ? ` — not measured since ${relative(row.measured_ts, now)}` : "";
   const carry = (row: ConditionRow) => ({
     severity: severityOf(row),
     since: row.opened_ts,
@@ -267,10 +255,10 @@ export function needsAttention(input: {
   // there the unit of interest is the machine; here it is the thing to go and
   // fix.
   for (const row of rowsOf("disk")) {
-    const detail = detailOf(row);
-    const mount = textOf(detail.mount) ?? row.subject;
-    const pct = numberOf(detail.pct) ?? 0;
-    const free = numberOf(detail.free);
+    const detail = fields(row);
+    const mount = str(detail.mount) ?? row.subject;
+    const pct = num(detail.pct) ?? 0;
+    const free = num(detail.free);
     // "was", not "is", once the host has stopped reporting. The severity is
     // unchanged and deliberately so -- a 96 % disk on a machine that is off is
     // still a 96 % disk, and it is worth fixing before the machine comes back.
@@ -280,7 +268,7 @@ export function needsAttention(input: {
       ...carry(row),
       what: `${mount} ${reporting ? "is" : "was"} ${percent(pct)} full${
         free === null ? "" : ` — ${bytes(free)} free`
-      }${staleNote(row)}`,
+      }${staleNote(row, now)}`,
     });
   }
 
@@ -291,17 +279,40 @@ export function needsAttention(input: {
   // One line per device rather than one per host: two disks with pending
   // sectors are two things to replace.
   for (const row of rowsOf("drive")) {
-    const detail = detailOf(row);
-    const device = textOf(detail.device) ?? row.subject;
-    const text = textOf(detail.text) ?? "";
+    const detail = fields(row);
+    const device = str(detail.device) ?? row.subject;
+    const text = str(detail.text) ?? "";
     out.push({
       ...carry(row),
-      what: `${device} — ${text}${staleNote(row)}`,
+      what: `${device} — ${text}${staleNote(row, now)}`,
       // Deliberately none. SMART attributes are counters with no zero
       // baseline, sampled hourly: the first non-zero reading netra holds is
       // when netra started LOOKING, not when the sector went bad.
       since: null,
     });
+  }
+
+  // The deviation kinds, in the fleet page's own words, one line per subject.
+  // A host-wide kind has no subject, so the catalogue's label names it.
+  for (const kind of ["temperature", "processes", "load"]) {
+    for (const row of rowsOf(kind)) {
+      const name = kindLabel(input.catalogue, kind).toLowerCase();
+      const reading = deviationReading(row);
+      if (reading === null) {
+        // A row whose detail lost its reading still appears, as the catch-all
+        // below prints it.
+        out.push({
+          ...carry(row),
+          what: row.subject === "" ? name : `${row.subject} — ${name}`,
+        });
+        continue;
+      }
+      const subject = row.subject === "" ? name : row.subject;
+      out.push({
+        ...carry(row),
+        what: `${subject} ${reporting ? "is" : "was"} ${reading}${staleNote(row, now)}`,
+      });
+    }
   }
 
   // The units stay derived HERE, and that is not an oversight. The hub keeps
@@ -340,6 +351,9 @@ export function needsAttention(input: {
     "disk",
     "drive",
     "failed-units",
+    "temperature",
+    "processes",
+    "load",
   ]);
   for (const [kind, rows] of byKind) {
     if (written.has(kind)) continue;

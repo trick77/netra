@@ -122,6 +122,25 @@ func TestRedirectURLIsDerivedFromHubURL(t *testing.T) {
 	}
 }
 
+// go-oidc compares the discovered issuer to the configured one byte for byte,
+// so a trailing slash (Authentik's issuers end in one) must survive Load.
+func TestLoadKeepsIssuerTrailingSlash(t *testing.T) {
+	t.Setenv("BACKEND_DB_DSN", "postgres://x")
+	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
+	t.Setenv("BACKEND_HUB_URL", "https://netra.example.com")
+	t.Setenv("BACKEND_OIDC_ISSUER", "https://auth.example.com/application/o/netra/")
+	t.Setenv("BACKEND_OIDC_CLIENT_ID", "netra")
+	t.Setenv("BACKEND_OIDC_CLIENT_SECRET", "shh")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.OIDC.Issuer, "https://auth.example.com/application/o/netra/"; got != want {
+		t.Errorf("Issuer = %q, want %q", got, want)
+	}
+}
+
 // A stale .env carried across the rename is refused by name, not ignored. The
 // variable picked here is one with a default: BACKEND_LISTEN_ADDR being unset
 // is not an error, so nothing else in Load would ever notice it was missing.
