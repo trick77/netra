@@ -255,6 +255,25 @@ describe("containerColumns", () => {
       expect(screen.getByText("silent")).toBeInTheDocument();
     });
 
+    // An agent clock four minutes slow: last_seen trails now on both rows,
+    // while the hub took the batch just now. The fleet judges the host on
+    // received_at and reads it online; this list must not say otherwise.
+    it("judges a slow host clock on the hub's clock, as the fleet does", () => {
+      const { container } = renderRows(
+        [
+          makeRow({
+            started_at: "2026-08-10T13:40:00Z",
+            last_seen: "2026-08-10T13:56:00Z",
+            host_last_seen: "2026-08-10T13:56:00Z",
+            host_received_at: "2026-08-10T14:00:00Z",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("reporting")).toBeInTheDocument();
+      expect(container.querySelector(".upmark")).not.toBeNull();
+    });
+
     // And past the gone window it is the stronger word, not both words.
     it("says Gone once its host has outlived it by the gone window", () => {
       renderRows(

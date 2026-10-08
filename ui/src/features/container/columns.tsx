@@ -131,6 +131,14 @@ export type ContainerRow = Container & {
    */
   host_last_seen?: string | null;
   /**
+   * When the hub last took a batch from that host, on the hub's clock.
+   *
+   * host_last_seen and the row's own last_seen are both the agent's clock, so
+   * "gone" compares them as they are; whether the host and its containers are
+   * reporting NOW is judged on this one, the way the fleet judges the host.
+   */
+  host_received_at?: string | null;
+  /**
    * The host's `containers` capability, when the agent reported one.
    *
    * Also for containerIsGone: `no-cgroup-scopes` means no container sample
@@ -174,7 +182,9 @@ export function containerState(
   now: Date = new Date(),
   range?: Range,
 ): DerivedState {
-  const lastSeen = Date.parse(row.last_seen);
+  const lastSeen = Date.parse(
+    onHubClock(row.last_seen, row.host_last_seen, row.host_received_at),
+  );
   // A host whose cgroup mount is unreadable keeps posting host samples while
   // no container sample can land, so last_seen ages forever and every
   // container on it would read Silent -- beside a hostContainerNote saying
@@ -197,7 +207,13 @@ export function containerState(
     hostState:
       row.host_last_seen === undefined
         ? undefined
-        : hostStatus({ last_seen: row.host_last_seen }, now),
+        : hostStatus(
+            {
+              last_seen: row.host_last_seen,
+              received_at: row.host_received_at,
+            },
+            now,
+          ),
     gone: containerIsGone(row),
     // Docker's own answers ride on the listing row, so the lists reach
     // "Unhealthy" without a per-surface rule -- the same reason this function
@@ -320,6 +336,27 @@ export function containerIsGone(
   const seen = Date.parse(row.last_seen);
   if (Number.isNaN(host) || Number.isNaN(seen)) return false;
   return host - seen > goneAfterS * 1000;
+}
+
+/**
+ * A container's last_seen moved onto the hub's clock.
+ *
+ * last_seen is stamped by the agent, and measured against now a host whose
+ * clock runs slow reads every container on it silent while the hub is still
+ * taking their samples. The host's own received_at minus its last_seen is
+ * that offset, both out of one batch. Unchanged when either is missing or
+ * does not parse: an older hub sends no received_at.
+ */
+export function onHubClock(
+  lastSeen: string,
+  hostLastSeen: string | null | undefined,
+  hostReceivedAt: string | null | undefined,
+): string {
+  if (!hostLastSeen || !hostReceivedAt) return lastSeen;
+  const seen = Date.parse(lastSeen);
+  const skew = Date.parse(hostReceivedAt) - Date.parse(hostLastSeen);
+  if (Number.isNaN(seen) || Number.isNaN(skew)) return lastSeen;
+  return new Date(seen + skew).toISOString();
 }
 
 /**
@@ -891,7 +928,11 @@ function RestartMark({
 function UptimeMark({ row, now }: { row: ContainerRow; now: Date }) {
   const age = uptimeSeconds({
     startedAt: row.started_at,
-    lastSeen: row.last_seen,
+    lastSeen: onHubClock(
+      row.last_seen,
+      row.host_last_seen,
+      row.host_received_at,
+    ),
     now,
   });
   if (age === null || age >= UPTIME_MARK_S) return null;

@@ -579,6 +579,9 @@ function FleetScreen({
             // cgroup scopes, which reports host samples and no container
             // ones. See containerIsGone.
             host_last_seen: host.last_seen,
+            // Whether host and containers are reporting now, on the hub's
+            // clock, as the fleet row judges the host.
+            host_received_at: host.received_at,
             host_containers_capability: host.capabilities?.containers,
             // The denominators the two saturation cells are read against.
             // cpu_pct is percent of ONE core and mem_used is bytes, so
@@ -857,6 +860,8 @@ function ContainerScreen({
         // The clock "gone" is measured against, so a host that is merely
         // offline does not offer to purge everything it runs.
         last_seen: hostRow.last_seen,
+        // Reporting is judged on the hub's clock, as the fleet does.
+        received_at: hostRow.received_at,
         // For the same rule the lists apply: a host that cannot collect
         // containers at all reports no container samples, and nothing on it
         // is gone. See containerIsGone.

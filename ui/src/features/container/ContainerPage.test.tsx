@@ -471,6 +471,26 @@ describe("ContainerPage", () => {
     expect(screen.queryByRole("button", { name: /purge/i })).toBeNull();
   });
 
+  // An agent clock four minutes slow, while the hub took the batch just now:
+  // the fleet reads the host online on received_at, and so must this page.
+  it("judges a slow host clock on the hub's clock, as the fleet does", () => {
+    renderPage({
+      container: {
+        ...CONTAINER,
+        started_at: "2026-08-10T13:40:00Z",
+        last_seen: "2026-08-10T13:56:00Z",
+      },
+      host: {
+        ...HOST,
+        last_seen: "2026-08-10T13:56:00Z",
+        received_at: "2026-08-10T14:00:00Z",
+      },
+    });
+
+    expect(screen.getByText("reporting")).toBeInTheDocument();
+    expect(screen.getByText(/ up /)).toBeInTheDocument();
+  });
+
   // The other direction: this container stopped an hour before its host did,
   // so it IS gone by the lists' own measure and the purge button is offered.
   // The badge must not answer "Host offline" over a button that deletes this
