@@ -134,14 +134,6 @@ export function bytesPair(value: number | null, total: number | null): string {
   return pair(value, total, DECIMAL_BYTES, 1000);
 }
 
-/** Memory against its ceiling, binary -- the pair form of `binaryBytes`. */
-export function binaryBytesPair(
-  value: number | null,
-  total: number | null,
-): string {
-  return pair(value, total, BINARY_BYTES, 1024);
-}
-
 /**
  * A plain count of things -- open descriptors, tracked connections, sockets
  * -- grouped in threes.

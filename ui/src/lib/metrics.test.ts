@@ -3,9 +3,7 @@ import {
   carriesColumn,
   column,
   counterDeltas,
-  counterIncrease,
   griddedValues,
-  hasGaps,
   optionalValues,
   meanBase,
   peakBase,
@@ -120,20 +118,6 @@ describe("metrics", () => {
     };
     expect(windowNotice(clamped as never)).toBeNull();
     expect(windowNotice(raw as never)).toBeNull();
-  });
-
-  describe("hasGaps", () => {
-    it("is false when every value is a number", () => {
-      expect(hasGaps([1, 2, 3])).toBe(false);
-    });
-
-    it("is true when any value is null", () => {
-      expect(hasGaps([1, null, 3])).toBe(true);
-    });
-
-    it("is false for an empty series", () => {
-      expect(hasGaps([])).toBe(false);
-    });
   });
 
   describe("column resolution order", () => {
@@ -771,25 +755,6 @@ describe("counterDeltas", () => {
   it("handles the degenerate lengths without inventing a point", () => {
     expect(counterDeltas([])).toEqual([]);
     expect(counterDeltas([7])).toEqual([null]);
-  });
-});
-
-describe("counterIncrease", () => {
-  it("sums what happened inside the window", () => {
-    expect(counterIncrease([10, 12, 12, 15])).toBe(5);
-  });
-
-  // "No kills happened" and "we cannot say whether any did" are different
-  // facts, and an attention badge must not render the second as the first.
-  it("is null when no usable pair exists at all, and 0 when the host said so", () => {
-    expect(counterIncrease([])).toBeNull();
-    expect(counterIncrease([3])).toBeNull();
-    expect(counterIncrease([null, null])).toBeNull();
-    expect(counterIncrease([3, 3])).toBe(0);
-  });
-
-  it("skips a reset instead of subtracting through it", () => {
-    expect(counterIncrease([90, 95, 3, 7])).toBe(9);
   });
 });
 

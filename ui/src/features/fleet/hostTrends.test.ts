@@ -2,8 +2,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   buildRows,
   fetchFleetTrends,
-  fetchHostTrends,
   fullestFilesystem,
+  hostTrendsFrom,
   trafficDetailSeries,
   trafficSeries,
   type HostTrends,
@@ -13,10 +13,9 @@ import type { Filesystem, Host, MetricsResponse } from "../../lib/api";
 
 vi.mock("../../lib/api", async () => {
   const actual = await vi.importActual<typeof api>("../../lib/api");
-  return { ...actual, getMetrics: vi.fn(), getFleetMetrics: vi.fn() };
+  return { ...actual, getFleetMetrics: vi.fn() };
 });
 
-const getMetrics = vi.mocked(api.getMetrics);
 const getFleetMetrics = vi.mocked(api.getFleetMetrics);
 
 function response(over: Partial<MetricsResponse>): MetricsResponse {
@@ -61,23 +60,27 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-/** Answers each family with whatever the test gives it. */
-function serve(byFamily: Record<string, MetricsResponse | Error>) {
-  getMetrics.mockImplementation(async (_id, params) => {
-    const answer = byFamily[params.family];
-    if (answer === undefined) return response({});
-    if (answer instanceof Error) throw answer;
-    return answer;
-  });
+/** One host's trends, from whichever families the test answers. */
+function trendsFrom(
+  byFamily: Record<string, MetricsResponse | null>,
+): HostTrends {
+  const answer = (family: string) =>
+    family in byFamily ? byFamily[family]! : response({});
+  return hostTrendsFrom(
+    answer("host"),
+    answer("net"),
+    answer("filesystem"),
+    byFamily.cpu_core ?? null,
+  );
 }
 
-describe("fetchHostTrends", () => {
+describe("hostTrendsFrom", () => {
   // The fleet CPU sparkline is a per-core stack, normalised so its top edge
   // is cpu_total. It is NOT the user/system/iowait/steal breakdown any more:
   // that answers where the time went rather than which core spent it, and it
   // has its own panel on the host page.
-  it("stacks one band per core, normalised so the top is cpu_total", async () => {
-    serve({
+  it("stacks one band per core, normalised so the top is cpu_total", () => {
+    const trends = trendsFrom({
       cpu_core: response({
         family: "cpu_core",
         key_columns: ["core"],
@@ -89,82 +92,22 @@ describe("fetchHostTrends", () => {
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h", undefined, 2);
-
     expect(trends.cpu.map((b) => b.name)).toEqual(["core 0", "core 1"]);
     expect(trends.cpu[0]!.values[0]).toBe(40);
-  });
-
-  // The `agent` family is not fetched at all any more, and this is the test
-  // that keeps it that way.
-  //
-  // It was fetched for exactly two counters -- buffer_dropped_total and
-  // post_failures_total -- which fed two conditions that have become events.
-  // Nothing on this page plots either, so the family drew nothing: it was one
-  // extra request per host per poll, purely to compute a warning that fired
-  // when nothing was wrong. Re-adding the fetch without a reader is the
-  // regression worth catching, because it is invisible on screen.
-  it("does not fetch the agent family", async () => {
-    serve({});
-
-    await fetchHostTrends(1, "1h");
-
-    expect(getMetrics.mock.calls.map((c) => c[1].family)).not.toContain(
-      "agent",
-    );
-  });
-
-  // The read API has no aggregate-across-keys mode, so asking a 128-thread
-  // host for its cores would ship 128 series per host per fleet render. Those
-  // hosts get cpu_total, which the host family carries anyway.
-  it("does not ask a very large host for one series per core", async () => {
-    serve({
-      host: response({
-        columns: ["cpu_total"],
-        series: [{ key: {}, points: [[t0, 30]] }],
-      }),
-    });
-
-    const trends = await fetchHostTrends(1, "1h", undefined, 128);
-
-    expect(getMetrics.mock.calls.map((c) => c[1].family)).not.toContain(
-      "cpu_core",
-    );
-    expect(trends.cpu).toHaveLength(1);
-    expect(trends.cpu[0]!.name).toBe("busy");
-  });
-
-  // A host whose thread count nobody knows is exactly the case the guard is
-  // for: an unbounded fetch on a host of unknown size.
-  it("does not ask for cores when the host size is unknown", async () => {
-    serve({
-      host: response({
-        columns: ["cpu_total"],
-        series: [{ key: {}, points: [[t0, 30]] }],
-      }),
-    });
-
-    await fetchHostTrends(1, "1h", undefined, null);
-
-    expect(getMetrics.mock.calls.map((c) => c[1].family)).not.toContain(
-      "cpu_core",
-    );
   });
 
   // The 5m and 1h rollups carry cpu_total and not the breakdown. One true
   // band beats four fabricated ones -- a breakdown cannot be recovered from
   // a total, and pretending otherwise is a chart that states something
   // nobody measured.
-  it("falls back to one total band on a tier without the breakdown", async () => {
-    serve({
+  it("falls back to one total band on a tier without the breakdown", () => {
+    const trends = trendsFrom({
       host: response({
         tier: "5m",
         columns: ["cpu_total_avg"],
         series: [{ key: {}, points: [[t0, 30]] }],
       }),
     });
-
-    const trends = await fetchHostTrends(1, "24h");
 
     expect(trends.cpu).toHaveLength(1);
     expect(trends.cpu[0]!.name).toBe("busy");
@@ -182,8 +125,8 @@ describe("fetchHostTrends", () => {
   // the quantity its printed percentage is a gauge of -- and never the top
   // of the partition below, which is "not free" and on a caching host stands
   // near the ceiling while the figure says 30%.
-  it("carries mem_used as its own series for the memory silhouette", async () => {
-    serve({
+  it("carries mem_used as its own series for the memory silhouette", () => {
+    const trends = trendsFrom({
       host: response({
         columns: ["mem_total", "mem_free", "mem_used"],
         series: [
@@ -198,14 +141,12 @@ describe("fetchHostTrends", () => {
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h");
-
     // The third bucket is the window's last hour, which no sample landed in.
     expect(trends.memUsed).toEqual([300, 350, null]);
   });
 
-  it("builds the memory partition rather than a single used band", async () => {
-    serve({
+  it("builds the memory partition rather than a single used band", () => {
+    const trends = trendsFrom({
       host: response({
         columns: [
           "mem_total",
@@ -218,8 +159,6 @@ describe("fetchHostTrends", () => {
         series: [{ key: {}, points: [[t0, 1000, 200, 30, 100, 50, 100]] }],
       }),
     });
-
-    const trends = await fetchHostTrends(1, "1h");
 
     // Bottom to top, least reclaimable first: shared is Shmem and cannot be
     // dropped under pressure, so it stacks with used rather than above the
@@ -243,8 +182,8 @@ describe("fetchHostTrends", () => {
   // A host's traffic is the sum over its interfaces, and a null in any of
   // them makes the bucket's total unknowable rather than smaller. Counting
   // it as zero would draw a dip that never happened.
-  it("sums traffic across interfaces, and keeps a gap a gap", async () => {
-    serve({
+  it("sums traffic across interfaces, and keeps a gap a gap", () => {
+    const trends = trendsFrom({
       net: response({
         key_columns: ["iface"],
         columns: ["rx_bytes", "tx_bytes"],
@@ -269,8 +208,6 @@ describe("fetchHostTrends", () => {
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h");
-
     expect(trends.rx).toEqual([105, 205, null]);
     expect(trends.tx).toEqual([11, 21, 31]);
   });
@@ -278,8 +215,8 @@ describe("fetchHostTrends", () => {
   // Every mount, not just the worst one: a root sitting flat at 40% while a
   // log volume climbs into trouble is exactly the case a single line for the
   // fullest filesystem hides.
-  it("draws one line per filesystem, each on df's own percentage", async () => {
-    serve({
+  it("draws one line per filesystem, each on df's own percentage", () => {
+    const trends = trendsFrom({
       filesystem: response({
         key_columns: ["filesystem"],
         columns: ["used", "free", "total"],
@@ -289,8 +226,6 @@ describe("fetchHostTrends", () => {
         ],
       }),
     });
-
-    const trends = await fetchHostTrends(1, "1h");
 
     expect(trends.disk.map((b) => b.name)).toEqual(["root", "data"]);
     expect(trends.disk[0]!.values[0]).toBe(68);
@@ -302,8 +237,8 @@ describe("fetchHostTrends", () => {
 
   // A mount that reported nothing all window is not a flat line at zero: it
   // is a filesystem with no readings, and drawing one would claim otherwise.
-  it("leaves out a filesystem that reported nothing", async () => {
-    serve({
+  it("leaves out a filesystem that reported nothing", () => {
+    const trends = trendsFrom({
       filesystem: response({
         key_columns: ["filesystem"],
         columns: ["used", "free"],
@@ -314,16 +249,14 @@ describe("fetchHostTrends", () => {
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h");
-
     expect(trends.disk.map((b) => b.name)).toEqual(["root"]);
   });
 
   // used / (used + free) is df's Use%, which is the number the operator has
   // already seen over SSH. used / total is not: total includes the root
   // reserve, so it reports a full disk as less full than df does.
-  it("picks the fullest filesystem by df's own percentage", async () => {
-    serve({
+  it("picks the fullest filesystem by df's own percentage", () => {
+    const trends = trendsFrom({
       filesystem: response({
         key_columns: ["filesystem"],
         columns: ["used", "free", "total"],
@@ -334,8 +267,6 @@ describe("fetchHostTrends", () => {
         ],
       }),
     });
-
-    const trends = await fetchHostTrends(1, "1h");
 
     expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toEqual({
       mount: "data",
@@ -357,9 +288,9 @@ describe("fetchHostTrends", () => {
   // anything on its own: the array is fuller but has 674 GB left, the root is
   // a hair behind it and nearly out. Naming the array would leave the row
   // with nothing to say while the disk that is actually filling went unnamed.
-  it("names the mount worth acting on, not the biggest percentage", async () => {
+  it("names the mount worth acting on, not the biggest percentage", () => {
     const GB = 1024 ** 3;
-    serve({
+    const trends = trendsFrom({
       filesystem: response({
         key_columns: ["filesystem", "mountpoint"],
         columns: ["used", "free", "total"],
@@ -376,8 +307,6 @@ describe("fetchHostTrends", () => {
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h");
-
     expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)?.mount).toBe(
       "/",
     );
@@ -387,8 +316,8 @@ describe("fetchHostTrends", () => {
   // would type into df -- and by its label only when there is no mount point
   // to use. The label is an identifier; on a containerised agent it is derived
   // from the marker file the agent measures through, not from the host.
-  it("names a filesystem by its mount point, falling back to the label", async () => {
-    serve({
+  it("names a filesystem by its mount point, falling back to the label", () => {
+    const trends = trendsFrom({
       filesystem: response({
         key_columns: ["filesystem", "mountpoint"],
         columns: ["used", "free", "total"],
@@ -405,8 +334,6 @@ describe("fetchHostTrends", () => {
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h");
-
     expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)?.mount).toBe(
       "/mnt/ark",
     );
@@ -421,8 +348,8 @@ describe("fetchHostTrends", () => {
   //
   // The band still draws: a chart showing a series that ends is telling the
   // truth about it. It is the headline figure that must be about now.
-  it("ignores a filesystem that stopped reporting when picking the fullest", async () => {
-    serve({
+  it("ignores a filesystem that stopped reporting when picking the fullest", () => {
+    const trends = trendsFrom({
       filesystem: response({
         key_columns: ["filesystem", "mountpoint"],
         columns: ["used", "free", "total"],
@@ -439,8 +366,6 @@ describe("fetchHostTrends", () => {
         ],
       }),
     });
-
-    const trends = await fetchHostTrends(1, "1h");
 
     expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toEqual({
       mount: "/mnt/ark",
@@ -468,42 +393,26 @@ describe("fetchHostTrends", () => {
 
   // Never a zero-percent meter: an empty green bar says the disks were
   // measured and are empty.
-  it("reports no fullest filesystem rather than an empty meter", async () => {
-    serve({ filesystem: response({ columns: [], series: [] }) });
-
-    const trends = await fetchHostTrends(1, "1h");
+  it("reports no fullest filesystem rather than an empty meter", () => {
+    const trends = trendsFrom({
+      filesystem: response({ columns: [], series: [] }),
+    });
     expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toBeNull();
   });
 
   // One family the hub cannot answer costs that column, not the row: a
   // failed filesystem call must still leave the CPU sparkline drawn.
-  it("keeps the families that answered when one fails", async () => {
-    serve({
+  it("keeps the families that answered when one fails", () => {
+    const trends = trendsFrom({
       host: response({
         columns: ["cpu_total"],
         series: [{ key: {}, points: [[t0, 30]] }],
       }),
-      filesystem: new Error("boom"),
+      filesystem: null,
     });
-
-    const trends = await fetchHostTrends(1, "1h");
 
     expect(trends.cpu).toHaveLength(1);
     expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toBeNull();
-  });
-
-  // The hub rejects relative times outright, and the fan-out is the one
-  // place that could get this wrong for every host at once.
-  it("asks for an absolute window and a step", async () => {
-    serve({});
-
-    await fetchHostTrends(7, "24h", new Date("2026-08-11T12:00:00Z"));
-
-    for (const call of getMetrics.mock.calls) {
-      expect(call[1].from).toBe("2026-08-10T12:00:00.000Z");
-      expect(call[1].to).toBe("2026-08-11T12:00:00.000Z");
-      expect(call[1].step).toBe("5m");
-    }
   });
 });
 
@@ -578,6 +487,8 @@ describe("fetchFleetTrends", () => {
       [
         { id: 1, threads: 4 },
         { id: 2, threads: 128 },
+        // Unknown size is the case the guard is for: an unbounded fetch.
+        { id: 3, threads: null },
       ],
       "1h",
     );
