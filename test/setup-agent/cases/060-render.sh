@@ -67,10 +67,6 @@ ENVOUT=$(cat "$OUT/.env")
 assert_contains "$ENVOUT" "AGENT_HUB_URL=https://netra.example.com" \
     "the hub URL is substituted, slashes and all"
 assert_contains "$ENVOUT" "AGENT_TOKEN=nta_testtoken" "the token is substituted"
-assert_contains "$ENVOUT" "AGENT_PRIMARY_SENSOR=" \
-    "the primary sensor is present but empty (the agent picks at runtime)"
-assert_not_contains "$ENVOUT" "AGENT_PRIMARY_SENSOR=coretemp" \
-    "a setup-time auto-pick is NOT frozen into .env"
 # The three values the script asks for, and the one it deliberately does not.
 assert_contains "$ENVOUT" "AGENT_LOCATION=Zurich, CH" \
     "the location reaches .env, comma and space intact"
@@ -147,8 +143,7 @@ export AGENT_SOURCED
 
 AGENT_VAL_HUB_URL='https://h.example/a&b/c'
 AGENT_VAL_TOKEN='nta_a&b/c\d'
-AGENT_VAL_PRIMARY_SENSOR=''
-export AGENT_VAL_HUB_URL AGENT_VAL_TOKEN AGENT_VAL_PRIMARY_SENSOR
+export AGENT_VAL_HUB_URL AGENT_VAL_TOKEN
 ENVOUT=$(render_env "$TEMPLATES/env.tmpl")
 assert_contains "$ENVOUT" 'AGENT_HUB_URL=https://h.example/a&b/c' \
     "a value containing & and / survives substitution intact"

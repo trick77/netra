@@ -117,9 +117,8 @@
 # package database, the D-Bus socket — is enabled automatically, on
 # exactly the argument plan_extras already makes for the Docker socket: it is
 # read-only, and an agent configured without it is not the thing the operator
-# asked for. The primary-sensor tie is resolved by --primary-sensor, not by a
-# prompt with a variable count. And nothing about host CPU, memory or load is
-# ever asked: that is the product.
+# asked for. And nothing about host CPU, memory or load is ever asked: that is
+# the product.
 #
 # Free-text values (hub URL, token, location, provider, host type) are read by
 # netra_ask_value from AGENT_VALUES_FILE, a SEPARATE seam with its own index, so
@@ -564,8 +563,6 @@ Options:
       --output-dir PATH    Where compose.yaml and .env are written (default:
                            ./netra-agent, or ./ when the current directory is
                            already named netra-agent).
-      --primary-sensor VALUE
-                           Override automatic primary-sensor selection.
       --include-network-fs Also offer NFS/CIFS/SMB filesystems.
   -h, --help               Print this and exit.
 
@@ -620,7 +617,6 @@ parse_args() {
     # override a directory the operator named on purpose.
     OUTPUT_DIR="./netra-agent"
     OUTPUT_DIR_EXPLICIT=0
-    PRIMARY_SENSOR=""
     INCLUDE_NETWORK_FS=0
 
     while [ "$#" -gt 0 ]; do
@@ -681,11 +677,6 @@ parse_args() {
             _need_val "$1" "$#"
             OUTPUT_DIR="$2"
             OUTPUT_DIR_EXPLICIT=1
-            shift
-            ;;
-        --primary-sensor)
-            _need_val "$1" "$#"
-            PRIMARY_SENSOR="$2"
             shift
             ;;
         -h | --help)
@@ -1715,13 +1706,11 @@ hwmon_chips() {
     done
 }
 
-# pick_primary_sensor ROWS — the chip name to treat as the host's headline
-# temperature, or nothing.
+# pick_primary_sensor ROWS — the first known CPU temperature chip, or nothing.
+# Only decides whether the missing-driver hint is worth printing.
 #
 # The preference list is walked IN ORDER and the first match wins. NEVER
-# hottest-wins: the hottest chip on a NAS is a spinning disk, and a host whose
-# headline temperature is a disk is a host whose CPU thermal problem is
-# invisible. Matches §6.2.
+# hottest-wins: the hottest chip on a NAS is a spinning disk.
 pick_primary_sensor() {
     for _pp_pref in coretemp k10temp zenpower thermal_zone acpitz; do
         while IFS='|' read -r _pp_h _pp_n _pp_l; do
@@ -1737,14 +1726,6 @@ EOF
     return 0
 }
 
-# detect_sensors — INFORMATIONAL, and deliberately so.
-#
-# The agent already auto-selects the primary sensor at runtime with the same
-# preference order. Writing AGENT_PRIMARY_SENSOR here would freeze an
-# install-time guess into .env, where it outlives the CPU swap or kernel upgrade
-# that changed the chip — so it is written ONLY when --primary-sensor was passed
-# explicitly, or when two equally-ranked known CPU chips exist and the operator
-# resolves the tie.
 # _sensor_module_hint — no CPU temperature chip is usually a missing driver
 # rather than missing hardware, EXCEPT on a virtual host, where it is neither: a
 # guest has no thermal hardware to expose and no driver will conjure any. Telling
@@ -1927,42 +1908,9 @@ detect_sensors() {
 $SENSOR_ROWS
 EOF
 
-    _ds_primary=$(pick_primary_sensor "$SENSOR_ROWS")
-    if [ -n "$PRIMARY_SENSOR" ]; then
-        info "  primary sensor:  $PRIMARY_SENSOR (--primary-sensor, written to .env)"
-        return 0
-    fi
-    if [ -z "$_ds_primary" ]; then
-        info "  primary sensor:  none of the known CPU chips; the agent will choose at runtime"
+    if [ -z "$(pick_primary_sensor "$SENSOR_ROWS")" ]; then
         _sensor_module_hint
-        return 0
     fi
-
-    # Ambiguity is a tie among chips of the SAME top-ranked name — two coretemp
-    # chips on a dual-socket box, say. Only then is there something an operator
-    # can usefully decide.
-    _ds_count=0
-    while IFS='|' read -r _ds_h _ds_n _ds_l; do
-        [ "$_ds_n" = "$_ds_primary" ] || continue
-        _ds_count=$((_ds_count + 1))
-    done <<EOF
-$SENSOR_ROWS
-EOF
-
-    if [ "$_ds_count" -le 1 ]; then
-        info "  primary sensor:  $_ds_primary (auto; left unset in .env so it can follow the hardware)"
-        return 0
-    fi
-
-    info "  primary sensor:  $_ds_count '$_ds_primary' chips are equally ranked"
-    # Not prompted, and this is a change from the first version of this script.
-    # A tie can be any number of chips, so asking about it made the prompt
-    # sequence variable-length - and the answer is a guess frozen into .env that
-    # outlives the hardware that justified it. The agent picks at runtime unless
-    # --primary-sensor says otherwise.
-    warn "primary sensor left unpinned with $_ds_count equally-ranked '$_ds_primary' chips;" \
-        "the agent will pick one at runtime and it may change across reboots." \
-        "Pass --primary-sensor to pin one."
 }
 
 # ---------------------------------------------------------------------------
@@ -2951,16 +2899,6 @@ configure() {
         # is its only reader.
         FORCE_PRIOR_TOKEN=$(env_file_value "$OUTPUT_DIR/.env" AGENT_TOKEN)
 
-        # AGENT_PRIMARY_SENSOR is deliberately absent. It is written only when
-        # the operator states it, and detect_sensors has ALREADY run and
-        # reported by the time this executes -- so seeding it re-pinned a chip
-        # the same run had just described as auto-selected, and re-pinned it
-        # even when that chip is no longer on the host. That is the
-        # install-time guess outliving the hardware which detect_sensors' own
-        # comment exists to prevent, and --force is the one run that should be
-        # re-evaluating it. A --force run still clears the key; correcting that
-        # needs the value validated against this run's sensors, which is its
-        # own change.
         _cfg_empty=""
         for _cfg_var in HUB_URL LOCATION PROVIDER HOST_TYPE; do
             eval "_cfg_val=\$$_cfg_var"
@@ -3124,7 +3062,6 @@ write_outputs() {
     build_blocks
     _env_value HUB_URL "$HUB_URL"
     _env_value TOKEN "$TOKEN"
-    _env_value PRIMARY_SENSOR "$PRIMARY_SENSOR"
     _env_value LOCATION "$LOCATION"
     _env_value PROVIDER "$PROVIDER"
     _env_value HOST_TYPE "$HOST_TYPE"
@@ -3298,7 +3235,6 @@ EOF
         _check_env_value AGENT_LOCATION "$LOCATION" "$OUTPUT_DIR/.env"
         _check_env_value AGENT_PROVIDER "$PROVIDER" "$OUTPUT_DIR/.env"
         _check_env_value AGENT_HOST_TYPE "$HOST_TYPE" "$OUTPUT_DIR/.env"
-        _check_env_value AGENT_PRIMARY_SENSOR "$PRIMARY_SENSOR" "$OUTPUT_DIR/.env"
     fi
 
     rm -rf "$SCRATCH_DIR"
@@ -3502,7 +3438,6 @@ print_finish() {
     info "  smart devices:   found by the agent at runtime"
     info "  capabilities:    $(_plan_caps)"
     info "  package manager: $PKGMGR${PKG_MOUNT:+ ($PKG_MOUNT)}"
-    info "  primary sensor:  ${PRIMARY_SENSOR:-auto (chosen by the agent at runtime)}"
     info "  output dir:      $OUTPUT_DIR"
 
     # BEFORE the early return on a declined gate, and before the skipped notes:

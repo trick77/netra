@@ -690,13 +690,6 @@ assert_eq 0 "$RUN_RC" "a --force run with a location flag completes"
 assert_contains "$(cat "$TMP/out-forceseed/.env")" "AGENT_LOCATION=Bern, CH" \
     "a flag beats the value seeded from the file"
 
-# The sensor is NOT kept, and that is deliberate: detect_sensors has already
-# run and reported by the time configure executes, so restoring the old value
-# here would re-pin a chip this run may have just described as auto-selected --
-# or one no longer on the host at all.
-assert_eq "AGENT_PRIMARY_SENSOR=" "$(grep '^AGENT_PRIMARY_SENSOR=' "$TMP/out-forceseed/.env")" \
-    "--force leaves the primary sensor to be re-detected rather than re-pinning it"
-
 # --- 9. --token-file ----------------------------------------------------------
 #
 # A token pasted into a file by a provisioning system routinely arrives with a
