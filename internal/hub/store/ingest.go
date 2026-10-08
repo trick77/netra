@@ -180,6 +180,13 @@ func (s *Store) UpsertHostCurrent(
 	if err != nil {
 		return fmt.Errorf("upsert host_current: %w", err)
 	}
+
+	// Outside the guard above: a post whose sample is older than last_seen
+	// still proves the host is talking.
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE host_current SET received_at = now() WHERE host_id = $1`, hostID); err != nil {
+		return fmt.Errorf("stamp host_current received_at: %w", err)
+	}
 	return nil
 }
 

@@ -93,7 +93,7 @@ func (s *Store) ScanConditions(ctx context.Context, now time.Time,
 // has stopped talking, so nothing else would ever look.
 func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.Time) error {
 	rows, err := s.pool.Query(ctx, `
-		SELECT h.id, c.last_seen
+		SELECT h.id, c.last_seen, c.received_at
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id`)
 	if err != nil {
@@ -103,12 +103,14 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 
 	for rows.Next() {
 		var id int32
-		var lastSeen *time.Time
-		if err := rows.Scan(&id, &lastSeen); err != nil {
+		var lastSeen, receivedAt *time.Time
+		if err := rows.Scan(&id, &lastSeen, &receivedAt); err != nil {
 			return fmt.Errorf("scan host: %w", err)
 		}
 
-		reporting := conditions.Reporting(lastSeen, now)
+		// On received_at, the hub's clock, because now is too: last_seen is
+		// the agent's, and a slow one would read as silence.
+		reporting := conditions.Reporting(receivedAt, now)
 		scan.Reporting[id] = reporting
 
 		key := conditions.Key{HostID: id, Kind: conditions.KindSilent}
@@ -135,17 +137,17 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 
 		scan.Seen[key] = true
 
-		severity := conditions.SilentSeverity(lastSeen, now)
+		severity := conditions.SilentSeverity(receivedAt, now)
 		if severity == "" {
 			continue
 		}
 
-		// The one condition whose onset needs no derivation: last_seen IS the
-		// moment it began.
+		// The one condition whose onset needs no derivation: the last post
+		// received IS the moment it began.
 		scan.Bad[key] = conditions.Finding{
 			Key:      key,
 			Severity: severity,
-			OpenedTS: *lastSeen,
+			OpenedTS: *receivedAt,
 			Detail: map[string]any{
 				"last_seen": lastSeen.UTC().Format(time.RFC3339),
 			},

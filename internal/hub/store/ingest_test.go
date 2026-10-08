@@ -147,6 +147,11 @@ func TestIntegrationUpsertHostCurrent(t *testing.T) {
 	if err := s.UpsertHostCurrent(ctx, hostID, newer, nil, nil); err != nil {
 		t.Fatalf("newer upsert: %v", err)
 	}
+	stamped := time.Now().Add(-time.Hour)
+	if _, err := s.Pool().Exec(ctx,
+		`UPDATE host_current SET received_at = $2 WHERE host_id = $1`, hostID, stamped); err != nil {
+		t.Fatalf("backdate received_at: %v", err)
+	}
 	// Apply the older sample again, as if it arrived late or out of order.
 	// The guard clause in UpsertHostCurrent's ON CONFLICT must keep the
 	// newer value in place.
@@ -155,12 +160,17 @@ func TestIntegrationUpsertHostCurrent(t *testing.T) {
 	}
 
 	var cpu float64
+	var receivedAt time.Time
 	if err := s.Pool().QueryRow(ctx,
-		`SELECT cpu_total FROM host_current WHERE host_id = $1`, hostID).Scan(&cpu); err != nil {
+		`SELECT cpu_total, received_at FROM host_current WHERE host_id = $1`, hostID).Scan(&cpu, &receivedAt); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	if cpu != 20 {
 		t.Fatalf("cpu_total = %v, want 20 — a stale sample must not overwrite the newer one", cpu)
+	}
+	// The post still arrived, so the host is still talking.
+	if !receivedAt.After(stamped) {
+		t.Errorf("received_at = %v, want it advanced past %v by the rejected sample", receivedAt, stamped)
 	}
 }
 
