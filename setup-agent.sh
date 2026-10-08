@@ -2715,6 +2715,8 @@ env_file_value() {
     _efv=${_efv%"${_efv##*[![:space:]]}"}
     case "$_efv" in
     \'*\') _efv=${_efv#\'} _efv=${_efv%\'} ;;
+    # Hand-written: compose reads "Rack 3" as Rack 3, and so must a reseed.
+    \"*\") _efv=${_efv#\"} _efv=${_efv%\"} ;;
     esac
     printf '%s' "$_efv"
 }
