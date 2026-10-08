@@ -1,6 +1,8 @@
 package conditions_test
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -255,5 +257,25 @@ func TestSortAlarmsIsWorstFirstAndStable(t *testing.T) {
 	// is device order and the only thing left to break the tie with.
 	if got[1].Device != "sdb" || got[2].Device != "sdc" {
 		t.Errorf("ties = %q, %q, want sdb then sdc", got[1].Device, got[2].Device)
+	}
+}
+
+// The drive scan fetches only JudgedAttrIDs, so DriveFindings must not read
+// any id outside it: a drive reporting every id as bad must be judged the same
+// with the unlisted ids removed.
+func TestJudgedAttrIDsCoverEverythingDriveFindingsReads(t *testing.T) {
+	for _, first := range []int16{1, conditions.NVMeCriticalWarning} {
+		var all, listed conditions.DriveReading
+		for id := first; id < first+256; id++ {
+			a := conditions.DriveAttr{ID: id, Raw: raw(1000)}
+			all.Attributes = append(all.Attributes, a)
+			if slices.Contains(conditions.JudgedAttrIDs, id) {
+				listed.Attributes = append(listed.Attributes, a)
+			}
+		}
+		got, want := conditions.DriveFindings(listed), conditions.DriveFindings(all)
+		if len(want) == 0 || !reflect.DeepEqual(got, want) {
+			t.Errorf("ids from %d: findings on listed ids = %v, on all ids = %v", first, got, want)
+		}
 	}
 }

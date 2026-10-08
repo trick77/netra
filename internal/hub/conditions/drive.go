@@ -38,6 +38,22 @@ const (
 	NVMeMediaErrors             = 1004
 )
 
+// JudgedAttrIDs is every attribute id DriveFindings reads. The drive scan
+// fetches only these: an id DriveFindings has never heard of cannot change the
+// verdict.
+var JudgedAttrIDs = []int16{
+	ATAReallocatedSectors,
+	ATAReportedUncorrect,
+	ATACurrentPending,
+	ATAOfflineUncorrectable,
+	ATACRCErrors,
+	NVMeCriticalWarning,
+	NVMePercentageUsed,
+	NVMeAvailableSpare,
+	NVMeAvailableSpareThreshold,
+	NVMeMediaErrors,
+}
+
 // Wear thresholds, in one place, because both are a judgement.
 //
 // A drive's own estimate of consumed write endurance is allowed to pass 100: a

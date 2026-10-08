@@ -611,24 +611,6 @@ func (s *Store) scanReporting(ctx context.Context, scan *conditions.Scan,
 	return nil
 }
 
-// judgedAttrIDs is every SMART attribute conditions.DriveFindings reads.
-//
-// The query filters on them because this is JUDGING, not rendering: read.Drives
-// selects every attribute a drive reported because it draws a table of them,
-// and an id DriveFindings has never heard of cannot change the verdict.
-var judgedAttrIDs = []int16{
-	conditions.ATAReallocatedSectors,
-	conditions.ATAReportedUncorrect,
-	conditions.ATACurrentPending,
-	conditions.ATAOfflineUncorrectable,
-	conditions.ATACRCErrors,
-	conditions.NVMeCriticalWarning,
-	conditions.NVMePercentageUsed,
-	conditions.NVMeAvailableSpare,
-	conditions.NVMeAvailableSpareThreshold,
-	conditions.NVMeMediaErrors,
-}
-
 // scanDrives raises the drive condition, one subject per DEVICE.
 //
 // Per device rather than per host, like disk and unlike failed-units. The fleet
@@ -640,6 +622,9 @@ func (s *Store) scanDrives(ctx context.Context, scan *conditions.Scan) error {
 	// LEFT JOIN LATERAL so a drive with no attributes still appears: the hub
 	// upserts a device before its attribute rows land, and such a drive is
 	// present-and-unmeasurable rather than absent.
+	//
+	// Filtered to conditions.JudgedAttrIDs because this is JUDGING, not
+	// rendering: read.Drives selects every attribute because it draws a table.
 	rows, err := s.pool.Query(ctx, `
 		SELECT d.host_id, d.device, d.last_seen, a.attr_id, a.raw, hc.last_seen
 		  FROM devices d
@@ -652,7 +637,7 @@ func (s *Store) scanDrives(ctx context.Context, scan *conditions.Scan) error {
 		        ORDER BY s.attr_id, s.ts DESC
 		  ) a ON TRUE
 		 WHERE hc.last_seen IS NOT NULL
-		 ORDER BY d.host_id, d.device`, judgedAttrIDs)
+		 ORDER BY d.host_id, d.device`, conditions.JudgedAttrIDs)
 	if err != nil {
 		return fmt.Errorf("query drives: %w", err)
 	}
