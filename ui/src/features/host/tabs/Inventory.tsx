@@ -707,7 +707,7 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
     // full than df does. Same definition as the fleet list's disk meter, and
     // now the same SEVERITY rule as well: see the severity prop below.
     cell: (row) =>
-      row.used === null || row.free === null || row.used + row.free === 0 ? (
+      row.used === null || row.free === null || row.used + row.free <= 0 ? (
         ABSENT
       ) : (
         // Wrapped, for the reason .disk-cell and .usage-cell are: Meter brings
@@ -734,7 +734,7 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
     // read back off the bar. A mount the metrics have not answered for draws
     // ABSENT and sorts as unknown, not as empty.
     sortValue: (row) =>
-      row.used === null || row.free === null || row.used + row.free === 0
+      row.used === null || row.free === null || row.used + row.free <= 0
         ? null
         : (row.used / (row.used + row.free)) * 100,
   },

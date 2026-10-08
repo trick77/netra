@@ -815,6 +815,24 @@ describe("Mounts", () => {
     expect(dataRow.textContent).toContain(ABSENT);
     expect(dataRow.querySelector(".segbar")).toBeNull();
   });
+
+  // FUSE can report Bfree > Blocks, which makes used negative and
+  // used + free below zero: no Use% exists, so no 200% red bar either.
+  it("renders the absent marker for a negative capacity", () => {
+    const negative = {
+      ...metrics,
+      series: [
+        {
+          key: { filesystem: "data" },
+          points: [[Date.parse("2026-08-10T00:00:00Z"), 10, -20, 10]],
+        },
+      ],
+    } as unknown as MetricsResponse;
+    render(<Mounts rows={rows} metrics={negative} />);
+
+    const dataRow = screen.getByText("data").closest("tr")!;
+    expect(dataRow.querySelector(".segbar")).toBeNull();
+  });
 });
 
 describe("Drives", () => {

@@ -30,6 +30,10 @@ describe("Meter", () => {
     rerender(<Meter value={50} max={null} />);
     expect(screen.getByText(ABSENT)).toBeInTheDocument();
     expect(bar(container)).not.toBeInTheDocument();
+
+    rerender(<Meter value={-20} max={-10} />);
+    expect(screen.getByText(ABSENT)).toBeInTheDocument();
+    expect(bar(container)).not.toBeInTheDocument();
   });
 
   it("lights cells to the nearest tenth of value/max", () => {
