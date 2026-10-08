@@ -273,6 +273,28 @@ func TestHubProbeStaysInsideTheScrapeDeadline(t *testing.T) {
 	}
 }
 
+// A probe the scrape deadline cuts off mid-way was not answered by the hub, it
+// ran out of time. Counting it would report a hub outage the network never had.
+func TestHubProbeCutByTheScrapeDeadlineIsNotAFailure(t *testing.T) {
+	c := probeClient(t, "http://hub.invalid:9999")
+	c.SetScrapeTimeoutForTest(100 * time.Millisecond)
+	c.SetResolverForTest(&net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	})
+
+	agent := c.ScrapeOnce(context.Background()).GetAgent()
+	if agent.HubConnectUs != nil {
+		t.Errorf("hub_connect_us = %d after a cut probe; want unset", agent.GetHubConnectUs())
+	}
+	if got := agent.GetHubConnectFailuresTotal(); got != 0 {
+		t.Errorf("hub_connect_failures_total = %d after the scrape deadline cut the probe; want 0", got)
+	}
+}
+
 // A scrape whose collectors spent the whole budget skips the probe rather than
 // counting a hub failure the network never had.
 func TestHubProbeSkippedNotFailedWhenCollectorsSpendTheBudget(t *testing.T) {
