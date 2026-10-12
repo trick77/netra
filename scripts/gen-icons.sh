@@ -140,4 +140,8 @@ if [[ "$fav_ink" != "131312ff" ]]; then
 fi
 
 [[ "$fail" == 0 ]] || exit 1
-echo "gen-icons: wrote $(cd "$OUT" && ls icon.svg icon-*.png apple-touch-icon.png | tr '\n' ' ')-> $OUT"
+wrote=()
+for f in "$OUT"/icon.svg "$OUT"/icon-*.png "$OUT"/apple-touch-icon.png; do
+	[[ -e "$f" ]] && wrote+=("${f##*/}")
+done
+echo "gen-icons: wrote ${wrote[*]} -> $OUT"

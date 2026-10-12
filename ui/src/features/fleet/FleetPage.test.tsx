@@ -1083,7 +1083,6 @@ describe("FleetPage, the container filter and the capability note", () => {
   });
 
   it("explains a genuinely empty container list", async () => {
-    const user = userEvent.setup();
     renderPage({
       entity: "containers",
       rows: [makeRow(), broken],

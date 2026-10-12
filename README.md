@@ -88,9 +88,9 @@ rest of each variable.
 docker compose up -d
 ```
 
-The hub runs its migrations on startup and reports database reachability at
-`/api/health`, so it goes unhealthy rather than accepting ingest it can only
-503.
+The hub runs its migrations on startup. `/healthz` is liveness (the compose
+healthcheck, via `netra -healthcheck`); `/readyz` also pings the database and
+answers 503 while it is unreachable.
 
 ### When the first start fails
 
@@ -387,13 +387,14 @@ The gate is [ship](https://github.com/trick77/ship), configured in `ship.yaml`:
 ```sh
 make hooks                                    # once per clone: the pre-push hook runs the gate
 make check                                    # the gate by hand
-make test                                     # Go unit tests (-race)
+make test                                     # Go tests (-race); store/read need SHIP_TEST_DSN
 make fe-test                                  # UI tests
-make test-integration                         # needs BACKEND_TEST_DSN at a TimescaleDB, not in the gate
+make test-setup-agent                         # setup-agent.sh's suite under sh and dash
 ```
 
-`test-integration` runs with `-p 1` on purpose — the test store drops the shared
-schema, so parallel package binaries race on one database.
+The store and read tests run against real TimescaleDB: `make check` starts
+`timescale/timescaledb` (ship.yaml `postgres:`) and sets `SHIP_TEST_DSN`; by hand,
+point it at a superuser of your own (each test clones a migrated template database).
 
 Releases are cut by hand: `gh workflow run Release -f bump=patch`.
 

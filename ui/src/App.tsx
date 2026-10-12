@@ -95,7 +95,6 @@ export default function App() {
   useDocumentTitle(route);
 
   return (
-    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div className="app" onClick={onClick}>
       {/* A keyboard user should not have to walk the nav and the toolbar on
           every page to reach the thing they came for. Visible only when
@@ -635,12 +634,10 @@ function FleetScreen({
   // EMPTY_CATALOGUE when the call failed or has not landed: everything
   // downstream degrades honestly on it rather than falling back to a copy of
   // the hub's rules, which is the duplication this whole change deleted.
+  const conditions = poll.data?.conditions;
   const catalogue = useMemo(
-    () =>
-      poll.data?.conditions
-        ? catalogueOf(poll.data.conditions.kinds)
-        : EMPTY_CATALOGUE,
-    [poll.data?.conditions],
+    () => (conditions ? catalogueOf(conditions.kinds) : EMPTY_CATALOGUE),
+    [conditions],
   );
 
   const rows = useMemo(

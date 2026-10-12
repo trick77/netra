@@ -71,7 +71,6 @@ import {
   containerGroupWorst,
   GroupBytes,
   containerSeverity,
-  lastReported,
   trendScales,
   type ContainerRow,
 } from "../../container/columns";

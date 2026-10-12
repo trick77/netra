@@ -15,17 +15,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/trick77/ship/kit/logging"
+	kitrun "github.com/trick77/ship/kit/run"
 
 	"github.com/trick77/netra/internal/devtools/sim"
 )
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("netra-sim failed", "err", err)
+		slog.Error("netra-sim failed", logging.Err(err))
 		os.Exit(1)
 	}
 }
@@ -63,7 +64,9 @@ func run() error {
 	logLevel := flag.String("log-level", "info", "debug, info, warn or error")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(*logLevel)})))
+	if _, err := logging.Setup(logging.Options{Level: *logLevel, LevelVar: "-log-level"}); err != nil {
+		return err
+	}
 
 	if *adminToken == "" {
 		return fmt.Errorf("--admin-token is required (or set BACKEND_ADMIN_TOKEN)")
@@ -81,7 +84,7 @@ func run() error {
 	// Ctrl-C stops the run rather than killing it: live mode is meant to be
 	// left running, and a backfill in progress should stop between batches
 	// instead of mid-POST.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := kitrun.Context(context.Background())
 	defer stop()
 
 	cfg := sim.Config{
@@ -130,17 +133,4 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func parseLevel(s string) slog.Level {
-	switch strings.ToLower(s) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }

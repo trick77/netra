@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/trick77/ship/kit/env"
 )
 
 // MaxBufferWindow is the hub's continuous-aggregate start_offset for the 5m
@@ -103,69 +105,70 @@ type Config struct {
 	SmartInterval time.Duration
 }
 
-// Load reads the environment and applies defaults.
+// Load reads the environment and applies defaults. Every fault is reported at
+// once, not one per restart.
 func Load() (Config, error) {
 	if err := rejectOldPrefix(); err != nil {
 		return Config{}, err
 	}
 
+	r := env.New(os.Getenv)
 	cfg := Config{
-		HubURL:   os.Getenv("AGENT_HUB_URL"),
-		Token:    os.Getenv("AGENT_TOKEN"),
-		ProcRoot: envOr("AGENT_PROC_ROOT", "/proc"),
-		SysRoot:  envOr("AGENT_SYSFS_ROOT", "/sys"),
-		Location: os.Getenv("AGENT_LOCATION"),
-		Provider: os.Getenv("AGENT_PROVIDER"),
-		Facility: os.Getenv("AGENT_FACILITY"),
-		HostType: os.Getenv("AGENT_HOST_TYPE"),
-		LogLevel: envOr("AGENT_LOG_LEVEL", "info"),
-		UtmpPath: envOr("AGENT_UTMP_PATH", "/var/run/utmp"),
-		PidHost:  boolEnv("AGENT_PID_HOST"),
-		FsMounts: fsMounts(os.Getenv("AGENT_FS_MOUNTS")),
+		HubURL:   r.Required("AGENT_HUB_URL"),
+		Token:    r.Required("AGENT_TOKEN"),
+		ProcRoot: r.String("AGENT_PROC_ROOT", "/proc"),
+		SysRoot:  r.String("AGENT_SYSFS_ROOT", "/sys"),
+		Location: r.String("AGENT_LOCATION", ""),
+		Provider: r.String("AGENT_PROVIDER", ""),
+		Facility: r.String("AGENT_FACILITY", ""),
+		HostType: r.String("AGENT_HOST_TYPE", ""),
+		LogLevel: r.String("AGENT_LOG_LEVEL", "info"),
+		UtmpPath: r.String("AGENT_UTMP_PATH", "/var/run/utmp"),
+		// setup-agent.sh writes 1 or 0. Anything else is a fault rather than
+		// false: this decides whether a heuristic is skipped, and a typo must
+		// not quietly pick one.
+		PidHost:  r.Bool("AGENT_PID_HOST", false),
+		FsMounts: fsMounts(r.String("AGENT_FS_MOUNTS", "")),
 
-		CgroupRoot:   envOr("AGENT_CGROUP_ROOT", "/host/sys/fs/cgroup"),
-		OsRelease:    envOr("AGENT_OS_RELEASE", "/host/etc/os-release"),
-		DpkgStatus:   envOr("AGENT_DPKG_STATUS", "/var/lib/dpkg/status"),
-		ApkInstalled: envOr("AGENT_APK_INSTALLED", "/lib/apk/db/installed"),
-	}
+		CgroupRoot:   r.String("AGENT_CGROUP_ROOT", "/host/sys/fs/cgroup"),
+		OsRelease:    r.String("AGENT_OS_RELEASE", "/host/etc/os-release"),
+		DpkgStatus:   r.String("AGENT_DPKG_STATUS", "/var/lib/dpkg/status"),
+		ApkInstalled: r.String("AGENT_APK_INSTALLED", "/lib/apk/db/installed"),
 
-	if cfg.HubURL == "" {
-		return Config{}, fmt.Errorf("AGENT_HUB_URL is required")
-	}
-	if cfg.Token == "" {
-		return Config{}, fmt.Errorf("AGENT_TOKEN is required")
-	}
-
-	var err error
-
-	// Two seconds is generous for a sysfs read that normally takes
-	// microseconds, and short enough that a wedged driver costs one scrape
-	// rather than the whole loop.
-	if cfg.SensorsTimeout, err = durationOr("AGENT_SENSORS_TIMEOUT", 2*time.Second); err != nil {
-		return Config{}, err
-	}
-
-	// One hour: SMART values move slowly, and reading them wakes sleeping
-	// drives.
-	if cfg.SmartInterval, err = durationOr("AGENT_SMART_INTERVAL", time.Hour); err != nil {
-		return Config{}, err
+		// Two seconds is generous for a sysfs read that normally takes
+		// microseconds, and short enough that a wedged driver costs one scrape
+		// rather than the whole loop.
+		SensorsTimeout: positive(r, "AGENT_SENSORS_TIMEOUT", 2*time.Second),
+		// One hour: SMART values move slowly, and reading them wakes sleeping
+		// drives.
+		SmartInterval: positive(r, "AGENT_SMART_INTERVAL", time.Hour),
+		BufferWindow:  positive(r, "AGENT_BUFFER_WINDOW", time.Hour),
 	}
 
 	// The buffer window is coupled to the hub's continuous-aggregate
 	// start_offset (MaxBufferWindow, 6h). Raising it past that would silently
 	// exclude replayed data from rollups forever, so it is rejected here.
-	if cfg.BufferWindow, err = durationOr("AGENT_BUFFER_WINDOW", time.Hour); err != nil {
-		return Config{}, err
-	}
 	if cfg.BufferWindow > MaxBufferWindow {
-		return Config{}, fmt.Errorf(
-			"AGENT_BUFFER_WINDOW must not exceed %s (the hub's continuous-aggregate "+
-				"start_offset); data buffered longer than that and then replayed would be "+
-				"silently excluded from rollups forever, got %s",
+		r.Fail("AGENT_BUFFER_WINDOW must not exceed %s (the hub's continuous-aggregate "+
+			"start_offset); data buffered longer than that and then replayed would be "+
+			"silently excluded from rollups forever, got %s",
 			MaxBufferWindow, cfg.BufferWindow)
 	}
 
+	if err := r.Err(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// positive is a duration that must be above zero: a zero timeout or interval
+// would spin or never wait.
+func positive(r *env.Reader, name string, def time.Duration) time.Duration {
+	d := r.Duration(name, def)
+	if d <= 0 {
+		r.Fail("%s must be positive, got %s", name, d)
+	}
+	return d
 }
 
 // rejectOldPrefix refuses to start while a NETRA_-prefixed variable is still
@@ -184,25 +187,6 @@ func rejectOldPrefix() error {
 		}
 	}
 	return nil
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// boolEnv reads a flag that is written by setup-agent.sh as 1 or 0. Anything
-// unrecognised is false: this drives whether a heuristic is skipped, and
-// defaulting an unparseable value to "trust it" would be the wrong direction.
-func boolEnv(key string) bool {
-	switch os.Getenv(key) {
-	case "1", "true", "TRUE", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 // fsMounts parses `label=mountpoint,label=mountpoint` as rendered by
@@ -268,19 +252,4 @@ func hexVal(c byte) (byte, bool) {
 		return c - 'A' + 10, true
 	}
 	return 0, false
-}
-
-func durationOr(key string, fallback time.Duration) (time.Duration, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	if d <= 0 {
-		return 0, fmt.Errorf("%s must be positive, got %s", key, v)
-	}
-	return d, nil
 }

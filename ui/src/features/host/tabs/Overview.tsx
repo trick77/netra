@@ -34,7 +34,7 @@ import {
   relative,
 } from "../../../lib/format";
 import { FLAP_THRESHOLD, isReporting, osLabel } from "../../../lib/host";
-import { Badge, type Severity } from "../../../ui/Badge";
+import type { Severity } from "../../../ui/Badge";
 import { Panel } from "./Panel";
 import { Meter } from "../../../ui/Meter";
 import { StatTile } from "../../../ui/StatTile";
@@ -60,13 +60,8 @@ import {
 // current() and filesystemRows(), which moved there with it -- both files
 // need them, and a second copy of either is how this page and its tiles would
 // come to answer differently about one column.
-import {
-  current,
-  filesystemRows,
-  latest,
-  overviewTiles,
-} from "./overviewTiles";
-import type { FilesystemRow, Tile } from "./overviewTiles";
+import { filesystemRows, latest, overviewTiles } from "./overviewTiles";
+import type { Tile } from "./overviewTiles";
 // The two charts this tab keeps, drawn through the same spec machinery the
 // System and Network tabs use. Rendered from their slugs rather than rebuilt
 // here so there is one title, one `about`, one /hosts/{id}/chart/<slug> URL
@@ -113,26 +108,6 @@ export interface Attention {
 // offline, its traffic gauges blanked, and its fleet row marked critical --
 // above a panel saying nothing needed attention. lib/host.ts anchors the
 // number to the product's alerting rule; there is one definition of down.
-
-// Worst first, and the only two needsAttention() emits: `ok` is not a
-// condition and `neutral` is not a severity anything here can be at. A
-// severity missing from this list would drop its rows silently, which is why
-// it is written out rather than derived from the data.
-const ATTENTION_SEVERITIES = ["critical", "warning"] as const;
-
-const SEVERITY_WORD: Record<Severity, string> = {
-  critical: "Critical",
-  warning: "Warning",
-  ok: "OK",
-  neutral: "Unknown",
-};
-
-const SEVERITY_CLASS: Record<Severity, string> = {
-  critical: "st-crit",
-  warning: "st-warn",
-  ok: "st-ok",
-  neutral: "",
-};
 
 /**
  * What is wrong right now. Current state must not sit behind a tab, so this

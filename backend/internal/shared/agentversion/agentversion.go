@@ -27,7 +27,7 @@ const MinAgent = "0.0.205"
 // AtLeast reports whether reported is at or above min.
 //
 // A version that does not parse is ACCEPTED, and that is deliberate rather
-// than lax. version.Current() is "dev" or "dev-<commit>" for every local and CI build and the
+// than lax. version.String() is "dev" or "dev-<commit>" for every local and CI build and the
 // simulator reports "sim" (devtools/sim/run.go), so rejecting the unparseable
 // would lock development and netra-sim out of their own hub. A parser that
 // went wrong would also brick a whole fleet, and failing open is the cheaper

@@ -69,17 +69,11 @@ import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Reading } from "../../ui/Reading";
 import { When } from "../../ui/When";
-import { Meter, severityFromPercent, trendColor } from "../../ui/Meter";
+import { severityFromPercent, trendColor } from "../../ui/Meter";
 import { NowReading } from "../../ui/NowReading";
 import { METRIC_CELL_STYLE } from "../../ui/charts/size";
 import type { Column } from "../../ui/Table";
-import {
-  ABSENT,
-  absolute,
-  binaryBytes,
-  bytes,
-  percent,
-} from "../../lib/format";
+import { ABSENT, absolute, binaryBytes, bytes } from "../../lib/format";
 import type { Container } from "../../lib/api";
 import { rangeMs, type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";

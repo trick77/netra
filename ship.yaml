@@ -1,22 +1,22 @@
 # The gate (make check, and ship pre-push in the hook) and the release, see github.com/trick77/ship.
+# The store and read tests need real TimescaleDB (hypertables, continuous aggregates): plain postgres has no such
+# extension. compose.yaml's service image, so the two cannot drift.
+postgres: compose:timescaledb
 go:
   dir: backend
   # Attributes coverage across package boundaries and keeps cmd/ (wiring; logic lives in internal/) out of both
   # gates, as core does.
   coverpkg: ./internal/...
-  # store and read are mostly SQL run by TimescaleDB; their tests need a database, so they run by hand
-  # (make test-integration), not in the gate. cmd/ as the default.
-  exclude: [cmd/, internal/hub/store/, internal/hub/read/]
 ui:
-  # Through the Makefile: vite's emptyOutDir wipes the tracked dist/.gitkeep go:embed needs, make fe-build restores it.
-  build: cd .. && make fe-build
-  lint: npm run format:check
+  lint: npm run lint
   # Reporters from ui/vite.config.ts (lcov into ../coverage/ui), not overridden on the command line.
   test: npm run test -- --coverage
   lcov: coverage/ui/lcov.info
+  # vite's emptyOutDir would wipe the tracked .gitkeep go:embed needs: ship empties the rest before the build.
+  embed: backend/internal/hub/web/dist
 steps:
-  # setup-agent.sh is POSIX sh, curl'd onto hosts whose /bin/sh is dash or busybox ash.
-  - { name: setup-agent, run: make test-shell }
+  # setup-agent.sh is POSIX sh, curl'd onto hosts whose /bin/sh is dash or busybox ash: its suite under sh and dash.
+  - { name: setup-agent, run: make test-setup-agent }
   # Hub and agent share one go.mod: nothing in the compiler keeps hub code out of the agent binary.
   - { name: agent imports, run: ./scripts/agent-imports.sh }
 images:
@@ -24,3 +24,6 @@ images:
   # The agent, same version as the hub it reports to.
   - suffix: -agent
     target: netra-agent
+allow:
+  - { rule: distroless, image: -agent, why: "the agent runs smartctl: distroless has no smartmontools" }
+  - { rule: containerfile, image: -agent, why: "root by design: smartctl's ATA/NVMe passthrough ioctls need SYS_RAWIO, non-root gets EACCES on every SMART read" }

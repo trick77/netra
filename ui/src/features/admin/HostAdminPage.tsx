@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { MapPin, ServerCog } from "lucide-react";
+import { ServerCog } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
-import { Input, Select } from "../../ui/Control";
+import { Input } from "../../ui/Control";
 import { EmptyState } from "../../ui/EmptyState";
 import { Table, type Column } from "../../ui/Table";
 import { When } from "../../ui/When";
@@ -236,16 +236,21 @@ export function HostAdminPage() {
   // stylable, not testable, and easy to dismiss by reflex on the wrong row.
   const [confirming, setConfirming] = useState<number | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setHosts(await getHosts());
-      setLoadError(null);
-    } catch (err) {
-      // hosts stays null so the empty state -- which is the onboarding, and
-      // reads as "this hub is new" -- never stands in for a failed read.
-      setLoadError(message(err));
-    }
-  }, []);
+  const refresh = useCallback(
+    () =>
+      getHosts().then(
+        (next) => {
+          setHosts(next);
+          setLoadError(null);
+        },
+        (err: unknown) => {
+          // hosts stays null so the empty state -- which is the onboarding, and
+          // reads as "this hub is new" -- never stands in for a failed read.
+          setLoadError(message(err));
+        },
+      ),
+    [],
+  );
 
   useEffect(() => {
     void refresh();

@@ -17,7 +17,7 @@ import (
 
 	"github.com/trick77/netra/internal/agent/config"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
-	"github.com/trick77/netra/internal/version"
+	"github.com/trick77/ship/kit/version"
 )
 
 // BuildMetadata gathers the static facts about this host and agent.
@@ -34,7 +34,7 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 	hostname, _ := os.Hostname()
 
 	md := &netrav1.Metadata{
-		AgentVersion: version.Current(),
+		AgentVersion: version.String(),
 		GoVersion:    runtime.Version(),
 		Hostname:     hostname,
 		Arch:         runtime.GOARCH,

@@ -12,7 +12,7 @@ describe("ChartPanel width", () => {
 
   /** A ResizeObserver that answers `px` for whatever it is asked to watch.
    * jsdom implements no layout, so the measurement has to be stubbed rather
-   * than provoked -- test-setup installs one that never fires, which is what
+   * than provoked -- src/test/setup.ts installs one that never fires, which is what
    * keeps every other test at the fallback width. */
   function stubWidth(px: number) {
     vi.stubGlobal(

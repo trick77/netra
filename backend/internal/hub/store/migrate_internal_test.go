@@ -2,9 +2,9 @@ package store
 
 import (
 	"context"
-	"reflect"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -124,75 +124,6 @@ func TestIntegrationMigrateProceedsOnceTheLockIsFree(t *testing.T) {
 	}
 }
 
-func TestSplitStatements(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want []string
-	}{
-		{
-			name: "two plain statements",
-			body: "CREATE TABLE a (id INT);\nCREATE TABLE b (id INT);",
-			want: []string{"CREATE TABLE a (id INT)", "CREATE TABLE b (id INT)"},
-		},
-		{
-			name: "semicolon inside single-quoted literal does not split",
-			body: "INSERT INTO a (name) VALUES ('foo;bar');\nCREATE TABLE b (id INT);",
-			want: []string{"INSERT INTO a (name) VALUES ('foo;bar')", "CREATE TABLE b (id INT)"},
-		},
-		{
-			name: "escaped quote inside literal does not confuse the parser",
-			body: "INSERT INTO a (name) VALUES ('it''s; here');\nCREATE TABLE b (id INT);",
-			want: []string{"INSERT INTO a (name) VALUES ('it''s; here')", "CREATE TABLE b (id INT)"},
-		},
-		{
-			name: "semicolon inside line comment does not split",
-			body: "CREATE TABLE a (id INT); -- comment; with semicolon\nCREATE TABLE b (id INT);",
-			want: []string{"CREATE TABLE a (id INT)", "-- comment; with semicolon\nCREATE TABLE b (id INT)"},
-		},
-		{
-			name: "semicolon inside block comment does not split",
-			body: "CREATE TABLE a (id INT); /* comment; with semicolon */\nCREATE TABLE b (id INT);",
-			want: []string{"CREATE TABLE a (id INT)", "/* comment; with semicolon */\nCREATE TABLE b (id INT)"},
-		},
-		{
-			name: "semicolon inside dollar-quoted block does not split",
-			body: "CREATE FUNCTION f() RETURNS void AS $$ BEGIN PERFORM 1; END; $$ LANGUAGE plpgsql;\nCREATE TABLE b (id INT);",
-			want: []string{
-				"CREATE FUNCTION f() RETURNS void AS $$ BEGIN PERFORM 1; END; $$ LANGUAGE plpgsql",
-				"CREATE TABLE b (id INT)",
-			},
-		},
-		{
-			name: "semicolon inside tagged dollar-quoted block does not split",
-			body: "CREATE FUNCTION f() RETURNS void AS $tag$ BEGIN PERFORM 1; END; $tag$ LANGUAGE plpgsql;\nCREATE TABLE b (id INT);",
-			want: []string{
-				"CREATE FUNCTION f() RETURNS void AS $tag$ BEGIN PERFORM 1; END; $tag$ LANGUAGE plpgsql",
-				"CREATE TABLE b (id INT)",
-			},
-		},
-		{
-			name: "trailing semicolon produces no empty statement",
-			body: "CREATE TABLE a (id INT);\n",
-			want: []string{"CREATE TABLE a (id INT)"},
-		},
-		{
-			name: "trailing comment produces no empty statement",
-			body: "CREATE TABLE a (id INT);\n-- trailing comment, nothing after it\n",
-			want: []string{"CREATE TABLE a (id INT)"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := splitStatements(tt.body)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("splitStatements(%q) = %#v, want %#v", tt.body, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestIntegrationApplyMigrationNoTransactionMultiStatement proves the actual
 // defect this file fixes: a no-transaction migration with more than one
 // statement must apply each statement in its own implicit transaction, not
@@ -217,8 +148,8 @@ CREATE TABLE concurrent_index_target (id INTEGER PRIMARY KEY, name TEXT);
 CREATE INDEX CONCURRENTLY idx_concurrent_index_target_name ON concurrent_index_target (name);
 `
 
-	if err := s.applyMigration(ctx, "9999_no_tx_multi_statement.sql", body); err != nil {
-		t.Fatalf("applyMigration: %v", err)
+	if err := s.migrateFS(ctx, fstest.MapFS{"9999_no_tx_multi_statement.sql": {Data: []byte(body)}}); err != nil {
+		t.Fatalf("migrateFS: %v", err)
 	}
 
 	var tableCount int
@@ -242,7 +173,7 @@ CREATE INDEX CONCURRENTLY idx_concurrent_index_target_name ON concurrent_index_t
 	}
 }
 
-// A no-transaction migration has no rollback, so applyMigration can leave the
+// A no-transaction migration has no rollback, so a failed run can leave the
 // schema half-built with the migration unrecorded — its own comment says such
 // a migration "is retried". Retrying only works if every statement in the file
 // is individually re-runnable, and nothing else enforces that.
@@ -294,11 +225,11 @@ func TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration(t *testing.T) 
 	}
 }
 
-// applyMigration's transactional branch (no noTxMarker) is the default path
+// The transactional path (no noTxMarker) is the default
 // for every future migration and the only place a failed migration is rolled
 // back. The embedded migrations directory currently holds a single
 // no-transaction file, so nothing exercises that branch end to end unless a
-// test drives applyMigration directly with an arbitrary body — which it is
+// test drives migrateFS directly with an arbitrary body — which it is
 // unexported but callable for, from this in-package test file.
 //
 // The happy path proves a transactional migration applies and is recorded.
@@ -312,8 +243,8 @@ func TestIntegrationApplyMigrationTransactionalCommits(t *testing.T) {
 
 	body := `CREATE TABLE tx_commit_target (id INTEGER PRIMARY KEY, name TEXT);`
 
-	if err := s.applyMigration(ctx, "9999_tx_commit.sql", body); err != nil {
-		t.Fatalf("applyMigration: %v", err)
+	if err := s.migrateFS(ctx, fstest.MapFS{"9999_tx_commit.sql": {Data: []byte(body)}}); err != nil {
+		t.Fatalf("migrateFS: %v", err)
 	}
 
 	var tableCount int
@@ -355,9 +286,9 @@ CREATE TABLE tx_rollback_target (id INTEGER PRIMARY KEY, name TEXT);
 CREATE TABLE tx_rollback_target (id INTEGER PRIMARY KEY, name TEXT);
 `
 
-	err := s.applyMigration(ctx, "9999_tx_rollback.sql", body)
+	err := s.migrateFS(ctx, fstest.MapFS{"9999_tx_rollback.sql": {Data: []byte(body)}})
 	if err == nil {
-		t.Fatal("applyMigration: want error from the second, duplicate CREATE TABLE, got nil")
+		t.Fatal("migrateFS: want error from the second, duplicate CREATE TABLE, got nil")
 	}
 
 	var tableCount int

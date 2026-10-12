@@ -1,17 +1,16 @@
-// Package web serves the phase-2 single-page UI out of the hub binary.
+// Package web serves the single-page UI out of the hub binary.
 //
 // The SPA is built by `make fe-build` into dist/ and embedded here, the same way
-// migrations and the phase-1 templates are: one binary, no asset directory to
-// deploy, no separate web server.
+// migrations and the login templates are: one binary, no asset directory to
+// deploy, no separate web server. Serving is kit/spa's.
 package web
 
 import (
 	"embed"
 	"io/fs"
-	"mime"
 	"net/http"
-	"slices"
-	"strings"
+
+	"github.com/trick77/ship/kit/spa"
 )
 
 // distFS holds the built SPA. dist/ is generated and .gitignore excludes its
@@ -19,83 +18,25 @@ import (
 // solely so `//go:embed all:dist` -- resolved at compile time -- has
 // something to embed on a fresh checkout; without it `go build ./...` and
 // `go test ./...` fail outright with "pattern all:dist: no matching files
-// found". A real index.html is deliberately NOT tracked here (an earlier
-// version of this file committed one as a placeholder, but `make fe-build`
-// overwrites it on every build, leaving the working tree permanently dirty).
-// The consequence is that distFS may contain nothing at all on a checkout
-// that hasn't run `make fe-build`; see TestHandlerDoesNotPanic in
-// embed_internal_test.go for the one thing asserted about that case.
+// found". A real index.html is deliberately NOT tracked here: `make fe-build`
+// would overwrite it on every build, leaving the working tree permanently
+// dirty.
 //
 //go:embed all:dist
 var distFS embed.FS
 
-// Go's built-in MIME table has no .webmanifest entry, and the scratch image the
-// hub ships in has no /etc/mime.types to fall back on, so without this
-// http.FileServer sniffs site.webmanifest and serves it as text/plain -- which
-// Chrome rejects, ignoring the manifest entirely. Registered in an init rather
-// than as a header on one route so every path that can ever serve the file gets
-// the right type. ../peeq and ../ismimodown carry the same three lines; keep the
-// family in step.
-func init() {
-	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
-}
+// unbuilt is what a binary built without the UI answers app routes with (503),
+// instead of a directory listing that every healthcheck reads as fine.
+var unbuilt = []byte("<!doctype html><title>netra</title><p>netra: this binary was built without the web UI; " +
+	"run <code>make fe-build</code> before building, or use a released image.</p>\n")
 
-// Handler serves the SPA.
-//
-// Every path that is not a real file falls back to index.html, because the
-// router owns those paths client-side. Without the fallback, reloading
-// /hosts/3/graphs 404s -- and deep links are load-bearing: the diagnosis
-// drawer links into specific tabs.
-func Handler() http.Handler {
-	sub, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		panic("web: dist not embedded: " + err.Error())
-	}
-	return handlerFor(sub)
-}
+// Handler serves the SPA. Every path that is not a real file gets the shell,
+// because the router owns those paths client-side: a reload of
+// /hosts/3/graphs must not 404, and the diagnosis drawer deep-links into tabs.
+func Handler() http.Handler { return handlerFor(dist()) }
 
-// handlerFor implements the routing logic against an arbitrary fs.FS, so
-// tests can exercise the assets/ immutable-caching branch with a synthetic
-// filesystem instead of a real Vite build. Handler is the thin wrapper that
-// supplies the embedded dist/ tree.
 func handlerFor(sub fs.FS) http.Handler {
-	files := http.FileServer(http.FS(sub))
-
-	// An unbuilt dist/ is a build mistake, not a request error, and it used to
-	// present as neither: with only .gitkeep embedded, the fallback below hands
-	// "/" to http.FileServer, which answers 200 and a directory listing of the
-	// one empty file. The image starts, /api/health passes, the compose
-	// healthcheck goes green, and the operator gets a file index where the UI
-	// should be. Saying so plainly, once, is worth more than any 200 here.
-	if _, err := fs.Stat(sub, "index.html"); err != nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w,
-				"netra: this binary was built without the web UI; run `make fe-build` before building, or use a released image",
-				http.StatusServiceUnavailable)
-		})
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/")
-		if p != "" {
-			if f, err := sub.Open(p); err == nil {
-				_ = f.Close()
-				// Vite fingerprints everything under assets/, so those are safe
-				// to pin forever. Anything else keeps the default.
-				if strings.HasPrefix(p, "assets/") {
-					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-				}
-				files.ServeHTTP(w, r)
-				return
-			}
-		}
-		// index.html must be revalidated every load or a deploy never reaches
-		// a browser that already has it.
-		w.Header().Set("Cache-Control", "no-cache")
-		r2 := r.Clone(r.Context())
-		r2.URL.Path = "/"
-		files.ServeHTTP(w, r2)
-	})
+	return spa.Handler(sub, spa.Options{Placeholder: unbuilt})
 }
 
 // PublicAssetPaths are the files a browser asks for before it can possibly
@@ -108,16 +49,11 @@ func handlerFor(sub fs.FS) http.Handler {
 //
 // The manifest has a second reason of its own: a <link rel="manifest"> fetch
 // is credential-less by spec unless the tag opts in, so it never carries the
-// session cookie and would 303 even for a signed-in user. The alternative is
-// crossorigin="use-credentials" in every consuming document, which fixes the
-// signed-in case and still leaves the login page without an icon.
+// session cookie and would 303 even for a signed-in user.
 //
-// Nothing here is secret -- they are the same bytes any visitor to the login
-// page can already fetch -- and the list is fixed rather than a prefix, so it
-// cannot be widened by dropping a file into ui/public.
-//
-// Paths are FS-relative (no leading slash), the form the handler compares
-// against; NewRouter adds the slash when it mounts them.
+// Nothing here is secret, and the list is fixed rather than a prefix, so it
+// cannot be widened by dropping a file into ui/public. FS-relative (no leading
+// slash); NewRouter adds the slash when it mounts them.
 var PublicAssetPaths = []string{
 	"icon.svg",
 	"icon-192.png",
@@ -128,45 +64,15 @@ var PublicAssetPaths = []string{
 }
 
 // PublicAssets serves exactly PublicAssetPaths out of the embedded dist/ tree
-// and 404s everything else.
-//
-// The allowlist is enforced here rather than left to the routes NewRouter
-// registers, so this handler cannot serve the SPA shell to an anonymous caller
-// even if it is later mounted somewhere broader. A missing file is a 404 too,
-// which is what a binary built without `make fe-build` gets: an unbuilt dist/ must
-// not fall through to index.html on an unauthenticated route.
-func PublicAssets() http.Handler {
+// and 404s everything else, a missing file included.
+func PublicAssets() http.Handler { return publicAssetsFor(dist()) }
+
+func publicAssetsFor(sub fs.FS) http.Handler { return spa.Files(sub, PublicAssetPaths...) }
+
+func dist() fs.FS {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		panic("web: dist not embedded: " + err.Error())
 	}
-	return publicAssetsFor(sub)
-}
-
-// publicAssetsFor is PublicAssets against an arbitrary fs.FS, so tests can
-// exercise it without a real Vite build -- the same split Handler/handlerFor
-// uses, and for the same reason.
-func publicAssetsFor(sub fs.FS) http.Handler {
-	files := http.FileServer(http.FS(sub))
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/")
-		if !slices.Contains(PublicAssetPaths, p) {
-			http.NotFound(w, r)
-			return
-		}
-		f, err := sub.Open(p)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		_ = f.Close()
-
-		// A day, matching /login-cover.webp: none of these names is
-		// fingerprinted, so replacing an icon leaves the old one in a browser
-		// that has it until the entry expires. That is the right trade for a
-		// tab icon, and the alternative is refetching all six on every load.
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		files.ServeHTTP(w, r)
-	})
+	return sub
 }

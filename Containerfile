@@ -4,8 +4,8 @@
 # --- Hub: build the SPA ---------------------------------------------------------
 # Compiled here, not on the developer's machine: dist/ is gitignored down to an
 # empty .gitkeep, so a Go build that skips this stage embeds one empty file. That
-# image starts, answers /api/health, passes the compose healthcheck, and serves a
-# directory listing where the UI should be, with no error anywhere.
+# image starts, answers /healthz, passes the compose healthcheck, and serves a
+# "UI not built" page where the UI should be.
 FROM node:26-alpine AS ui
 WORKDIR /src/ui
 COPY ui/package.json ui/package-lock.json ./
@@ -27,7 +27,7 @@ FROM gosrc AS agent-build
 # Declared after the module download: it changes on every release.
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath \
-      -ldflags="-s -w -X github.com/trick77/netra/internal/version.Version=${VERSION}" \
+      -ldflags="-s -w -X github.com/trick77/ship/kit/version.Version=${VERSION}" \
       -o /out/netra-agent ./cmd/netra-agent
 
 # --- Agent: runtime -------------------------------------------------------------
@@ -59,20 +59,17 @@ FROM gosrc AS build
 COPY --from=ui /src/backend/internal/hub/web/dist ./internal/hub/web/dist
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath \
-      -ldflags="-s -w -X github.com/trick77/netra/internal/version.Version=${VERSION}" \
+      -ldflags="-s -w -X github.com/trick77/ship/kit/version.Version=${VERSION}" \
       -o /out/netra ./cmd/netra
 
 # --- Hub: runtime ---------------------------------------------------------------
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+# Distroless, non-root: no shell, no package manager. CA certificates are in
+# the base (OIDC discovery is HTTPS). The compose healthcheck runs the binary's
+# own -healthcheck, there is no wget to call.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 ARG VERSION=dev
 LABEL org.opencontainers.image.source="https://github.com/trick77/netra" \
       org.opencontainers.image.version="$VERSION"
-# Not scratch, and keep busybox: the compose healthcheck is
-# `wget -qO- http://127.0.0.1:8080/api/health`, Alpine's busybox applet. Without
-# it the container reports unhealthy forever with no other symptom.
-RUN apk add --no-cache ca-certificates \
- && adduser -D -H -u 10001 netra
 COPY --from=build /out/netra /usr/local/bin/netra
-USER netra
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/netra"]

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 
 /**
  * Polls an async function on an interval, and stops while nobody is looking.
@@ -42,8 +42,7 @@ export function usePoll<T>(
   // arrow, which is a new function every render, and depending on it would
   // restart the interval on every render -- a poll that fires continuously
   // rather than on its interval.
-  const fnRef = useRef(fn);
-  fnRef.current = fn;
+  const fetchLatest = useEffectEvent(() => fn());
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
@@ -62,7 +61,7 @@ export function usePoll<T>(
     async function run() {
       const seq = ++latest;
       try {
-        const next = await fnRef.current();
+        const next = await fetchLatest();
         if (!cancelled && seq === latest) {
           setData(next);
           setError(null);
@@ -108,7 +107,7 @@ export function usePoll<T>(
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the caller's deps, spread in
   }, [intervalMs, tick, ...deps]);
 
   return { data, error, loading, refresh };

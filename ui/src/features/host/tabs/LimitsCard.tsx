@@ -176,7 +176,7 @@ export function LimitsCard({ host, hostMetrics }: LimitsCardProps) {
                   instead. */}
               {row.value === null
                 ? ABSENT
-                : `${cardinal(row.value)} · no limit`}
+                : `${cardinal(row.value)} · no\u00a0limit`}
             </div>
           </div>
         ) : (

@@ -506,19 +506,25 @@ export function HostPage({
   // ask for -- a series whose buckets cannot have moved yet -- so it is
   // skipped rather than merged: spreading it would write undefined over the
   // chart already on screen.
-  useEffect(() => {
-    const loaded = tabPoll.data;
-    if (loaded === null) return;
-    setData((prev) => {
-      const next = { ...prev };
-      for (const [family, value] of Object.entries(loaded)) {
-        if (value !== undefined) {
-          (next as Record<string, unknown>)[family] = value;
+  //
+  // While rendering, once per answer, rather than in an effect: the page never
+  // renders an answer's tab without its families.
+  const loaded = tabPoll.data;
+  const [mergedFrom, setMergedFrom] = useState(loaded);
+  if (loaded !== mergedFrom) {
+    setMergedFrom(loaded);
+    if (loaded !== null) {
+      setData((prev) => {
+        const next = { ...prev };
+        for (const [family, value] of Object.entries(loaded)) {
+          if (value !== undefined) {
+            (next as Record<string, unknown>)[family] = value;
+          }
         }
-      }
-      return next;
-    });
-  }, [tabPoll.data]);
+        return next;
+      });
+    }
+  }
 
   useEffect(() => {
     onPollError?.(hostPoll.error);
@@ -528,10 +534,12 @@ export function HostPage({
   // and anything asking for the page again is asking for all of it, not half.
   // usePoll's refresh is stable, so this identity is too -- it is handed to
   // the Containers tab as onPurged and to the load-failure retry.
+  const refreshHost = hostPoll.refresh;
+  const refreshTab = tabPoll.refresh;
   const refresh = useCallback(() => {
-    hostPoll.refresh();
-    tabPoll.refresh();
-  }, [hostPoll.refresh, tabPoll.refresh]);
+    refreshHost();
+    refreshTab();
+  }, [refreshHost, refreshTab]);
 
   // Only while there is nothing to show. A poll that fails after the page
   // has rendered leaves the last good record in place -- usePoll's own rule,

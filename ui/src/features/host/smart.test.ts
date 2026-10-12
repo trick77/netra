@@ -12,7 +12,6 @@ import {
   driveTemperature,
   driveTempAttrId,
   driveWearPct,
-  SMART_THRESHOLDS,
   temperatureFromRaw,
 } from "./smart";
 

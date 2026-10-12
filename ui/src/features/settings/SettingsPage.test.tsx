@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsPage, loadRange, RANGE_KEY } from "./SettingsPage";
 
-// test-setup.ts installs ONE MemoryStorage for the whole run and nothing
+// src/test/setup.ts installs ONE MemoryStorage for the whole run and nothing
 // clears it between tests, so a stored preference would leak into the next
 // test's default.
 beforeEach(() => {
