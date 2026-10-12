@@ -2,7 +2,7 @@
 
 ## Gate and release
 - Gate = `make check` (ship master, unpinned; `ship.yaml`; local ship: `SHIP_CMD=<binary>`, hook too). Hook: `make hooks` once per clone, again when ship says it is stale. GitHub never first to find a failure; CI runs on every PR (public repo: Dependabot and forks have no hook). Dependabot PR: `make check` before merge.
-- Coverage 75% floor + patch, `[skip patch-coverage]` skips patch only. Not counted: `cmd/` (ship default, as core), and `internal/hub/store/` + `internal/hub/read/` (SQL; their tests need TimescaleDB). Never lower the floor.
+- Coverage 75% floor + patch, `[skip patch-coverage]` skips patch only. Not counted: `cmd/` (ship default, as core), and `internal/hub/store/` + `internal/hub/read/` (SQL; their tests need TimescaleDB). Floors are ship's defaults; never set a lower one.
 - Commit subjects + PR titles: Go style `area: what` (`hub: …`, `agent: …`), gated by ship; release notes list them by area.
 - Quick while iterating: `make lint`, `make test`, `make fe-test`. The gate still decides.
 - Integration tests need a TimescaleDB and are not in the gate: `make test-integration` (`BACKEND_TEST_DSN`, `-p 1`).
