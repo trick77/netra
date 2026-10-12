@@ -383,6 +383,31 @@ describe("HostPage", () => {
     });
   });
 
+  // A host that never loaded gets an error page, and its retry asks for the
+  // whole page again: the header's record and the tab's families both.
+  it("retries both polls from the load-failure page", async () => {
+    vi.mocked(api.getHost)
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValue(host);
+
+    render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+    expect(
+      await screen.findByText(/could not be loaded: network down/),
+    ).toBeInTheDocument();
+    const unitsBefore = vi.mocked(api.getUnits).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "kessel" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(vi.mocked(api.getUnits).mock.calls.length).toBeGreaterThan(
+        unitsBefore,
+      ),
+    );
+  });
+
   // usePoll keeps the last good record when a poll fails, which is right --
   // but silently it is a frozen page that looks live, and Refresh would
   // change nothing visible. The numbers stay and the page says so.
