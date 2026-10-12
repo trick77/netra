@@ -11,7 +11,7 @@ import (
 // All behavioural assertions here run against handlerFor and a synthetic
 // fs.FS rather than the real embedded dist/ tree. dist/ is tracked only via
 // an empty .gitkeep (see the package doc on distFS) so that `go:embed all:dist`
-// keeps compiling on a fresh checkout, `make ui` never leaves the working
+// keeps compiling on a fresh checkout, `make fe-build` never leaves the working
 // tree dirty, and no build artifact is ever committed. That means the real
 // embedded FS may legitimately contain nothing at all -- there is no
 // fingerprinted asset, and often no real index.html either, to request
@@ -90,7 +90,7 @@ func TestHandlerDoesNotPanic(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 }
 
-// A binary built without `make ui` must say so rather than serve
+// A binary built without `make fe-build` must say so rather than serve
 // http.FileServer's directory listing of an all-but-empty dist/, which is
 // what the fallback produced before: a 200, past every healthcheck, with a
 // file index where the UI belongs.
@@ -102,7 +102,7 @@ func TestUnbuiltDistIsAnExplicitError(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "make ui") {
-		t.Fatalf("body = %q, want it to name `make ui`", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "make fe-build") {
+		t.Fatalf("body = %q, want it to name `make fe-build`", rec.Body.String())
 	}
 }

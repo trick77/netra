@@ -1,20 +1,34 @@
 version: 2
 updates:
-  # Go (hub and agent share one module in backend/)
   - package-ecosystem: gomod
     directory: /backend
+    commit-message: { prefix: deps }   # Go style: "deps: bump …"
     schedule:
       interval: weekly
+      day: sunday
+      time: "07:00"
+    open-pull-requests-limit: 5
     groups:
-      go-minor-and-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+      gomod-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      gomod-major:
+        patterns:
+          - "*"
+        update-types:
+          - major
 
-  # React frontend
   - package-ecosystem: npm
     directory: /ui
+    commit-message: { prefix: deps }   # Go style: "deps: bump …"
     schedule:
       interval: weekly
+      day: sunday
+      time: "07:00"
+    open-pull-requests-limit: 5
     groups:
       # First matching group wins, so the specific group comes first and the
       # catch-all stays last. vite, its react plugin, vitest and its coverage
@@ -24,24 +38,54 @@ updates:
       # travel together.
       vite-and-vitest:
         patterns: ["vite", "@vitejs/*", "vitest", "@vitest/*"]
-      npm-minor-and-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+      npm-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      npm-major:
+        patterns:
+          - "*"
+        update-types:
+          - major
 
-  # GitHub Actions
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-    groups:
-      actions:
-        patterns: ["*"]
-
-  # Base images in Containerfile
   - package-ecosystem: docker
     directory: /
+    commit-message: { prefix: deps }   # Go style: "deps: bump …"
     schedule:
       interval: weekly
+      day: sunday
+      time: "07:00"
     groups:
-      docker:
-        patterns: ["*"]
+      docker-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      docker-major:
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  - package-ecosystem: github-actions
+    directory: /
+    commit-message: { prefix: deps }   # Go style: "deps: bump …"
+    schedule:
+      interval: weekly
+      day: sunday
+      time: "07:00"
+    groups:
+      actions-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
+      actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - major

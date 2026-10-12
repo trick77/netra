@@ -35,7 +35,7 @@ const MinAgent = "0.0.205"
 //
 // Any suffix after the patch number is ignored, so 0.0.205-rc1 counts as
 // 0.0.205 and passes a 0.0.205 minimum. netra tags bare X.Y.Z
-// (.github/workflows/release.yaml), so this is a courtesy rather than a
+// (ship release), so this is a courtesy rather than a
 // prerelease ordering anyone relies on.
 func AtLeast(reported, min string) bool {
 	got, ok := parse(reported)

@@ -1,6 +1,6 @@
 // Package web serves the phase-2 single-page UI out of the hub binary.
 //
-// The SPA is built by `make ui` into dist/ and embedded here, the same way
+// The SPA is built by `make fe-build` into dist/ and embedded here, the same way
 // migrations and the phase-1 templates are: one binary, no asset directory to
 // deploy, no separate web server.
 package web
@@ -20,10 +20,10 @@ import (
 // something to embed on a fresh checkout; without it `go build ./...` and
 // `go test ./...` fail outright with "pattern all:dist: no matching files
 // found". A real index.html is deliberately NOT tracked here (an earlier
-// version of this file committed one as a placeholder, but `make ui`
+// version of this file committed one as a placeholder, but `make fe-build`
 // overwrites it on every build, leaving the working tree permanently dirty).
 // The consequence is that distFS may contain nothing at all on a checkout
-// that hasn't run `make ui`; see TestHandlerDoesNotPanic in
+// that hasn't run `make fe-build`; see TestHandlerDoesNotPanic in
 // embed_internal_test.go for the one thing asserted about that case.
 //
 //go:embed all:dist
@@ -70,7 +70,7 @@ func handlerFor(sub fs.FS) http.Handler {
 	if _, err := fs.Stat(sub, "index.html"); err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w,
-				"netra: this binary was built without the web UI; run `make ui` before building, or use a released image",
+				"netra: this binary was built without the web UI; run `make fe-build` before building, or use a released image",
 				http.StatusServiceUnavailable)
 		})
 	}
@@ -133,7 +133,7 @@ var PublicAssetPaths = []string{
 // The allowlist is enforced here rather than left to the routes NewRouter
 // registers, so this handler cannot serve the SPA shell to an anonymous caller
 // even if it is later mounted somewhere broader. A missing file is a 404 too,
-// which is what a binary built without `make ui` gets: an unbuilt dist/ must
+// which is what a binary built without `make fe-build` gets: an unbuilt dist/ must
 // not fall through to index.html on an unauthenticated route.
 func PublicAssets() http.Handler {
 	sub, err := fs.Sub(distFS, "dist")

@@ -10,7 +10,7 @@
 # lockfile anyway.
 ui/node_modules/
 
-# The node stage always produces dist/. A local `make ui` leaves hashed
+# The node stage always produces dist/. A local `make fe-build` leaves hashed
 # index-*.js chunks here, and COPY backend/ would carry them into the image,
 # where the stage's output merges on top instead of replacing them -- so stale
 # chunks shipped inside go:embed. Excluded, the image holds only what the

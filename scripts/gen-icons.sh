@@ -5,8 +5,8 @@
 # Run it by hand after editing any of them and commit what it writes.
 #
 # The outputs are COMMITTED rather than generated during the build, so neither
-# `make ui` nor CI needs an image toolchain. That is the whole reason this
-# script is not a package.json script and does not hang off the Makefile's ui
+# `make fe-build` nor CI needs an image toolchain. That is the whole reason this
+# script is not a package.json script and does not hang off the Makefile's fe-build
 # target.
 #
 # librsvg does the rasterising, not ImageMagick's own SVG support: the chip is a
