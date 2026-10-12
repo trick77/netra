@@ -27,5 +27,3 @@ images:
 allow:
   - { rule: distroless, image: -agent, why: "the agent runs smartctl: distroless has no smartmontools" }
   - { rule: containerfile, image: -agent, why: "root by design: smartctl's ATA/NVMe passthrough ioctls need SYS_RAWIO, non-root gets EACCES on every SMART read" }
-  - { rule: handrolled, path: backend/cmd/netra-agent/main.go, why: "no HTTP server, so no httpx.Serve: the scrape loop stops on SIGTERM itself" }
-  - { rule: handrolled, path: backend/cmd/netra-sim/main.go, why: "dev CLI, no HTTP server: Ctrl-C stops a backfill between batches" }

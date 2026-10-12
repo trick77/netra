@@ -15,12 +15,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/trick77/ship/kit/logging"
+	kitrun "github.com/trick77/ship/kit/run"
 
 	"github.com/trick77/netra/internal/devtools/sim"
 )
@@ -85,7 +84,7 @@ func run() error {
 	// Ctrl-C stops the run rather than killing it: live mode is meant to be
 	// left running, and a backfill in progress should stop between batches
 	// instead of mid-POST.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := kitrun.Context(context.Background())
 	defer stop()
 
 	cfg := sim.Config{

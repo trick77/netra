@@ -6,13 +6,12 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/trick77/netra/internal/agent/client"
 	"github.com/trick77/netra/internal/agent/collector"
 	"github.com/trick77/netra/internal/agent/config"
 	"github.com/trick77/ship/kit/logging"
+	kitrun "github.com/trick77/ship/kit/run"
 	"github.com/trick77/ship/kit/version"
 )
 
@@ -39,7 +38,7 @@ func run() error {
 		"hub", cfg.HubURL,
 		"interval", config.ScrapeInterval)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := kitrun.Context(context.Background())
 	defer stop()
 
 	// No cadence is threaded through here. The scrape loop runs every
