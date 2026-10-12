@@ -1,16 +1,15 @@
 name: Release
 
-# By hand only. Next plain tag from the bump, the hub and agent images (ship.yaml images) pushed to ghcr.io with
-# their version, sha and moving tags, then the GitHub release. setup-agent.sh fetches deploy/agent/ at the newest
-# tag, so a deploy/ change reaches hosts only with a release.
-# gh workflow run Release -f bump=patch
+# By hand only (Actions minutes): gh workflow run Release -f bump=patch. auto: patch, or what the commits since the
+# last tag ask for (Release: minor|major). The only way to release: images are built and signed on GitHub-hosted
+# runners, never from a laptop.
 on:
   workflow_dispatch:
     inputs:
       bump:
         description: "Version bump"
         type: choice
-        options: [patch, minor, major]
+        options: [patch, minor, major, auto]
         default: patch
 
 jobs:
@@ -22,3 +21,5 @@ jobs:
     permissions:
       contents: write
       packages: write
+      # cosign keyless signing: the job's OIDC token is the signing identity.
+      id-token: write
