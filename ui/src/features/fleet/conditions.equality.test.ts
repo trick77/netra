@@ -25,7 +25,7 @@ import type { ConditionKindInfo, ConditionRow } from "../../lib/api";
 // would be exactly the disagreement this gate exists to catch.
 //
 // It lives under ui/ rather than beside the Go test that also reads it, and the
-// reason is the container build: build/Containerfile.hub compiles the SPA in a
+// reason is the container build: the Containerfile compiles the SPA in a
 // node stage that copies ui/ and nothing else, `npm run build` runs
 // `tsc --noEmit` over these test files, and a repo-root path therefore fails to
 // resolve there while passing under vitest. The obvious fix -- copying the

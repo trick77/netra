@@ -378,9 +378,9 @@ Build the UI with `make ui`, not `npm run build` directly: vite's
 `emptyOutDir` wipes the tracked `backend/internal/hub/web/dist/.gitkeep` that
 `go:embed` needs, and the make rule restores it.
 
-Container images: `build/Containerfile.hub` and `build/Containerfile.agent`. Both
-build from the repository root as context (the Go module lives in `backend/`), e.g.
-`podman build -f build/Containerfile.hub .`.
+Container images: one `Containerfile`, built from the repository root. The hub is
+the default target, the agent is `--target netra-agent`, e.g.
+`podman build --target netra-agent .`.
 
 ## Tests
 

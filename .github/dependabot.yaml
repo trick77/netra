@@ -37,9 +37,9 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Base images in build/Containerfile.hub and build/Containerfile.agent
+  # Base images in Containerfile
   - package-ecosystem: docker
-    directory: /build
+    directory: /
     schedule:
       interval: weekly
     groups:
