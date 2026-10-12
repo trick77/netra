@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	kitauth "github.com/trick77/ship/kit/auth"
@@ -80,5 +81,28 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	// carrying neither Sec-Fetch-Site nor Origin (an agent, curl, netra-sim)
 	// passes: it is not a browser, and cannot be riding a cookie. GET is never
 	// checked, so the OIDC callback is unaffected.
-	return httpx.CrossOrigin(mux)
+	//
+	// AccessLog outermost so a recovered panic's 500 and a refused cross-origin
+	// mutation's 403 both get a line under the request id. Routine lines are
+	// debug; the probes and the UI's polled reads are dropped even there while
+	// they succeed (every open tab re-reads its page each minute), a failing one
+	// still logs.
+	return httpx.Chain(mux,
+		httpx.AccessLog(slog.Default(), httpx.AccessLogOptions{
+			// Traefik is the one hop in front (compose.yaml publishes no port):
+			// the TCP peer is always Traefik.
+			ClientIP: func(r *http.Request) string { return httpx.ClientIP(r, 1) },
+			Quiet:    []string{"/healthz", "/readyz"},
+			Skip:     polledRead,
+		}),
+		httpx.Recover(slog.Default()),
+		httpx.CrossOrigin,
+	)
+}
+
+// polledRead is a successful GET under /api/v1/: the UI's poll traffic. Its
+// mutations (POST, DELETE) and the agents' ingest are not polled reads and keep
+// their line.
+func polledRead(r *http.Request, status int) bool {
+	return status < 400 && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/")
 }
