@@ -25,8 +25,11 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    setupFiles: ["./src/test-setup.ts"],
     globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    // Dates render in the operator's zone; the expectations are written for
+    // Zurich, so the suite pins it rather than following the machine's.
+    env: { TZ: "Europe/Zurich" },
     coverage: {
       provider: "v8",
       // lcov feeds ship's coverage gates (ship.yaml ui.lcov); text-summary is
@@ -35,8 +38,8 @@ export default defineConfig({
       reportsDirectory: "../coverage/ui",
       include: ["src/**/*.{ts,tsx}"],
       // main.tsx is three lines of bootstrap that mount the app into a real
-      // DOM, and test-setup.ts is the harness itself.
-      exclude: ["src/main.tsx", "src/test-setup.ts", "src/**/*.test.{ts,tsx}"],
+      // DOM, and src/test/ is the harness itself.
+      exclude: ["src/main.tsx", "src/test/**", "src/**/*.test.{ts,tsx}"],
     },
   },
 });
