@@ -634,12 +634,10 @@ function FleetScreen({
   // EMPTY_CATALOGUE when the call failed or has not landed: everything
   // downstream degrades honestly on it rather than falling back to a copy of
   // the hub's rules, which is the duplication this whole change deleted.
+  const conditions = poll.data?.conditions;
   const catalogue = useMemo(
-    () =>
-      poll.data?.conditions
-        ? catalogueOf(poll.data.conditions.kinds)
-        : EMPTY_CATALOGUE,
-    [poll.data?.conditions],
+    () => (conditions ? catalogueOf(conditions.kinds) : EMPTY_CATALOGUE),
+    [conditions],
   );
 
   const rows = useMemo(

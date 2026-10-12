@@ -10,6 +10,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -71,7 +72,6 @@ export function useDetailRange(
   // know whether the tile it was given failed, and a state value captured in
   // a callback is the value from the render that built it.
   const entriesRef = useRef(entries);
-  entriesRef.current = entries;
 
   // The latest fetcher, without making it a dependency of the effect below.
   // Callers build it inline -- Graphs closes over `spec`, ContainerPage over
@@ -80,12 +80,19 @@ export function useDetailRange(
   // every one of the dialog's fetches on every poll of the page behind it.
   // Same reason and same shape as usePoll's fnRef in lib/poll.ts.
   const fetchRef = useRef(fetchSeries);
-  fetchRef.current = fetchSeries;
 
   // Same treatment, same reason: the page's series are a new array on every
   // poll, and the seed below must not refire the ladder because of it.
   const pageDataRef = useRef(pageData);
-  pageDataRef.current = pageData;
+
+  // The three refs follow the committed render. A layout effect, so they are
+  // current before any passive effect below reads them and before a click
+  // can reach pick().
+  useLayoutEffect(() => {
+    entriesRef.current = entries;
+    fetchRef.current = fetchSeries;
+    pageDataRef.current = pageData;
+  });
 
   // A stable identity for the ladder, so a caller passing an inline array
   // literal does not refetch every window on every render of the page.
@@ -142,11 +149,17 @@ export function useDetailRange(
   // Closing resets, so reopening starts from the page again rather than from
   // wherever the last look happened to end. The dialog is a question asked
   // and answered, not a second piece of page state to keep track of.
-  useEffect(() => {
-    if (open) return;
-    setRange(pageRange);
-    setEntries({});
-  }, [open, pageRange]);
+  //
+  // While rendering rather than in an effect, so a closed dialog never
+  // renders once more with the previous look's range and tiles.
+  const [resetFor, setResetFor] = useState({ open, pageRange });
+  if (resetFor.open !== open || resetFor.pageRange !== pageRange) {
+    setResetFor({ open, pageRange });
+    if (!open) {
+      setRange(pageRange);
+      setEntries({});
+    }
+  }
 
   useEffect(() => {
     if (!open) return;

@@ -1,6 +1,5 @@
 import {
   useId,
-  useLayoutEffect,
   useMemo,
   useState,
   type CSSProperties,
@@ -316,21 +315,28 @@ export function Table<T>({
 
   // Seed a group's open state the first time it is seen, and only then.
   //
-  // In an effect rather than during render because it writes state, and keyed
-  // on the group list so it runs when a group appears rather than on every
-  // poll. Groups already in `choice` are left exactly as they are -- that is
-  // what makes this a seed and not a reset, and it is why a reader's fold
-  // survives the next sixty-second refetch.
+  // Keyed on the group list so it runs when a group appears rather than on
+  // every poll. Groups already in `choice` are left exactly as they are --
+  // that is what makes this a seed and not a reset, and it is why a reader's
+  // fold survives the next sixty-second refetch.
   //
-  // LAYOUT effect, not a passive one. `choice` starts empty and the row loop
-  // below falls back to open, so a passive effect lets the browser paint every
-  // group expanded and then fold them a frame later -- a full-height jump on
-  // exactly the two lists whose point is that a quiet stack is already folded
-  // when the reader arrives. useLayoutEffect runs after the DOM is written and
-  // before the paint, so the expanded state never reaches the screen.
+  // While rendering, not in an effect. `choice` starts empty and the row loop
+  // below falls back to open, so an effect would let every group render
+  // expanded and fold a render later -- a full-height jump on exactly the two
+  // lists whose point is that a quiet stack is already folded when the reader
+  // arrives. React re-renders with the seeded state before committing, so the
+  // expanded state never reaches the DOM.
   const defaultOpen = groupBy?.defaultOpen;
-  useLayoutEffect(() => {
-    if (groups === null || defaultOpen === undefined) return;
+  const [seededFrom, setSeededFrom] = useState<{
+    groups: typeof groups;
+    defaultOpen: typeof defaultOpen;
+  } | null>(null);
+  if (
+    groups !== null &&
+    defaultOpen !== undefined &&
+    (seededFrom?.groups !== groups || seededFrom.defaultOpen !== defaultOpen)
+  ) {
+    setSeededFrom({ groups, defaultOpen });
     setChoice((prev) => {
       let next: Map<string, boolean> | null = null;
       for (const [key, rowsInGroup] of groups) {
@@ -342,7 +348,7 @@ export function Table<T>({
       // that changed no group.
       return next ?? prev;
     });
-  }, [groups, defaultOpen]);
+  }
 
   // Three stops per column, and the cycle starts where the column already
   // stands: ascending for one the reader clicked, and the caller's own

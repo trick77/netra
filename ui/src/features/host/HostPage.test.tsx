@@ -357,6 +357,36 @@ describe("HostPage", () => {
       expect(await refetches("7d", 5 * 60_000)).toBeGreaterThan(0);
     });
 
+    // A tick that skips the series answers them as undefined, which must not
+    // wipe the charts already drawn: the tab's families are merged, not
+    // replaced.
+    it("keeps the drawn charts through a tick that skips the series", async () => {
+      render(
+        <HostPage
+          hostId={7}
+          tab="system"
+          onTabChange={() => {}}
+          range="24h"
+          onRangeChange={() => {}}
+        />,
+      );
+      await waitFor(() => expect(api.getMetrics).toHaveBeenCalled());
+      const unread = /No data has been read for this family yet/;
+      await waitFor(() =>
+        expect(screen.queryAllByText(unread)).toHaveLength(0),
+      );
+      const fetched = vi.mocked(api.getMetrics).mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      // No series asked for on this tick, and every panel still has the
+      // family it read the first time.
+      expect(vi.mocked(api.getMetrics).mock.calls.length).toBe(fetched);
+      expect(screen.queryAllByText(unread)).toHaveLength(0);
+    });
+
     // The bucket argument is about SERIES. What rides along in the same poll
     // -- units, containers, filesystems, events -- has no buckets: a unit that
     // fails is as fresh as the poll that fetched it, and the header above says

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, Search, Server } from "lucide-react";
 import {
   getFleetContainers,
@@ -155,10 +162,6 @@ function Palette({
   const hosts = shown.rows.filter((e) => e.kind === "host");
   const containers = shown.rows.filter((e) => e.kind === "container");
 
-  // A new query re-ranks the list under the cursor, so the cursor goes back
-  // to the top rather than staying on whatever row happens to be at index 3.
-  useEffect(() => setActive(0), [query]);
-
   const move = (delta: number) => {
     if (shown.rows.length === 0) return;
     const next = (active + delta + shown.rows.length) % shown.rows.length;
@@ -176,11 +179,10 @@ function Palette({
   // dialog binds it in the same place for the same reason. The arrows and
   // Enter stay on the panel -- they only mean anything with the field
   // focused.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const close = useEffectEvent(() => onClose());
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCloseRef.current();
+      if (e.key === "Escape") close();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -232,7 +234,13 @@ function Palette({
               shown.rows.length === 0 ? undefined : `${OPTION_ID}${active}`
             }
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // A new query re-ranks the list under the cursor, so the cursor
+              // goes back to the top rather than staying on whatever row
+              // happens to be at index 3.
+              setActive(0);
+            }}
           />
         </div>
         <div className="pal-list" ref={listRef}>

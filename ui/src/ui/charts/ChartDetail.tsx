@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import type { OverlaySeries } from "./Overlay";
 import { ChartFigure } from "./ChartFigure";
 import { RangeRail, type RailEntry } from "./RangeRail";
@@ -134,15 +134,14 @@ export function ChartDetail({
   // again, so a reader who had just clicked "6h" in the picker, or who was
   // typing in the picker, lost
   // the caret to the panel root. Same reason and same shape as useDetailRange's
-  // fetchRef and usePoll's fnRef.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  // fetchRef and usePoll's fetchLatest.
+  const close = useEffectEvent(() => onClose());
 
   useEffect(() => {
     // Escape closes, and focus moves into the dialog so the next Tab lands
     // inside it rather than back in the page behind.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCloseRef.current();
+      if (e.key === "Escape") close();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

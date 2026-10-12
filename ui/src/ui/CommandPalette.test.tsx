@@ -153,6 +153,19 @@ describe("the bar's search", () => {
     expect(go).toHaveBeenCalledWith("/hosts/9/overview");
   });
 
+  it("puts the cursor back on the top row when the query changes", async () => {
+    const user = userEvent.setup();
+    render(<BarSearch go={vi.fn()} />);
+    await open(user);
+    const field = screen.getByRole("combobox");
+
+    await user.keyboard("{ArrowDown}");
+    expect(field).toHaveAttribute("aria-activedescendant", "pal-opt-1");
+
+    await user.type(field, "d");
+    expect(field).toHaveAttribute("aria-activedescendant", "pal-opt-0");
+  });
+
   it("closes on Escape and hands focus back to the control that opened it", async () => {
     const user = userEvent.setup();
     render(<BarSearch go={vi.fn()} />);
