@@ -75,7 +75,7 @@ func loadEqualityFixture(t *testing.T) equalityFixture {
 	// the SPA is compiled in a node stage that copies ui/ alone, so a fixture at
 	// the repo root cannot be type-checked there -- see the note on the
 	// TypeScript half. One file either way; this is the side that can reach it.
-	path := filepath.Join("..", "..", "..", "ui", "test", "conditions", "equality.json")
+	path := filepath.Join("..", "..", "..", "..", "ui", "test", "conditions", "equality.json")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

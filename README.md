@@ -364,6 +364,9 @@ neither, shipping no utmp writer and usually no logind either.
 
 ## Build from source
 
+Go (hub, agent, simulator) lives in `backend/`, the React UI in `ui/`. Run
+everything through `make` from the repository root.
+
 ```sh
 make build          # hub + agent into bin/
 make build-hub      # runs `make ui` first
@@ -371,11 +374,11 @@ make build-agent
 ```
 
 Build the UI with `make ui`, not `npm run build` directly: vite's
-`emptyOutDir` wipes the tracked `internal/hub/web/dist/.gitkeep` that
+`emptyOutDir` wipes the tracked `backend/internal/hub/web/dist/.gitkeep` that
 `go:embed` needs, and the make rule restores it.
 
 Container images: `build/Containerfile.hub` and `build/Containerfile.agent`. Both
-build from the repository root as context (single `go.mod`), e.g.
+build from the repository root as context (the Go module lives in `backend/`), e.g.
 `podman build -f build/Containerfile.hub .`.
 
 ## Tests

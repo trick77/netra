@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: backend/go.mod
           cache: false
       # Pinned so CI runs the same version developers run locally. The family
       # moved off v2.11 because its G706 log-injection check went red here on
@@ -32,6 +32,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13
+          working-directory: backend
 
   build:
     name: Build and vet
@@ -40,9 +41,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: backend/go.mod
       - run: go build ./...
+        working-directory: backend
       - run: go vet ./...
+        working-directory: backend
       # Guard against the ldflags expansion order bug: LDFLAGS once used :=
       # and expanded before the VERSION/COMMIT assignments below it, so -X
       # stamped both symbols to the empty string and every shipped binary
@@ -80,6 +83,7 @@ jobs:
       # not trip this check either way -- `go list -deps` reports the binary's
       # transitive imports and excludes test-only ones.
       - name: Agent must not depend on hub code
+        working-directory: backend
         run: |
           # The list is captured before it is searched, so this fails CLOSED.
           # Piped straight into grep, the guard reports only grep's status: a
@@ -126,9 +130,9 @@ jobs:
       # than trusted to editors.
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l .)"
+          unformatted="$(gofmt -l backend)"
           if [ -n "$unformatted" ]; then
-            echo "::error::These files are not gofmt'd. Run: gofmt -w ."
+            echo "::error::These files are not gofmt'd. Run: gofmt -w backend"
             echo "$unformatted"
             exit 1
           fi
@@ -269,7 +273,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: backend/go.mod
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -303,9 +307,10 @@ jobs:
       # pull the OTHER component's untouched packages into this report at 0%
       # coverage and tank the score for a component that never exercises them.
       - name: Test
+        working-directory: backend
         run: |
           go test -p 1 -race -covermode=atomic -coverpkg=${{ matrix.coverpkg }} \
-            -coverprofile=coverage/${{ matrix.component }}.out ${{ matrix.packages }}
+            -coverprofile=../coverage/${{ matrix.component }}.out ${{ matrix.packages }}
         env:
           CGO_ENABLED: "1"
           BACKEND_TEST_DSN: postgres://netra:netra@127.0.0.1:5432/netra_test
@@ -313,7 +318,8 @@ jobs:
       # so the line percentage comes from a Cobertura conversion. That also
       # merges the duplicate blocks -coverpkg emits, one set per test binary,
       # which a naive sum over the raw profile gets badly wrong.
-      - run: go run github.com/boumenot/gocover-cobertura@v1.5.0 < coverage/${{ matrix.component }}.out > coverage/${{ matrix.component }}.xml
+      - run: go run github.com/boumenot/gocover-cobertura@v1.5.0 < ../coverage/${{ matrix.component }}.out > ../coverage/${{ matrix.component }}.xml
+        working-directory: backend
       # The floor gate runs first: when a PR drops the project below the floor
       # the absolute number is the more actionable failure, and reporting it
       # before patch coverage keeps the log readable.

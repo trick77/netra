@@ -1,4 +1,4 @@
-# The SPA is compiled here, not on the developer's machine. internal/hub/web
+# The SPA is compiled here, not on the developer's machine. backend/internal/hub/web
 # embeds dist/ with go:embed, and dist/ is gitignored down to an empty
 # .gitkeep -- so a build stage that goes straight to `go build` produces a
 # binary whose embedded FS holds one empty file. That image starts, answers
@@ -16,7 +16,8 @@ RUN npm ci
 
 COPY ui/ ./
 
-# vite.config.ts writes to ../internal/hub/web/dist, i.e. /src/internal/... —
+# vite.config.ts writes to ../backend/internal/hub/web/dist, i.e.
+# /src/backend/internal/... —
 # outside this WORKDIR on purpose, so the path matches the checkout exactly and
 # the config needs no container-specific branch.
 RUN npm run build
@@ -34,15 +35,15 @@ ARG COMMIT=unknown
 WORKDIR /src
 
 # Manifests first so the module download layer survives any source edit.
-COPY go.mod go.sum ./
+COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-COPY . .
+COPY backend/ ./
 
-# After COPY . ., because that copies the gitignored-but-tracked empty dist/
+# After COPY backend/ ./, because that copies the gitignored-but-tracked empty dist/
 # and would otherwise bury the built SPA underneath it.
-COPY --from=ui /src/internal/hub/web/dist ./internal/hub/web/dist
+COPY --from=ui /src/backend/internal/hub/web/dist ./internal/hub/web/dist
 
 # The cache mounts are repeated here on purpose: mount contents never land in
 # the image layer, so without /go/pkg/mod the modules fetched above are gone.

@@ -9,7 +9,7 @@ import tailwind from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwind()],
-  build: { outDir: "../internal/hub/web/dist", emptyOutDir: true },
+  build: { outDir: "../backend/internal/hub/web/dist", emptyOutDir: true },
   server: {
     proxy: {
       "/api": "http://127.0.0.1:8080",

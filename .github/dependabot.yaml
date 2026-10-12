@@ -1,8 +1,8 @@
 version: 2
 updates:
-  # Go (hub and agent share one module at the root)
+  # Go (hub and agent share one module in backend/)
   - package-ecosystem: gomod
-    directory: /
+    directory: /backend
     schedule:
       interval: weekly
     groups:
