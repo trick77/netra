@@ -40,7 +40,6 @@ func run() error {
 
 	slog.Info("starting netra agent",
 		"version", buildinfo.Version(),
-		"commit", buildinfo.Commit(),
 		"hub", cfg.HubURL,
 		"interval", config.ScrapeInterval)
 

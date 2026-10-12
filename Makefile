@@ -1,14 +1,11 @@
 GO      ?= go
 VERSION ?= dev
-COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-# Deferred expansion (=, not :=) so VERSION and COMMIT are read when a build
-# rule runs rather than when this line is parsed. With := they expanded before
-# the assignments below existed, and -X stamped both symbols to the empty
-# string — which overrides the "dev"/"unknown" defaults in backend/internal/shared/buildinfo,
-# so every shipped binary reported an empty version.
-LDFLAGS = -s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$(VERSION) \
-                -X github.com/trick77/netra/internal/shared/buildinfo.commit=$(COMMIT)
+# Deferred expansion (=, not :=) so VERSION is read when a build rule runs
+# rather than when this line is parsed. With := it once expanded before its
+# assignment existed, and -X stamped the empty string over buildinfo's "dev"
+# default, so every shipped binary reported an empty version.
+LDFLAGS = -s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$(VERSION)
 
 .PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check ui ui-test
 

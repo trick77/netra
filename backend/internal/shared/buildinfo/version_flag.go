@@ -19,6 +19,6 @@ func HandleVersionFlag(args []string, w io.Writer, name string) bool {
 		return false
 	}
 
-	_, _ = fmt.Fprintf(w, "%s %s (commit %s, %s)\n", name, Version(), Commit(), GoVersion())
+	_, _ = fmt.Fprintf(w, "%s %s (%s)\n", name, Version(), GoVersion())
 	return true
 }

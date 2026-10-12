@@ -535,7 +535,6 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			host_type     = NULLIF($3, ''),
 			agent_version = $4,
 			go_version    = $5,
-			build_commit  = $6,
 			-- NULLIF on every field the agent may legitimately leave unset.
 			-- BuildMetadata fills kernel, cpu_model, cores and memory_total
 			-- from /proc, and leaves them empty when it is unreadable — a
@@ -545,13 +544,13 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			-- measured. An unset field reaches the database as NULL; that
 			-- invariant is stated in both collector.go's package doc and the
 			-- HostSample proto comment.
-			kernel        = NULLIF($7, ''),
-			os_name       = NULLIF($8, ''),
-			arch          = NULLIF($9, ''),
-			cpu_model     = NULLIF($10, ''),
-			cores         = NULLIF($11, 0),
-			threads       = NULLIF($12, 0),
-			memory_total  = NULLIF($13, 0::BIGINT),
+			kernel        = NULLIF($6, ''),
+			os_name       = NULLIF($7, ''),
+			arch          = NULLIF($8, ''),
+			cpu_model     = NULLIF($9, ''),
+			cores         = NULLIF($10, 0),
+			threads       = NULLIF($11, 0),
+			memory_total  = NULLIF($12, 0::BIGINT),
 			-- Where the host is, as the agent reports it. Same NULLIF rule as
 			-- every optional field above, and for a sharper reason here: these
 			-- three are set by an operator editing a unit file or a compose
@@ -561,20 +560,20 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			--
 			-- The host's own account of where it is, and the only one: the
 			-- sites and providers tables that used to answer this are gone.
-			location      = NULLIF($16, ''),
-			provider      = NULLIF($17, ''),
-			facility      = NULLIF($18, ''),
-			metadata_hash = $14,
+			location      = NULLIF($15, ''),
+			provider      = NULLIF($16, ''),
+			facility      = NULLIF($17, ''),
+			metadata_hash = $13,
 			-- The column is NOT NULL DEFAULT '{}', so an agent reporting no
 			-- capabilities writes an empty object. Unlike the sample columns,
 			-- absence here is not a distinct fact worth preserving: no
 			-- collector reporting a capability and every collector reporting
 			-- that it is fine are both "nothing to flag".
-			capabilities  = $15
+			capabilities  = $14
 		WHERE id = $1`,
 		hostID,
 		md.GetFingerprint(), md.GetHostType(),
-		md.GetAgentVersion(), md.GetGoVersion(), md.GetBuildCommit(),
+		md.GetAgentVersion(), md.GetGoVersion(),
 		md.GetKernel(), md.GetOsName(), md.GetArch(), md.GetCpuModel(),
 		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()), //nolint:gosec // core and thread counts and a memory total reported by the agent for its own host, all far inside their column types
 		hash, capabilitiesJSON(md.GetCapabilities()),

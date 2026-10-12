@@ -88,7 +88,11 @@ message CpuCoreSample {
 message Metadata {
   string agent_version = 1;
   string go_version = 2;
-  string build_commit = 3;
+  // 3 was build_commit, the agent's short git SHA. netra identifies a build
+  // by its version alone; reserved, tag and name, so an older agent's commit
+  // is never read as whatever later takes the number.
+  reserved 3;
+  reserved "build_commit";
   string hostname = 4;
   string kernel = 5;
   string os_name = 6;

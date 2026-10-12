@@ -36,7 +36,6 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 	md := &netrav1.Metadata{
 		AgentVersion: buildinfo.Version(),
 		GoVersion:    buildinfo.GoVersion(),
-		BuildCommit:  buildinfo.Commit(),
 		Hostname:     hostname,
 		Arch:         runtime.GOARCH,
 		OsName:       osName(cfg.OsRelease),

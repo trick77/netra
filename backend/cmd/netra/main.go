@@ -47,7 +47,6 @@ func run() error {
 
 	slog.Info("starting netra hub",
 		"version", buildinfo.Version(),
-		"commit", buildinfo.Commit(),
 		"listen", cfg.ListenAddr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

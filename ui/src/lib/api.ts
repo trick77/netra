@@ -146,7 +146,6 @@ export type HostDetail = Host & {
   host_type: string | null;
   agent_version: string | null;
   go_version: string | null;
-  build_commit: string | null;
   kernel: string | null;
   os_name: string | null;
   arch: string | null;

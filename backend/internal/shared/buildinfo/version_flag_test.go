@@ -17,7 +17,7 @@ func TestHandleVersionFlagPrintsIdentity(t *testing.T) {
 		}
 
 		got := out.String()
-		for _, want := range []string{"netra", buildinfo.Version(), buildinfo.Commit(), buildinfo.GoVersion()} {
+		for _, want := range []string{"netra", buildinfo.Version(), buildinfo.GoVersion()} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("output %q does not contain %q", got, want)
 			}

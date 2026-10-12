@@ -309,11 +309,10 @@ func (p *Profile) runsCollector(name string) bool {
 // Metadata renders the profile's static facts as the block the hub stores on
 // the hosts row. The fingerprint is synthetic but stable per profile, so a
 // re-run does not look like the token was copied to a different machine.
-func (p *Profile) Metadata(agentVersion, goVersion, commit string) *netrav1.Metadata {
+func (p *Profile) Metadata(agentVersion, goVersion string) *netrav1.Metadata {
 	return &netrav1.Metadata{
 		AgentVersion: agentVersion,
 		GoVersion:    goVersion,
-		BuildCommit:  commit,
 		Hostname:     p.Hostname,
 		Kernel:       p.Kernel,
 		OsName:       p.OSName,
