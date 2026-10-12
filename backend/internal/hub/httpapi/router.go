@@ -84,15 +84,14 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	//
 	// AccessLog outermost so a recovered panic's 500 and a refused cross-origin
 	// mutation's 403 both get a line under the request id. Routine lines are
-	// debug; the probes and the UI's polled reads are dropped even there while
-	// they succeed (every open tab re-reads its page each minute), a failing one
-	// still logs.
+	// debug; the UI's polled reads are dropped even there while they succeed
+	// (every open tab re-reads its page each minute), a failing one still logs.
+	// The probes never log here: Health logs readiness changes itself.
 	return httpx.Chain(mux,
 		httpx.AccessLog(slog.Default(), httpx.AccessLogOptions{
 			// Traefik is the one hop in front (compose.yaml publishes no port):
 			// the TCP peer is always Traefik.
 			ClientIP: func(r *http.Request) string { return httpx.ClientIP(r, 1) },
-			Quiet:    []string{"/healthz", "/readyz"},
 			Skip:     polledRead,
 		}),
 		httpx.Recover(slog.Default()),
