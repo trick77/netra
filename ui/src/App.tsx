@@ -95,7 +95,6 @@ export default function App() {
   useDocumentTitle(route);
 
   return (
-    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div className="app" onClick={onClick}>
       {/* A keyboard user should not have to walk the nav and the toolbar on
           every page to reach the thing they came for. Visible only when

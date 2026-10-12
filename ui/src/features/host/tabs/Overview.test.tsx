@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type {
-  Drive,
-  HostDetail,
-  MetricsResponse,
-  Unit,
-} from "../../../lib/api";
+import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { Overview, needsAttention } from "./Overview";
 import { filesystemRows } from "./overviewTiles";
@@ -43,7 +38,6 @@ const KINDS: ConditionKindInfo[] = [
   { kind: "load", label: "Load above normal", severity: "warning" },
 ];
 const CATALOGUE = catalogueOf(KINDS);
-import { STALE_THRESHOLD_MS } from "../../../lib/host";
 
 const host: HostDetail = {
   id: 7,

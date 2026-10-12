@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { MapPin, ServerCog } from "lucide-react";
+import { ServerCog } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
-import { Input, Select } from "../../ui/Control";
+import { Input } from "../../ui/Control";
 import { EmptyState } from "../../ui/EmptyState";
 import { Table, type Column } from "../../ui/Table";
 import { When } from "../../ui/When";

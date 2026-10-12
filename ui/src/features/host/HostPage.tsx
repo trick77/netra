@@ -528,10 +528,12 @@ export function HostPage({
   // and anything asking for the page again is asking for all of it, not half.
   // usePoll's refresh is stable, so this identity is too -- it is handed to
   // the Containers tab as onPurged and to the load-failure retry.
+  const refreshHost = hostPoll.refresh;
+  const refreshTab = tabPoll.refresh;
   const refresh = useCallback(() => {
-    hostPoll.refresh();
-    tabPoll.refresh();
-  }, [hostPoll.refresh, tabPoll.refresh]);
+    refreshHost();
+    refreshTab();
+  }, [refreshHost, refreshTab]);
 
   // Only while there is nothing to show. A poll that fails after the page
   // has rendered leaves the last good record in place -- usePoll's own rule,

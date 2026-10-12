@@ -12,7 +12,7 @@ import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { Sparkline } from "../../ui/charts/Sparkline";
-import { severityFromPercent, trendColor } from "../../ui/Meter";
+import { trendColor } from "../../ui/Meter";
 import {
   DETAIL_WIDTH,
   METRIC_CELL_GAP,

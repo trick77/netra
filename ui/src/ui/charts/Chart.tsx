@@ -26,7 +26,6 @@ import {
 import {
   areaFillOpacity,
   AXIS_WIDTH,
-  MIRROR_FILL_OPACITY,
   BAND_STROKE_WIDTH,
   BAND_Y_PAD,
   mirrorEdge,
@@ -690,7 +689,6 @@ function MirrorStackMarks({
   series,
   w,
   h,
-  max,
   pad,
   highlight,
 }: {

@@ -111,7 +111,8 @@ describe("LimitsCard", () => {
         series: [
           {
             key: {},
-            points: [[1_786_320_000_000, 3352, 9223372036854775807]],
+            // int64 max as JSON.parse hands it over: 2^63, the nearest double.
+            points: [[1_786_320_000_000, 3352, 2 ** 63]],
           },
         ],
       }),
