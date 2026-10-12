@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/trick77/ship/kit/env"
 )
 
 // Config holds every hub setting. There is no config file: env only, so a
@@ -58,55 +60,52 @@ type OIDCConfig struct {
 func (c OIDCConfig) Enabled() bool { return c.Issuer != "" }
 
 // Load reads the environment and applies defaults. It fails rather than
-// starting with no database or an unauthenticated admin API.
+// starting with no database or an unauthenticated admin API, and reports every
+// fault at once rather than one per restart.
 func Load() (Config, error) {
 	if err := rejectOldPrefix(); err != nil {
 		return Config{}, err
 	}
 
+	r := env.New(os.Getenv)
 	cfg := Config{
-		ListenAddr:  envOr("BACKEND_LISTEN_ADDR", ":8080"),
-		DatabaseDSN: os.Getenv("BACKEND_DB_DSN"),
-		AdminToken:  os.Getenv("BACKEND_ADMIN_TOKEN"),
-		LogLevel:    envOr("BACKEND_LOG_LEVEL", "info"),
-		HubURL:      strings.TrimRight(os.Getenv("BACKEND_HUB_URL"), "/"),
+		ListenAddr:  r.String("BACKEND_LISTEN_ADDR", ":8080"),
+		DatabaseDSN: r.Required("BACKEND_DB_DSN"),
+		// The admin token stays required even with OIDC configured. netra-sim
+		// and any curl against the admin API present it, and it is the way
+		// back in when the identity provider is the thing that is down --
+		// which, for a monitoring hub, is exactly when you need to look at it.
+		AdminToken: r.Required("BACKEND_ADMIN_TOKEN"),
+		LogLevel:   r.String("BACKEND_LOG_LEVEL", "info"),
+		HubURL:     strings.TrimRight(r.String("BACKEND_HUB_URL", ""), "/"),
 		OIDC: OIDCConfig{
-			Issuer:       os.Getenv("BACKEND_OIDC_ISSUER"),
-			ClientID:     os.Getenv("BACKEND_OIDC_CLIENT_ID"),
-			ClientSecret: os.Getenv("BACKEND_OIDC_CLIENT_SECRET"),
+			Issuer:       r.String("BACKEND_OIDC_ISSUER", ""),
+			ClientID:     r.String("BACKEND_OIDC_CLIENT_ID", ""),
+			ClientSecret: r.String("BACKEND_OIDC_CLIENT_SECRET", ""),
 		},
-	}
-
-	if cfg.DatabaseDSN == "" {
-		return Config{}, fmt.Errorf("BACKEND_DB_DSN is required")
-	}
-
-	// The admin token stays required even with OIDC configured. netra-sim and
-	// any curl against the admin API present it, and it is the way back in when
-	// the identity provider is the thing that is down -- which, for a
-	// monitoring hub, is exactly when you need to look at it.
-	if cfg.AdminToken == "" {
-		return Config{}, fmt.Errorf("BACKEND_ADMIN_TOKEN is required")
 	}
 
 	if cfg.OIDC.Enabled() {
 		if cfg.OIDC.ClientID == "" {
-			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_ID is required when BACKEND_OIDC_ISSUER is set")
+			r.Fail("BACKEND_OIDC_CLIENT_ID is required when BACKEND_OIDC_ISSUER is set")
 		}
 		if cfg.OIDC.ClientSecret == "" {
-			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_SECRET is required when BACKEND_OIDC_ISSUER is set")
+			r.Fail("BACKEND_OIDC_CLIENT_SECRET is required when BACKEND_OIDC_ISSUER is set")
 		}
 		// The redirect URI is derived from HubURL, so an unset BACKEND_HUB_URL
 		// would send the provider to "/auth/callback" with no host. Fail here
 		// rather than at the first login attempt.
-		if cfg.HubURL == "" {
-			return Config{}, fmt.Errorf("BACKEND_HUB_URL is required when BACKEND_OIDC_ISSUER is set (the OIDC redirect URI is derived from it)")
-		}
-		if !strings.HasPrefix(cfg.HubURL, "https://") {
-			return Config{}, fmt.Errorf("BACKEND_HUB_URL must be https:// when BACKEND_OIDC_ISSUER is set (the session cookie is Secure and will not be sent over http)")
+		switch {
+		case cfg.HubURL == "":
+			r.Fail("BACKEND_HUB_URL is required when BACKEND_OIDC_ISSUER is set (the OIDC redirect URI is derived from it)")
+		case !strings.HasPrefix(cfg.HubURL, "https://"):
+			r.Fail("BACKEND_HUB_URL must be https:// when BACKEND_OIDC_ISSUER is set (the session cookie is Secure and will not be sent over http)")
 		}
 	}
 
+	if err := r.Err(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -130,11 +129,4 @@ func rejectOldPrefix() error {
 		}
 	}
 	return nil
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

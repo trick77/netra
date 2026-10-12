@@ -3,7 +3,8 @@ package httpapi
 import (
 	"crypto/subtle"
 	"net/http"
-	"time"
+
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // RequireAdmin gates the admin API and the UI on BACKEND_ADMIN_TOKEN.
@@ -15,6 +16,7 @@ import (
 // redirectToLogin is set for the UI mount only. An API client wants a status
 // it can act on; a browser wants somewhere to go.
 func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Handler {
+	sessions := NewSessions(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// An empty configured token must deny everything, not match the empty
 		// bearer of a request that sent no header at all -- ConstantTimeCompare
@@ -31,7 +33,7 @@ func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Ha
 		presented := bearer(r)
 		authorized := token != "" &&
 			(subtle.ConstantTimeCompare([]byte(presented), []byte(token)) == 1 ||
-				validSession(token, r, time.Now()))
+				validSession(sessions, r))
 		if authorized {
 			next.ServeHTTP(w, r)
 			return
@@ -44,6 +46,6 @@ func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Ha
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 	})
 }

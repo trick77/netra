@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/ship/kit/httpx"
+
 	"google.golang.org/protobuf/proto"
 
 	"github.com/trick77/netra/internal/hub/auth"
@@ -82,18 +84,18 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	hostID, err := h.auth.Authenticate(ctx, bearer(r))
 	if errors.Is(err, auth.ErrUnauthorized) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if err != nil {
 		slog.Error("authenticate", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -102,16 +104,16 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
-		http.Error(w, "read body", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, "read body")
 		return
 	}
 
 	var req netrav1.IngestRequest
 	if err := proto.Unmarshal(raw, &req); err != nil {
-		http.Error(w, "malformed body", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, "malformed body")
 		return
 	}
 
@@ -421,7 +423,7 @@ func writeProtoStatus(w http.ResponseWriter, status int, m proto.Message) {
 	raw, err := proto.Marshal(m)
 	if err != nil {
 		slog.Error("marshal response", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-protobuf")

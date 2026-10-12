@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/trick77/ship/kit/httpx"
+
 	"github.com/trick77/netra/internal/hub/admin"
 	"github.com/trick77/netra/internal/hub/read"
 )
@@ -67,7 +69,7 @@ func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {
 		Hostname string `json:"hostname"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed JSON body"})
+		httpx.WriteError(w, http.StatusBadRequest, "malformed JSON body")
 		return
 	}
 
@@ -79,7 +81,7 @@ func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	// The only moment this plaintext exists outside the agent that will use
 	// it. It is not stored, not logged, and not readable back.
-	writeJSON(w, http.StatusCreated, struct {
+	httpx.WriteJSON(w, http.StatusCreated, struct {
 		hostJSON
 		Token string `json:"token"`
 	}{
@@ -100,7 +102,7 @@ func (h *adminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "token": token})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"id": id, "token": token})
 }
 
 func (h *adminHandler) delete(w http.ResponseWriter, r *http.Request) {
@@ -133,8 +135,7 @@ func (h *adminHandler) deleteContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	containerID, ok := parseID(r.PathValue("containerID"))
 	if !ok {
-		writeJSON(w, http.StatusBadRequest,
-			map[string]string{"error": "container id must be an integer"})
+		httpx.WriteError(w, http.StatusBadRequest, "container id must be an integer")
 		return
 	}
 
@@ -162,7 +163,7 @@ func parseID(raw string) (int32, bool) {
 func pathID(w http.ResponseWriter, r *http.Request) (int32, bool) {
 	id, ok := parseID(r.PathValue("id"))
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id must be an integer"})
+		httpx.WriteError(w, http.StatusBadRequest, "id must be an integer")
 		return 0, false
 	}
 	return id, true
@@ -174,26 +175,17 @@ func pathID(w http.ResponseWriter, r *http.Request) (int32, bool) {
 func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, admin.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, admin.ErrInvalid):
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, admin.ErrConflict):
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		slog.Error("admin request failed", "path", r.URL.Path, "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
 	}
 }
 
-// writeJSON writes a response that must never be cached: these bodies carry
-// freshly minted tokens and the inventory they belong to.
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
-
 func (h *adminHandler) config(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"hub_url": h.hubURL})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"hub_url": h.hubURL})
 }

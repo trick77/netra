@@ -17,8 +17,9 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
+	kitauth "github.com/trick77/ship/kit/auth"
+
 	"github.com/trick77/netra/internal/hub/httpapi"
-	"github.com/trick77/netra/internal/hub/oidc"
 )
 
 // stubProvider is a minimal but genuine OpenID provider: real RSA signature,
@@ -83,9 +84,14 @@ func newStubProvider(t *testing.T, clientID string) *stubProvider {
 // signedInHandler wires a login handler to a working provider.
 func signedInHandler(t *testing.T, p *stubProvider) http.Handler {
 	t.Helper()
-	svc, err := oidc.New(context.Background(), p.server.URL, "netra", "secret", "https://hub/auth/callback")
+	svc, err := kitauth.NewOIDC(context.Background(), kitauth.OIDCConfig{
+		Issuer: p.server.URL, ClientID: "netra", ClientSecret: "secret",
+		RedirectURL:  "https://hub/auth/callback",
+		Scopes:       []string{"openid", "profile", "email"},
+		CookiePrefix: "netra_", Secure: true,
+	})
 	if err != nil {
-		t.Fatalf("oidc.New: %v", err)
+		t.Fatalf("NewOIDC: %v", err)
 	}
 	return httpapi.NewLoginHandler("admin-token", svc)
 }
@@ -102,8 +108,8 @@ func TestSignInStartRedirectsAndMintsFlowCookies(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want 302", resp.StatusCode)
 	}
 
 	loc, err := url.Parse(resp.Header.Get("Location"))
@@ -179,7 +185,7 @@ func TestCallbackCompletesAndMintsASignedInSession(t *testing.T) {
 		switch c.Name {
 		case "netra_session":
 			session = c
-		case "netra_oidc_state", "netra_oidc_nonce":
+		case "netra_oidc_state", "netra_oidc_nonce", "netra_oidc_pkce":
 			// Single-use: leaving them set would let a captured callback URL
 			// be replayed for as long as the cookies lived.
 			if c.MaxAge >= 0 {
@@ -193,7 +199,7 @@ func TestCallbackCompletesAndMintsASignedInSession(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.AddCookie(session)
-	user, ok := httpapi.SessionUserForTest("admin-token", r, time.Now())
+	user, ok := httpapi.SessionUserForTest("admin-token", r)
 	if !ok {
 		t.Fatal("minted session does not validate")
 	}

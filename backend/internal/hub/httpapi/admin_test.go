@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/httpapi"
@@ -178,7 +177,7 @@ func TestIntegrationAdminRefusesCrossOriginMutations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRequest: %v", err)
 			}
-			req.AddCookie(httpapi.NewSessionCookieForTest(testAdminToken, "", time.Now()))
+			req.AddCookie(httpapi.NewSessionCookieForTest(testAdminToken, ""))
 			for k, v := range tc.headers {
 				req.Header.Set(k, v)
 			}

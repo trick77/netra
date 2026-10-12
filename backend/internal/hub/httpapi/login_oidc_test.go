@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/hub/httpapi"
 )
@@ -86,63 +85,3 @@ func TestCallbackRejectsMissingState(t *testing.T) {
 		}
 	}
 }
-
-func TestTokenSessionCarriesNoUser(t *testing.T) {
-	// A session minted from the admin token is an identity too -- "whoever held
-	// the token" -- and is recorded as the empty user so it cannot be confused
-	// with a person who signed in.
-	now := timeNow()
-	c := httpapi.NewSessionCookieForTest("token", "", now)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.AddCookie(c)
-
-	user, ok := httpapi.SessionUserForTest("token", r, now)
-	if !ok {
-		t.Fatal("cookie should be valid")
-	}
-	if user != "" {
-		t.Errorf("user = %q, want empty for a token session", user)
-	}
-}
-
-func TestSignedInSessionCarriesTheUser(t *testing.T) {
-	now := timeNow()
-	c := httpapi.NewSessionCookieForTest("token", "jan", now)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.AddCookie(c)
-
-	user, ok := httpapi.SessionUserForTest("token", r, now)
-	if !ok {
-		t.Fatal("cookie should be valid")
-	}
-	if user != "jan" {
-		t.Errorf("user = %q, want jan", user)
-	}
-}
-
-func TestSessionUserCannotBeEditedWithoutBreakingTheMAC(t *testing.T) {
-	// The name is displayed and logged, so an unsigned copy would let anyone
-	// holding a valid cookie rename themselves.
-	now := timeNow()
-	c := httpapi.NewSessionCookieForTest("token", "jan", now)
-
-	parts := strings.SplitN(c.Value, ".", 3)
-	if len(parts) != 3 {
-		t.Fatalf("cookie has %d fields, want 3", len(parts))
-	}
-	// "cm9vdA" is base64url("root").
-	forged := parts[0] + ".cm9vdA." + parts[2]
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.AddCookie(&http.Cookie{Name: "netra_session", Value: forged})
-
-	if _, ok := httpapi.SessionUserForTest("token", r, now); ok {
-		t.Fatal("a cookie with a swapped user must not validate")
-	}
-}
-
-// timeNow is a fixed instant so expiry is asserted exactly rather than with a
-// sleep, matching how the rest of these tests treat the clock.
-func timeNow() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) }

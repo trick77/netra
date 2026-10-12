@@ -1,8 +1,8 @@
 .PHONY: build build-hub build-agent build-sim test test-setup-agent tidy proto fe-build fe-test
 
-# Stamped into the binary (internal/version): logged at start, served by /api/health, sent by the agent.
+# Stamped into the binary (kit/version): logged at start, served by /api/health, sent by the agent.
 VERSION ?= dev
-LDFLAGS = -s -w -X github.com/trick77/netra/internal/version.Version=$(VERSION)
+LDFLAGS = -s -w -X github.com/trick77/ship/kit/version.Version=$(VERSION)
 
 # The Go module lives in backend/: go -C runs there, outputs stay at the repo root (bin/).
 GO := go -C backend

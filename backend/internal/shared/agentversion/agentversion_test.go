@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/trick77/netra/internal/shared/agentversion"
-	"github.com/trick77/netra/internal/version"
+	"github.com/trick77/ship/kit/version"
 )
 
 // The constant must PARSE, and this is the test that matters most here.
@@ -31,9 +31,9 @@ func TestMinAgentIsAParsableVersion(t *testing.T) {
 // Otherwise nobody can run an agent they just built against a hub they just
 // built, which is the whole local loop.
 func TestAnUnstampedBuildIsNotLockedOut(t *testing.T) {
-	if !agentversion.AtLeast(version.Current(), agentversion.MinAgent) {
+	if !agentversion.AtLeast(version.String(), agentversion.MinAgent) {
 		t.Errorf("AtLeast(%q, %q) = false: a dev build must not be refused",
-			version.Current(), agentversion.MinAgent)
+			version.String(), agentversion.MinAgent)
 	}
 }
 

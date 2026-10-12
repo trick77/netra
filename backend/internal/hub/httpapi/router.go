@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
+
+	kitauth "github.com/trick77/ship/kit/auth"
+	"github.com/trick77/ship/kit/httpx"
 
 	"github.com/trick77/netra/internal/hub/admin"
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/config"
-	"github.com/trick77/netra/internal/hub/oidc"
 	"github.com/trick77/netra/internal/hub/read"
 	"github.com/trick77/netra/internal/hub/store"
 	"github.com/trick77/netra/internal/hub/web"
@@ -22,18 +25,17 @@ import (
 // minting, so RequireAdmin on everything outside /api/agent/ is load-bearing
 // rather than defence in depth -- do not mount a route here without deciding,
 // explicitly, which credential it answers to.
-func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc *oidc.Service) http.Handler {
+func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc *kitauth.OIDC) http.Handler {
 	svc := admin.NewService(s.Pool())
 	rd := read.NewService(s.Pool())
 
 	mux := http.NewServeMux()
-	// The one deliberate exception to the paragraph above: /api/health
-	// answers an unauthenticated caller, from the internet included, because
-	// the compose healthcheck wgets it inside the container with no
-	// credential to present. Its body is fixed -- status, database
-	// reachability, version -- and must stay that way: anything added here is
-	// added for anonymous readers.
-	mux.Handle("GET /api/health", NewHealthHandler(s))
+	// The one deliberate exception to the paragraph above: the probes answer
+	// an unauthenticated caller, from the internet included, because the
+	// container healthcheck runs inside it with no credential to present.
+	// /healthz is liveness; /readyz pings the database. Their bodies are fixed
+	// and carry no error detail (that goes to the log).
+	httpx.Health(mux, slog.Default(), httpx.Check{Name: "database", Run: s.Pool().Ping})
 	mux.Handle("POST /api/agent/v1/ingest", NewIngestHandler(a, s))
 
 	// The admin API answers 401 to an unauthenticated caller; the UI sends it
@@ -78,5 +80,5 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	// carrying neither Sec-Fetch-Site nor Origin (an agent, curl, netra-sim)
 	// passes: it is not a browser, and cannot be riding a cookie. GET is never
 	// checked, so the OIDC callback is unaffected.
-	return http.NewCrossOriginProtection().Handler(mux)
+	return httpx.CrossOrigin(mux)
 }

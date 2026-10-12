@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/ship/kit/httpx"
+
 	"github.com/trick77/netra/internal/hub/read"
 )
 
@@ -77,7 +79,7 @@ func listing[T any](q func(context.Context, int32) ([]T, error)) http.Handler {
 			writeReadError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, rows)
+		httpx.WriteJSON(w, http.StatusOK, rows)
 	})
 }
 
@@ -87,7 +89,7 @@ func (h *readHandler) hosts(w http.ResponseWriter, r *http.Request) {
 		writeReadError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, hosts)
+	httpx.WriteJSON(w, http.StatusOK, hosts)
 }
 
 func (h *readHandler) host(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +102,7 @@ func (h *readHandler) host(w http.ResponseWriter, r *http.Request) {
 		writeReadError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, host)
+	httpx.WriteJSON(w, http.StatusOK, host)
 }
 
 func (h *readHandler) metrics(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +141,7 @@ func (h *readHandler) metrics(w http.ResponseWriter, r *http.Request) {
 		writeReadError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func (h *readHandler) fleetMetrics(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +182,7 @@ func (h *readHandler) fleetMetrics(w http.ResponseWriter, r *http.Request) {
 		writeReadError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func (h *readHandler) fleetContainers(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +197,7 @@ func (h *readHandler) fleetContainers(w http.ResponseWriter, r *http.Request) {
 		writeReadError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 // parseHostIDs reads ?hosts=1,2,3 -- and ?hosts=1&hosts=2, on splitColumns'
@@ -228,7 +230,7 @@ func (h *readHandler) conditions(w http.ResponseWriter, r *http.Request) {
 		writeReadError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func (h *readHandler) events(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +240,7 @@ func (h *readHandler) events(w http.ResponseWriter, r *http.Request) {
 	if raw := q.Get("host"); raw != "" {
 		id, ok := parseID(raw)
 		if !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "host must be an integer"})
+			httpx.WriteError(w, http.StatusBadRequest, "host must be an integer")
 			return
 		}
 		hostID = id
@@ -259,7 +261,7 @@ func (h *readHandler) events(w http.ResponseWriter, r *http.Request) {
 	if raw := q.Get("limit"); raw != "" {
 		n, convErr := strconv.Atoi(raw)
 		if convErr != nil || n < 1 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
+			httpx.WriteError(w, http.StatusBadRequest, "limit must be a positive integer")
 			return
 		}
 		limit = n
@@ -276,7 +278,7 @@ func (h *readHandler) events(w http.ResponseWriter, r *http.Request) {
 		writeReadError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, events)
+	httpx.WriteJSON(w, http.StatusOK, events)
 }
 
 // parseTime accepts RFC 3339 or unix milliseconds, and reports the zero time
@@ -345,11 +347,11 @@ func invalidf(format string, args ...any) error {
 func writeReadError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, read.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, read.ErrInvalid):
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	default:
 		slog.Error("read request failed", "path", r.URL.Path, "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
 	}
 }

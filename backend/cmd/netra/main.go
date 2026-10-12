@@ -4,28 +4,40 @@ package main
 
 import (
 	"context"
-	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
+
+	kitauth "github.com/trick77/ship/kit/auth"
+	"github.com/trick77/ship/kit/httpx"
+	"github.com/trick77/ship/kit/logging"
+	"github.com/trick77/ship/kit/version"
 
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
-	"github.com/trick77/netra/internal/hub/oidc"
 	"github.com/trick77/netra/internal/hub/store"
-	"github.com/trick77/netra/internal/shared/logging"
-	"github.com/trick77/netra/internal/version"
 )
 
 func main() {
+	// The container healthcheck: the distroless image has no shell and no
+	// wget, so the binary probes itself. Before config.Load, which a probe has
+	// no business failing on.
+	healthcheck := flag.Bool("healthcheck", false, "probe this hub's /healthz and exit 0 when it answers")
+	flag.Parse()
+	if *healthcheck {
+		addr := os.Getenv("BACKEND_LISTEN_ADDR")
+		if addr == "" {
+			addr = ":8080"
+		}
+		os.Exit(httpx.Healthcheck(httpx.LocalURL(addr, "/healthz")))
+	}
+
 	if err := run(); err != nil {
-		slog.Error("fatal", "err", err)
+		slog.Error("fatal", logging.Err(err))
 		os.Exit(1)
 	}
 }
@@ -37,15 +49,16 @@ func run() error {
 	}
 
 	// Before the first log line, or the level would not apply to it.
-	if err := logging.Setup("BACKEND_LOG_LEVEL", cfg.LogLevel); err != nil {
+	if _, err := logging.Setup(logging.Options{Level: cfg.LogLevel, LevelVar: "BACKEND_LOG_LEVEL"}); err != nil {
 		return err
 	}
 
 	slog.Info("starting netra hub",
-		"version", version.Current(),
+		"version", version.String(),
 		"listen", cfg.ListenAddr)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// SIGINT/SIGTERM end httpx.Serve below; everything else stops with it.
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 
 	s, err := store.Open(ctx, cfg.DatabaseDSN)
@@ -63,14 +76,24 @@ func run() error {
 	// cannot be reached should stop the hub starting, not surface as a broken
 	// button to whoever tries first. The admin token still works either way,
 	// which is what makes failing here safe -- there is a way back in.
-	var oidcSvc *oidc.Service
+	var oidcSvc *kitauth.OIDC
 	if cfg.OIDC.Enabled() {
 		// Bounded, because "cannot be reached" includes an issuer that drops
 		// packets rather than refusing them. On the process-lifetime context
 		// that discovery would hang here forever: the hub never binds, never
 		// logs a reason, and only a SIGTERM ends it.
 		discovery, cancel := context.WithTimeout(ctx, 15*time.Second)
-		oidcSvc, err = oidc.New(discovery, cfg.OIDC.Issuer, cfg.OIDC.ClientID, cfg.OIDC.ClientSecret, cfg.RedirectURL())
+		oidcSvc, err = kitauth.NewOIDC(discovery, kitauth.OIDCConfig{
+			Issuer:       cfg.OIDC.Issuer,
+			ClientID:     cfg.OIDC.ClientID,
+			ClientSecret: cfg.OIDC.ClientSecret,
+			RedirectURL:  cfg.RedirectURL(),
+			// No "groups": netra has one role, so the claim would be requested
+			// and then ignored.
+			Scopes:       []string{"openid", "profile", "email"},
+			CookiePrefix: "netra_",
+			Secure:       true,
+		})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("oidc init: %w", err)
@@ -104,26 +127,7 @@ func run() error {
 	defer stopEval()
 	go conditions.New(s, time.Now()).Run(evalCtx)
 
-	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg, oidcSvc),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		slog.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		return srv.Shutdown(shutdownCtx)
-	}
+	srv := httpx.NewServer(cfg.ListenAddr,
+		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg, oidcSvc))
+	return httpx.Serve(ctx, srv, 15*time.Second)
 }

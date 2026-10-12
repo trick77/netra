@@ -2,29 +2,35 @@ package httpapi
 
 import (
 	"net/http"
-	"time"
+	"net/http/httptest"
+
+	kitauth "github.com/trick77/ship/kit/auth"
 
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
-// NewSessionCookieForTest exposes newSessionCookie to the external test
-// package. The clock is a parameter so expiry is asserted exactly rather than
-// with a sleep; this file is compiled only into the test binary, so the seam
-// cannot reach a production call site.
-func NewSessionCookieForTest(adminToken, user string, now time.Time) *http.Cookie {
-	return newSessionCookie(adminToken, user, now)
+// NewSessionCookieForTest mints the cookie a sign-in would: user "" is a
+// session from the admin token, anything else a person's from the provider.
+func NewSessionCookieForTest(adminToken, user string) *http.Cookie {
+	c := kitauth.Claims{Subject: adminTokenSubject}
+	if user != "" {
+		c = kitauth.Claims{Subject: "sub-" + user, PreferredUsername: user}
+	}
+	rec := httptest.NewRecorder()
+	if err := NewSessions(adminToken).Issue(rec, c); err != nil {
+		panic(err)
+	}
+	return rec.Result().Cookies()[0]
 }
 
-// SessionUserForTest exposes sessionUser to the external test package. The
-// identity a cookie carries is signed, so it needs asserting directly and not
-// only through the boolean validSession collapses it into.
-func SessionUserForTest(adminToken string, r *http.Request, now time.Time) (string, bool) {
-	return sessionUser(adminToken, r, now)
-}
-
-// ValidSessionForTest exposes validSession to the external test package.
-func ValidSessionForTest(adminToken string, r *http.Request, now time.Time) bool {
-	return validSession(adminToken, r, now)
+// SessionUserForTest is the identity a request's session carries, "" for one
+// minted from the admin token, and whether the session is valid at all.
+func SessionUserForTest(adminToken string, r *http.Request) (string, bool) {
+	c, ok := NewSessions(adminToken).Read(r)
+	if !ok || c.Subject == adminTokenSubject {
+		return "", ok
+	}
+	return c.Username(), true
 }
 
 // LatestNetTotalsForTest exposes latestNetTotals to the external test

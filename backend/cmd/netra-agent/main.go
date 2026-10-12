@@ -12,13 +12,13 @@ import (
 	"github.com/trick77/netra/internal/agent/client"
 	"github.com/trick77/netra/internal/agent/collector"
 	"github.com/trick77/netra/internal/agent/config"
-	"github.com/trick77/netra/internal/shared/logging"
-	"github.com/trick77/netra/internal/version"
+	"github.com/trick77/ship/kit/logging"
+	"github.com/trick77/ship/kit/version"
 )
 
 func main() {
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("fatal", "err", err)
+		slog.Error("fatal", logging.Err(err))
 		os.Exit(1)
 	}
 }
@@ -30,12 +30,12 @@ func run() error {
 	}
 
 	// Before the first log line, or the level would not apply to it.
-	if err := logging.Setup("AGENT_LOG_LEVEL", cfg.LogLevel); err != nil {
+	if _, err := logging.Setup(logging.Options{Level: cfg.LogLevel, LevelVar: "AGENT_LOG_LEVEL"}); err != nil {
 		return err
 	}
 
 	slog.Info("starting netra agent",
-		"version", version.Current(),
+		"version", version.String(),
 		"hub", cfg.HubURL,
 		"interval", config.ScrapeInterval)
 

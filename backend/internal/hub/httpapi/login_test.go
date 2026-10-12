@@ -51,15 +51,16 @@ func TestIntegrationRoutingOfUnmatchedAndSiblingPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("health stays unauthenticated", func(t *testing.T) {
-		resp, err := srv.Client().Get(srv.URL + "/api/health")
-		if err != nil {
-			t.Fatalf("Get: %v", err)
-		}
-		t.Cleanup(func() { _ = resp.Body.Close() })
-
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("status = %d, want 200 — the compose healthcheck has no token", resp.StatusCode)
+	t.Run("probes stay unauthenticated", func(t *testing.T) {
+		for _, path := range []string{"/healthz", "/readyz"} {
+			resp, err := noRedirectClient(srv).Get(srv.URL + path)
+			if err != nil {
+				t.Fatalf("Get %s: %v", path, err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("%s: status = %d, want 200 — the container healthcheck has no token", path, resp.StatusCode)
+			}
 		}
 	})
 
