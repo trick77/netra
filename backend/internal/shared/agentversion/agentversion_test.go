@@ -1,10 +1,10 @@
-package version_test
+package agentversion_test
 
 import (
 	"testing"
 
-	"github.com/trick77/netra/internal/shared/buildinfo"
-	"github.com/trick77/netra/internal/shared/version"
+	"github.com/trick77/netra/internal/shared/agentversion"
+	"github.com/trick77/netra/internal/version"
 )
 
 // The constant must PARSE, and this is the test that matters most here.
@@ -16,24 +16,24 @@ import (
 // rows.
 func TestMinAgentIsAParsableVersion(t *testing.T) {
 	// Given a version one patch below the minimum...
-	if version.AtLeast("0.0.0", version.MinAgent) {
+	if agentversion.AtLeast("0.0.0", agentversion.MinAgent) {
 		t.Fatalf("AtLeast(0.0.0, %q) = true: MinAgent does not parse, so the gate accepts everything",
-			version.MinAgent)
+			agentversion.MinAgent)
 	}
 	// ...and the minimum itself, which is the boundary an operator reads as
 	// "this release is supported".
-	if !version.AtLeast(version.MinAgent, version.MinAgent) {
-		t.Errorf("AtLeast(%[1]q, %[1]q) = false: the minimum must be its own floor", version.MinAgent)
+	if !agentversion.AtLeast(agentversion.MinAgent, agentversion.MinAgent) {
+		t.Errorf("AtLeast(%[1]q, %[1]q) = false: the minimum must be its own floor", agentversion.MinAgent)
 	}
 }
 
-// An unstamped build reports "dev" (buildinfo), which must reach the hub.
+// An unstamped build reports "dev" or "dev-<commit>" (version.Current), which must reach the hub.
 // Otherwise nobody can run an agent they just built against a hub they just
 // built, which is the whole local loop.
 func TestAnUnstampedBuildIsNotLockedOut(t *testing.T) {
-	if !version.AtLeast(buildinfo.Version(), version.MinAgent) {
+	if !agentversion.AtLeast(version.Current(), agentversion.MinAgent) {
 		t.Errorf("AtLeast(%q, %q) = false: a dev build must not be refused",
-			buildinfo.Version(), version.MinAgent)
+			version.Current(), agentversion.MinAgent)
 	}
 }
 
@@ -85,7 +85,7 @@ func TestAtLeast(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := version.AtLeast(tc.reported, tc.min); got != tc.want {
+			if got := agentversion.AtLeast(tc.reported, tc.min); got != tc.want {
 				t.Errorf("AtLeast(%q, %q) = %v, want %v", tc.reported, tc.min, got, tc.want)
 			}
 		})

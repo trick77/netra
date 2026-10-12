@@ -1,9 +1,9 @@
-// Package version compares netra's X.Y.Z release versions.
+// Package agentversion compares netra's X.Y.Z release versions.
 //
 // It exists for one caller -- the hub's minimum-agent check -- but lives in
 // shared rather than hub so the agent can consult the same rule without
 // importing the hub.
-package version
+package agentversion
 
 import (
 	"strconv"
@@ -27,7 +27,7 @@ const MinAgent = "0.0.205"
 // AtLeast reports whether reported is at or above min.
 //
 // A version that does not parse is ACCEPTED, and that is deliberate rather
-// than lax. buildinfo.Version() is "dev" for every local and CI build and the
+// than lax. version.Current() is "dev" or "dev-<commit>" for every local and CI build and the
 // simulator reports "sim" (devtools/sim/run.go), so rejecting the unparseable
 // would lock development and netra-sim out of their own hub. A parser that
 // went wrong would also brick a whole fleet, and failing open is the cheaper

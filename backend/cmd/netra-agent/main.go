@@ -12,15 +12,11 @@ import (
 	"github.com/trick77/netra/internal/agent/client"
 	"github.com/trick77/netra/internal/agent/collector"
 	"github.com/trick77/netra/internal/agent/config"
-	"github.com/trick77/netra/internal/shared/buildinfo"
 	"github.com/trick77/netra/internal/shared/logging"
+	"github.com/trick77/netra/internal/version"
 )
 
 func main() {
-	if buildinfo.HandleVersionFlag(os.Args, os.Stdout, "netra-agent") {
-		return
-	}
-
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -39,7 +35,7 @@ func run() error {
 	}
 
 	slog.Info("starting netra agent",
-		"version", buildinfo.Version(),
+		"version", version.Current(),
 		"hub", cfg.HubURL,
 		"interval", config.ScrapeInterval)
 

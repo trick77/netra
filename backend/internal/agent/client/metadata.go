@@ -16,8 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/trick77/netra/internal/agent/config"
-	"github.com/trick77/netra/internal/shared/buildinfo"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
+	"github.com/trick77/netra/internal/version"
 )
 
 // BuildMetadata gathers the static facts about this host and agent.
@@ -34,8 +34,8 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 	hostname, _ := os.Hostname()
 
 	md := &netrav1.Metadata{
-		AgentVersion: buildinfo.Version(),
-		GoVersion:    buildinfo.GoVersion(),
+		AgentVersion: version.Current(),
+		GoVersion:    runtime.Version(),
 		Hostname:     hostname,
 		Arch:         runtime.GOARCH,
 		OsName:       osName(cfg.OsRelease),

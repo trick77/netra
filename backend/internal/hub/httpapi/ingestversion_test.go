@@ -8,11 +8,11 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/trick77/netra/internal/hub/store"
+	"github.com/trick77/netra/internal/shared/agentversion"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
-	"github.com/trick77/netra/internal/shared/version"
 )
 
-// tooOld is a release below version.MinAgent. A literal rather than something
+// tooOld is a release below agentversion.MinAgent. A literal rather than something
 // derived from the constant, so that raising MinAgent cannot quietly change
 // what these tests mean by "old".
 const tooOld = "0.0.1"
@@ -166,14 +166,14 @@ func TestIntegrationIngestAcceptsAnUpgradedAgentWhoseHashHasChanged(t *testing.T
 	third := post(t, srv, token, &netrav1.IngestRequest{
 		Seq:          3,
 		MetadataHash: newHash,
-		Metadata:     &netrav1.Metadata{Hostname: "h1", AgentVersion: version.MinAgent},
+		Metadata:     &netrav1.Metadata{Hostname: "h1", AgentVersion: agentversion.MinAgent},
 		HostSamples:  aSample(),
 	})
 	if third.StatusCode != http.StatusOK {
 		t.Fatalf("status after the upgrade handshake = %d, want 200", third.StatusCode)
 	}
-	if got := storedAgentVersion(t, s); got != version.MinAgent {
-		t.Errorf("agent_version = %q, want %q", got, version.MinAgent)
+	if got := storedAgentVersion(t, s); got != agentversion.MinAgent {
+		t.Errorf("agent_version = %q, want %q", got, agentversion.MinAgent)
 	}
 }
 
@@ -205,7 +205,7 @@ func TestIntegrationIngestAcceptsAHostThatHasNeverHandshaken(t *testing.T) {
 // "sim" is what netra-sim reports and "dev" is any local build; refusing either
 // would lock the simulator and development out of their own hub.
 func TestIntegrationIngestAcceptsTheMinimumAndTheUnparsable(t *testing.T) {
-	for _, name := range []string{version.MinAgent, "sim", "dev", "empty"} {
+	for _, name := range []string{agentversion.MinAgent, "sim", "dev", "empty"} {
 		t.Run(name, func(t *testing.T) {
 			reported := name
 			if name == "empty" {

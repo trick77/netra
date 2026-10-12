@@ -1,7 +1,7 @@
 FROM golang:1.27-alpine AS build
 
 # ship release passes VERSION; the default keeps a bare `docker build` working
-# and matches internal/shared/buildinfo's own fallback.
+# and matches internal/version's own fallback.
 ARG VERSION=dev
 
 WORKDIR /src
@@ -20,7 +20,7 @@ COPY backend/ ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath \
-      -ldflags "-s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$VERSION" \
+      -ldflags "-s -w -X github.com/trick77/netra/internal/version.Version=$VERSION" \
       -o /out/netra-agent ./cmd/netra-agent
 
 # Digest-pinned so the runtime contents are reproducible across rebuilds; the

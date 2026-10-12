@@ -3,9 +3,9 @@ VERSION ?= dev
 
 # Deferred expansion (=, not :=) so VERSION is read when a build rule runs
 # rather than when this line is parsed. With := it once expanded before its
-# assignment existed, and -X stamped the empty string over buildinfo's "dev"
+# assignment existed, and -X stamped the empty string over internal/version's "dev"
 # default, so every shipped binary reported an empty version.
-LDFLAGS = -s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$(VERSION)
+LDFLAGS = -s -w -X github.com/trick77/netra/internal/version.Version=$(VERSION)
 
 .PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check ui ui-test
 
