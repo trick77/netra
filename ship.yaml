@@ -1,7 +1,7 @@
 # The gate (make check, and ship pre-push in the hook) and the release, see github.com/trick77/ship.
 # The store and read tests need real TimescaleDB (hypertables, continuous aggregates): plain postgres has no such
-# extension. Same tag as compose.yaml.
-postgres: "timescale/timescaledb:2.29.1-pg17"
+# extension. compose.yaml's service image, so the two cannot drift.
+postgres: compose:timescaledb
 go:
   dir: backend
   # Attributes coverage across package boundaries and keeps cmd/ (wiring; logic lives in internal/) out of both

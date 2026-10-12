@@ -1,6 +1,6 @@
 .PHONY: build build-hub build-agent build-sim test test-setup-agent tidy proto fe-build fe-test
 
-# Stamped into the binary (kit/version): logged at start, served by /api/health, sent by the agent.
+# Stamped into the binary (kit/version): logged at start, sent by the agent.
 VERSION ?= dev
 LDFLAGS = -s -w -X github.com/trick77/ship/kit/version.Version=$(VERSION)
 
