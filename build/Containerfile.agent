@@ -11,11 +11,11 @@ ARG COMMIT=unknown
 WORKDIR /src
 
 # Manifests first so the module download layer survives any source edit.
-COPY go.mod go.sum ./
+COPY backend/go.mod backend/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-COPY . .
+COPY backend/ ./
 
 # The cache mounts are repeated here on purpose: mount contents never land in
 # the image layer, so without /go/pkg/mod the modules fetched above are gone.

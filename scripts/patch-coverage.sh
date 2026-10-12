@@ -8,14 +8,15 @@
 #   coverage-gate.sh   "is the codebase as a whole tested enough?"   (75% floor)
 #   patch-coverage.sh  "is the code I just wrote tested?"            (75% patch)
 #
-# netra is a single Go module with two components sharing one go.mod — hub
-# (internal/hub, internal/shared) and agent (internal/agent,
-# cmd/). Both therefore go through the same Cobertura/diff-cover path. The
+# netra is a single Go module in backend/ with two components sharing one
+# go.mod — hub (backend/internal/hub, backend/internal/shared) and agent
+# (backend/internal/agent, backend/cmd/). Git paths carry the backend/ prefix,
+# Cobertura's do not; MODULE_DIR below bridges the two. Both therefore go through the same Cobertura/diff-cover path. The
 # UI (ui/, Vitest) is the third stack: its lcov report goes through diff-cover
 # too, in its own section below, and its absolute floor is the thresholds in
 # ui/vite.config.ts rather than scripts/coverage-gate.sh.
 #
-# cmd/ and internal/shared/gen are excluded from both sides, matching the exclusions
+# backend/cmd/ and backend/internal/shared/gen are excluded from both sides, matching the exclusions
 # scripts/coverage-gate.sh already applies to the absolute floor. See the
 # diff-cover invocations below.
 #
@@ -164,10 +165,11 @@ assert_matched() {
   fail=1
 }
 
-# netra's module lives at the repo root, so MODULE_DIR is always "." — unlike
-# the sibling repos this script was ported from, there is no backend/ nesting
-# to detect.
-MODULE_DIR="."
+# netra's module lives in backend/. Cobertura filenames are module-relative
+# (internal/hub/x.go) while git's are repo-relative (backend/internal/hub/x.go),
+# so MODULE_DIR is both the <source> diff-cover joins them with and the prefix
+# assert_matched strips from git's paths.
+MODULE_DIR="backend"
 
 # --- hub ------------------------------------------------------------------
 # CI already converts the coverprofile to Cobertura for scripts/coverage-gate.sh;
@@ -219,10 +221,10 @@ if [[ -f coverage/hub.xml ]]; then
     --compare-branch "$BASE_REF" \
     --fail-under "$PATCH_MIN" \
     --format "markdown:coverage/hub-patch.md" \
-    --exclude '*/cmd/*' 'cmd/*' '*/internal/shared/gen/*' 'internal/shared/gen/*' || fail=1
+    --exclude '*/cmd/*' '*/internal/shared/gen/*' || fail=1
   cat coverage/hub-patch.md >> "$summary" 2>/dev/null || true
-  assert_matched coverage/hub-patch.md hub coverage/hub-code-only.xml "" \
-    "internal/hub/*.go" "internal/shared/*.go"
+  assert_matched coverage/hub-patch.md hub coverage/hub-code-only.xml "$MODULE_DIR/" \
+    "$MODULE_DIR/internal/hub/*.go" "$MODULE_DIR/internal/shared/*.go"
 fi
 
 # --- agent ------------------------------------------------------------------
@@ -246,23 +248,22 @@ if [[ -f coverage/agent.xml ]]; then
   # uncovered patch that no test anyone could write would turn green, and the
   # only way to pass is to not make the change.
   #
-  # Both pattern forms are needed. diff-cover fnmatches --exclude against the
-  # path it resolved from <source> + the class filename, which is absolute:
-  # bare 'cmd/*' matches nothing, and only '*/cmd/*' fires. 'cmd/*' is kept
-  # alongside it so the exclusion still holds if a future diff-cover matches
-  # repo-relative paths instead. Verified against diff-cover 10.3.0, the
-  # version ci.yaml pins.
+  # diff-cover fnmatches --exclude against the path it resolves from <source>
+  # + the class filename: backend/cmd/... with <source> rewritten to
+  # MODULE_DIR. fnmatch's * crosses /, so '*/cmd/*' matches that, and would
+  # equally match gocover-cobertura's original absolute path. Verified against
+  # diff-cover 10.3.0, the version ci.yaml pins.
   diff-cover coverage/agent-code-only.xml \
     --compare-branch "$BASE_REF" \
     --fail-under "$PATCH_MIN" \
     --format "markdown:coverage/agent-patch.md" \
-    --exclude '*/cmd/*' 'cmd/*' || fail=1
+    --exclude '*/cmd/*' || fail=1
   cat coverage/agent-patch.md >> "$summary" 2>/dev/null || true
-  # cmd/*.go is deliberately absent from this pathspec: those files are excluded
+  # backend/cmd/*.go is deliberately absent from this pathspec: those files are excluded
   # above, so a cmd-only diff produces no coverage data by design and must not
   # trip the absent-from-report guard.
-  assert_matched coverage/agent-patch.md agent coverage/agent-code-only.xml "" \
-    "internal/agent/*.go"
+  assert_matched coverage/agent-patch.md agent coverage/agent-code-only.xml "$MODULE_DIR/" \
+    "$MODULE_DIR/internal/agent/*.go"
 fi
 
 # --- ui ---------------------------------------------------------------------
