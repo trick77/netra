@@ -315,10 +315,10 @@ export function Table<T>({
 
   // Seed a group's open state the first time it is seen, and only then.
   //
-  // Keyed on the group list so it runs when a group appears rather than on
-  // every poll. Groups already in `choice` are left exactly as they are --
-  // that is what makes this a seed and not a reset, and it is why a reader's
-  // fold survives the next sixty-second refetch.
+  // Only a group missing from `choice` is seeded. Groups already there are left
+  // exactly as they are -- that is what makes this a seed and not a reset, and
+  // it is why a reader's fold survives the next sixty-second refetch. A poll
+  // that brings no new group sets no state, so it costs no second render.
   //
   // While rendering, not in an effect. `choice` starts empty and the row loop
   // below falls back to open, so an effect would let every group render
@@ -327,27 +327,16 @@ export function Table<T>({
   // arrives. React re-renders with the seeded state before committing, so the
   // expanded state never reaches the DOM.
   const defaultOpen = groupBy?.defaultOpen;
-  const [seededFrom, setSeededFrom] = useState<{
-    groups: typeof groups;
-    defaultOpen: typeof defaultOpen;
-  } | null>(null);
   if (
     groups !== null &&
     defaultOpen !== undefined &&
-    (seededFrom?.groups !== groups || seededFrom.defaultOpen !== defaultOpen)
+    groups.some(([key]) => !choice.has(key))
   ) {
-    setSeededFrom({ groups, defaultOpen });
-    setChoice((prev) => {
-      let next: Map<string, boolean> | null = null;
-      for (const [key, rowsInGroup] of groups) {
-        if (prev.has(key)) continue;
-        next ??= new Map(prev);
-        next.set(key, defaultOpen(key, rowsInGroup));
-      }
-      // The same map when nothing was new, so this never re-renders on a poll
-      // that changed no group.
-      return next ?? prev;
-    });
+    const next = new Map(choice);
+    for (const [key, rowsInGroup] of groups) {
+      if (!next.has(key)) next.set(key, defaultOpen(key, rowsInGroup));
+    }
+    setChoice(next);
   }
 
   // Three stops per column, and the cycle starts where the column already

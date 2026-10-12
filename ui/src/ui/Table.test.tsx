@@ -387,6 +387,54 @@ describe("Table collapsible groups", () => {
     expect(screen.getByText("host-b")).toBeInTheDocument();
   });
 
+  // A poll hands the table fresh rows every minute. With no new group there
+  // is nothing to seed, so it must render once, not seed-and-render-again.
+  it("renders a poll with no new group once", () => {
+    let cells = 0;
+    const columns: Column<(typeof groupedRows)[number]>[] = [
+      {
+        key: "name",
+        header: "Host",
+        cell: (r) => {
+          cells++;
+          return r.name;
+        },
+      },
+    ];
+    const view = (rows: typeof groupedRows) => (
+      <Table
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        groupBy={{ ...collapsible, defaultOpen: () => true }}
+      />
+    );
+    const { rerender } = render(view(groupedRows));
+
+    cells = 0;
+    rerender(view([...groupedRows]));
+    expect(cells).toBe(groupedRows.length);
+  });
+
+  // A group that turns up on a later poll is still seeded, folded if its
+  // predicate says so, without touching the groups already there.
+  it("seeds a group that appears on a later poll", () => {
+    const view = (rows: typeof groupedRows) => (
+      <Table
+        columns={groupedColumns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        groupBy={{ ...collapsible, defaultOpen: (k: string) => k !== "fra" }}
+      />
+    );
+    const { rerender } = render(view(groupedRows));
+    rerender(view([...groupedRows, { id: "3", site: "fra", name: "host-c" }]));
+
+    expect(screen.queryByText("host-c")).toBeNull();
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+  });
+
   // And the reader still wins over the seed.
   it("lets a click reopen a group that arrived folded", () => {
     renderTable({ defaultOpen: () => false });
