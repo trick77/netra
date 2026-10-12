@@ -131,9 +131,9 @@ jobs:
       # than trusted to editors.
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l backend scripts)"
+          unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
-            echo "::error::These files are not gofmt'd. Run: gofmt -w backend scripts"
+            echo "::error::These files are not gofmt'd. Run: gofmt -w ."
             echo "$unformatted"
             exit 1
           fi

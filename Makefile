@@ -13,14 +13,14 @@ LDFLAGS = -s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$(
 .PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check ui ui-test
 
 test:
-	cd backend && $(GO) test ./...
+	$(GO) -C backend test ./...
 
 # Integration tests are skipped unless BACKEND_TEST_DSN points at a TimescaleDB.
 # -p 1 is mandatory: store.OpenTest drops the shared public schema, so two
 # package binaries running in parallel race on the same database.
 test-integration:
-	cd backend && BACKEND_TEST_DSN=$${BACKEND_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
-		$(GO) test -p 1 ./internal/hub/... -run Integration -v
+	BACKEND_TEST_DSN=$${BACKEND_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
+		$(GO) -C backend test -p 1 ./internal/hub/... -run Integration -v
 
 # setup-agent.sh is POSIX sh, not bash, and is curl'd onto hosts whose /bin/sh
 # is dash or busybox ash. Linting with -s sh and then running the suite under a
@@ -59,27 +59,27 @@ ui-test:
 	cd ui && npm ci && npm run test
 
 build-hub: ui
-	cd backend && CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o ../bin/netra ./cmd/netra
+	CGO_ENABLED=0 $(GO) -C backend build -ldflags "$(LDFLAGS)" -o ../bin/netra ./cmd/netra
 
 build-agent:
-	cd backend && CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o ../bin/netra-agent ./cmd/netra-agent
+	CGO_ENABLED=0 $(GO) -C backend build -ldflags "$(LDFLAGS)" -o ../bin/netra-agent ./cmd/netra-agent
 
 # netra-sim fills a hub with a fake fleet for development. Deliberately NOT
 # part of `build`, of either container image, or of the release workflow: it
 # registers hosts, mints tokens and writes three months of invented history,
 # none of which belongs anywhere near a production hub.
 build-sim:
-	cd backend && CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o ../bin/netra-sim ./cmd/netra-sim
+	CGO_ENABLED=0 $(GO) -C backend build -ldflags "$(LDFLAGS)" -o ../bin/netra-sim ./cmd/netra-sim
 
 proto:
-	cd backend && $(GO) run github.com/bufbuild/buf/cmd/buf@v1.47.2 generate
+	$(GO) -C backend run github.com/bufbuild/buf/cmd/buf@v1.47.2 generate
 
 fmt:
-	gofmt -w backend scripts
+	gofmt -w .
 
 vet:
-	cd backend && $(GO) vet ./...
+	$(GO) -C backend vet ./...
 
 check: vet test test-shell ui-test
-	@unformatted="$$(gofmt -l backend scripts)"; \
+	@unformatted="$$(gofmt -l .)"; \
 	if [ -n "$$unformatted" ]; then echo "not gofmt'd:"; echo "$$unformatted"; exit 1; fi

@@ -365,7 +365,8 @@ neither, shipping no utmp writer and usually no logind either.
 ## Build from source
 
 Go (hub, agent, simulator) lives in `backend/`, the React UI in `ui/`. Run
-everything through `make` from the repository root.
+everything through `make` from the repository root, or run `go` inside
+`backend/`.
 
 ```sh
 make build          # hub + agent into bin/

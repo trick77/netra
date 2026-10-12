@@ -41,8 +41,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY backend/ ./
 
-# After COPY backend/ ./, because that copies the gitignored-but-tracked empty dist/
-# and would otherwise bury the built SPA underneath it.
+# .dockerignore keeps the checkout's dist/ out of the context, so this stage's
+# output is the only thing go:embed sees.
 COPY --from=ui /src/backend/internal/hub/web/dist ./internal/hub/web/dist
 
 # The cache mounts are repeated here on purpose: mount contents never land in

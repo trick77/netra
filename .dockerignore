@@ -1,22 +1,18 @@
-# Keep the build context to what `go build` actually reads: backend/ (plus
-# ui/ for the hub's node stage). Everything below either bloats the context or
-# invalidates layer caches on changes that cannot affect the binaries.
-bin/
-coverage/
-data/
-docs/
-.github/
-# The Containerfiles themselves live here now. BuildKit reads the `-f` file
-# outside these rules, so ignoring the directory costs nothing and keeps the
-# context to what `go build` actually reads.
-build/
-test/
-.git/
-*.md
-.env
-compose*.yaml
-deploy/
-# ui/ itself IS part of the context now -- the node stage compiles it -- but
-# node_modules is hundreds of megabytes that the stage reinstalls from the
+# Allowlist: the images are built from backend/ (both) and ui/ (the hub's
+# node stage) and nothing else. A new root-level file stays out of the context
+# without anyone having to remember this list. BuildKit reads the `-f`
+# Containerfile outside these rules.
+*
+!backend
+!ui
+
+# node_modules is hundreds of megabytes that the node stage reinstalls from the
 # lockfile anyway.
 ui/node_modules/
+
+# The node stage always produces dist/. A local `make ui` leaves hashed
+# index-*.js chunks here, and COPY backend/ would carry them into the image,
+# where the stage's output merges on top instead of replacing them -- so stale
+# chunks shipped inside go:embed. Excluded, the image holds only what the
+# stage built.
+backend/internal/hub/web/dist/
