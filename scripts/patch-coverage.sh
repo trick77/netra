@@ -247,12 +247,12 @@ if [[ -f coverage/agent.xml ]]; then
   # uncovered patch that no test anyone could write would turn green, and the
   # only way to pass is to not make the change.
   #
-  # Both pattern forms are needed. diff-cover fnmatches --exclude against the
-  # path it resolved from <source> + the class filename, which is absolute:
-  # bare 'backend/cmd/*' matches nothing, and only '*/cmd/*' fires. 'backend/cmd/*' is kept
-  # alongside it so the exclusion still holds if a future diff-cover matches
-  # repo-relative paths instead. Verified against diff-cover 10.3.0, the
-  # version ci.yaml pins.
+  # Both pattern forms are kept. diff-cover fnmatches --exclude against the
+  # path it resolves from <source> + the class filename. With <source>
+  # rewritten to MODULE_DIR that path is repo-relative (backend/cmd/...), so
+  # 'backend/cmd/*' matches it; '*/cmd/*' also matches and still holds should
+  # <source> ever revert to gocover-cobertura's absolute path. Verified against
+  # diff-cover 10.3.0, the version ci.yaml pins.
   diff-cover coverage/agent-code-only.xml \
     --compare-branch "$BASE_REF" \
     --fail-under "$PATCH_MIN" \

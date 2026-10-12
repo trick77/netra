@@ -75,11 +75,11 @@ proto:
 	cd backend && $(GO) run github.com/bufbuild/buf/cmd/buf@v1.47.2 generate
 
 fmt:
-	gofmt -w backend
+	gofmt -w backend scripts
 
 vet:
 	cd backend && $(GO) vet ./...
 
 check: vet test test-shell ui-test
-	@unformatted="$$(gofmt -l backend)"; \
+	@unformatted="$$(gofmt -l backend scripts)"; \
 	if [ -n "$$unformatted" ]; then echo "not gofmt'd:"; echo "$$unformatted"; exit 1; fi

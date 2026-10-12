@@ -341,7 +341,7 @@ rather than silently reporting nothing.
 
 The namespace makes every process's `/proc` entry readable to the container,
 `cmdline` and `environ` included. netra reads neither, and
-`internal/agent/collector/argv_guard_test.go` fails the build if either name
+`backend/internal/agent/collector/argv_guard_test.go` fails the build if either name
 appears in a Go string literal.
 
 netra used to report a per-process-name table as well, and no longer does. The

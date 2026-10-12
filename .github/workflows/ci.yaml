@@ -42,6 +42,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
       - run: go build ./...
         working-directory: backend
       - run: go vet ./...
@@ -130,9 +131,9 @@ jobs:
       # than trusted to editors.
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l backend)"
+          unformatted="$(gofmt -l backend scripts)"
           if [ -n "$unformatted" ]; then
-            echo "::error::These files are not gofmt'd. Run: gofmt -w backend"
+            echo "::error::These files are not gofmt'd. Run: gofmt -w backend scripts"
             echo "$unformatted"
             exit 1
           fi
@@ -274,6 +275,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"

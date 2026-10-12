@@ -52,7 +52,7 @@ on:
       - "compose.yaml"
       - ".env.example"
       # Only covers a future top-level test/ directory. Go tests live beside
-      # their sources as internal/**/*_test.go, so a test-only change to those
+      # their sources as backend/internal/**/*_test.go, so a test-only change to those
       # still cuts a release. That is the ignore-list-is-the-safe-default
       # tradeoff made concrete: a redundant release, not a missing one.
       - "test/**"
