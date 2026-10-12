@@ -4,15 +4,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	kitauth "github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
+	kitrun "github.com/trick77/ship/kit/run"
 	"github.com/trick77/ship/kit/version"
 
 	"github.com/trick77/netra/internal/hub/auth"
@@ -29,14 +32,15 @@ func main() {
 	healthcheck := flag.Bool("healthcheck", false, "probe this hub's /healthz and exit 0 when it answers")
 	flag.Parse()
 	if *healthcheck {
-		addr := os.Getenv("BACKEND_LISTEN_ADDR")
+		// Trimmed as config.Load trims it, so the probe dials what the server bound.
+		addr := strings.TrimSpace(os.Getenv("BACKEND_LISTEN_ADDR"))
 		if addr == "" {
 			addr = ":8080"
 		}
 		os.Exit(httpx.Healthcheck(httpx.LocalURL(addr, "/healthz")))
 	}
 
-	if err := run(); err != nil {
+	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("fatal", logging.Err(err))
 		os.Exit(1)
 	}
@@ -57,8 +61,10 @@ func run() error {
 		"version", version.String(),
 		"listen", cfg.ListenAddr)
 
-	// SIGINT/SIGTERM end httpx.Serve below; everything else stops with it.
-	ctx, stop := context.WithCancel(context.Background())
+	// SIGINT/SIGTERM end the whole run, startup included: a stop while
+	// Migrate waits on another replica's lock, or OIDC discovery hangs, unwinds
+	// through the defers instead of killing the process mid-way.
+	ctx, stop := kitrun.Context(context.Background())
 	defer stop()
 
 	s, err := store.Open(ctx, cfg.DatabaseDSN)
