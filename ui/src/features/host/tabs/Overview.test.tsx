@@ -64,7 +64,6 @@ const host: HostDetail = {
   host_type: "vps",
   agent_version: "0.4.1",
   go_version: "go1.25",
-  build_commit: "abc1234",
   kernel: "6.8.0-31-generic",
   os_name: "Ubuntu 24.04",
   arch: "amd64",
@@ -256,7 +255,7 @@ describe("Overview System summary", () => {
   // Architecture, cores and the agent build are the three facts behind the
   // click. They are looked up deliberately rather than read in passing --
   // amd64 is implied by the processor model, the core count is a number you
-  // go and get when sizing something, and the commit is what you read when a
+  // go and get when sizing something, and the version is what you read when a
   // host reports something the code should not be able to report. If any of
   // them creeps onto the summary the disclosure stops paying for its click.
   it("keeps architecture, cores and the agent build behind the click", () => {
@@ -264,7 +263,7 @@ describe("Overview System summary", () => {
     const summary = systemSummary();
     const strip = systemStrip();
 
-    for (const hidden of ["amd64", "4 cores · 8 threads", "0.4.1 · abc1234"]) {
+    for (const hidden of ["amd64", "4 cores · 8 threads", "0.4.1"]) {
       expect(within(summary).queryByText(hidden)).toBeNull();
       expect(within(strip).getByText(hidden)).toBeInTheDocument();
     }
@@ -828,26 +827,15 @@ describe("Overview network tiles", () => {
 // is what makes the answer exact, and it was collected and served all along
 // while only the version was shown.
 describe("Overview system card", () => {
-  it("identifies the reporting agent by version and commit", () => {
+  it("identifies the reporting agent by its version", () => {
     renderOverview();
     const system = screen.getByRole("region", { name: "System" });
-    expect(within(system).getByText("0.4.1 · abc1234")).toBeInTheDocument();
-  });
-
-  // buildinfo.Commit() is "unknown" for a binary built without the ldflags
-  // stamp -- a plain `go build` from a working tree. That is a fact about how
-  // the agent was compiled, not a value worth printing: "0.4.1 · unknown"
-  // reads as a bug in netra.
-  it("falls back to the version alone for an unstamped build", () => {
-    renderOverview({ host: { ...host, build_commit: "unknown" } });
-    const system = screen.getByRole("region", { name: "System" });
     expect(within(system).getByText("0.4.1")).toBeInTheDocument();
-    expect(within(system).queryByText(/unknown/)).toBeNull();
   });
 
   it("reads absent, never empty, when the host reported no agent at all", () => {
     renderOverview({
-      host: { ...host, agent_version: null, build_commit: null },
+      host: { ...host, agent_version: null },
     });
     const system = screen.getByRole("region", { name: "System" });
     const agent = within(system).getByText("Agent").nextElementSibling;

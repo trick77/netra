@@ -149,7 +149,7 @@ func provision(ctx context.Context, hub *Hub, profiles []*Profile, cfg Config, f
 			return nil, fmt.Errorf("host %s: %w", p.Hostname, err)
 		}
 
-		meta := p.Metadata("sim", "sim", "simulated")
+		meta := p.Metadata("sim", "sim")
 		hosts = append(hosts, &host{
 			profile:  p,
 			id:       id,

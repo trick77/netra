@@ -192,7 +192,6 @@ type HostDetail struct {
 	HostType     *string `json:"host_type"`
 	AgentVersion *string `json:"agent_version"`
 	GoVersion    *string `json:"go_version"`
-	BuildCommit  *string `json:"build_commit"`
 	Kernel       *string `json:"kernel"`
 	OSName       *string `json:"os_name"`
 	Arch         *string `json:"arch"`
@@ -326,7 +325,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		       c.last_seen, c.received_at, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.location, h.provider, h.facility,
-		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
+		       h.fingerprint, h.host_type, h.agent_version, h.go_version,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
 		       h.latitude, h.longitude, h.created_at, h.capabilities,
 		       coalesce(fu.names, '{}'::text[]), fu.since,
@@ -347,7 +346,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		&h.LastSeen, &h.ReceivedAt, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 		&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 		&h.Location, &h.Provider, &h.Facility,
-		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
+		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
 		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities, &h.FailedUnits,
 		&h.FailedSince, &h.Filesystems)

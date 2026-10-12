@@ -19,15 +19,11 @@ import (
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/oidc"
 	"github.com/trick77/netra/internal/hub/store"
-	"github.com/trick77/netra/internal/shared/buildinfo"
 	"github.com/trick77/netra/internal/shared/logging"
+	"github.com/trick77/netra/internal/version"
 )
 
 func main() {
-	if buildinfo.HandleVersionFlag(os.Args, os.Stdout, "netra") {
-		return
-	}
-
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -46,8 +42,7 @@ func run() error {
 	}
 
 	slog.Info("starting netra hub",
-		"version", buildinfo.Version(),
-		"commit", buildinfo.Commit(),
+		"version", version.Current(),
 		"listen", cfg.ListenAddr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

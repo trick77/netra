@@ -88,7 +88,7 @@
 
   Regenerate the rasters with scripts/gen-icons.sh after touching this file — and
   mirror any shape change into the two tiled sources beside it, which are copies
-  and cannot follow on their own. Then rebuild the UI with `make ui`, so the new
+  and cannot follow on their own. Then rebuild the UI with `make fe-build`, so the new
   bytes land in internal/hub/web/dist, which is what the binary serves.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">

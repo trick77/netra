@@ -516,7 +516,7 @@ func TestSplittingAnOversizedBatchStillDeliversTheMetadata(t *testing.T) {
 
 	p := Fleet()[2]
 	g := NewGenerator(p, 1, testFrom, testTo)
-	meta := p.Metadata("sim", "sim", "simulated")
+	meta := p.Metadata("sim", "sim")
 	h := &host{profile: p, gen: g, meta: meta, metaHash: HashMetadata(meta), sendMeta: true}
 
 	// Enough scrapes to push the marshalled request past the split threshold.
@@ -819,8 +819,8 @@ func TestEveryScheduledEventIsDeliveredExactlyOnce(t *testing.T) {
 // resend on every single POST.
 func TestTheMetadataHashIsStable(t *testing.T) {
 	p := Fleet()[0]
-	a := HashMetadata(p.Metadata("sim", "sim", "simulated"))
-	b := HashMetadata(p.Metadata("sim", "sim", "simulated"))
+	a := HashMetadata(p.Metadata("sim", "sim"))
+	b := HashMetadata(p.Metadata("sim", "sim"))
 	if string(a) != string(b) {
 		t.Fatalf("metadata hash is not stable: %x vs %x", a, b)
 	}

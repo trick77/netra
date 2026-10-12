@@ -187,7 +187,6 @@ func TestMetadataRoundTrip(t *testing.T) {
 	in := &netrav1.Metadata{
 		AgentVersion: "1.2.3",
 		GoVersion:    "go1.26",
-		BuildCommit:  "deadbeef",
 		Hostname:     "host-a",
 		Kernel:       "6.9.0",
 		OsName:       "linux",
@@ -218,8 +217,6 @@ func TestMetadataRoundTrip(t *testing.T) {
 		t.Errorf("AgentVersion = %q, want %q", out.GetAgentVersion(), in.AgentVersion)
 	case out.GetGoVersion() != in.GoVersion:
 		t.Errorf("GoVersion = %q, want %q", out.GetGoVersion(), in.GoVersion)
-	case out.GetBuildCommit() != in.BuildCommit:
-		t.Errorf("BuildCommit = %q, want %q", out.GetBuildCommit(), in.BuildCommit)
 	case out.GetHostname() != in.Hostname:
 		t.Errorf("Hostname = %q, want %q", out.GetHostname(), in.Hostname)
 	case out.GetKernel() != in.Kernel:

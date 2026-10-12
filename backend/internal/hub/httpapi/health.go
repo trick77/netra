@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/netra/internal/hub/store"
-	"github.com/trick77/netra/internal/shared/buildinfo"
+	"github.com/trick77/netra/internal/version"
 )
 
 type healthHandler struct {
@@ -24,7 +24,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body := map[string]string{
 		"status":   "ok",
 		"database": "ok",
-		"version":  buildinfo.Version(),
+		"version":  version.Current(),
 	}
 	status := http.StatusOK
 

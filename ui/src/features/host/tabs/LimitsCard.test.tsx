@@ -21,7 +21,6 @@ const host: HostDetail = {
   host_type: "vps",
   agent_version: "0.4.1",
   go_version: "go1.25",
-  build_commit: "abc1234",
   kernel: "6.8.0-31-generic",
   os_name: "Ubuntu 24.04",
   arch: "amd64",

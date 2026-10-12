@@ -9,7 +9,10 @@ import tailwind from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwind()],
-  build: { outDir: "../backend/internal/hub/web/dist", emptyOutDir: true },
+  // Built straight into the Go embed directory, which also holds a tracked
+  // .gitkeep so `//go:embed all:dist` always has something to embed.
+  // emptyOutDir:true would delete it; the Makefile's fe-build clears the rest.
+  build: { outDir: "../backend/internal/hub/web/dist", emptyOutDir: false },
   server: {
     proxy: {
       "/api": "http://127.0.0.1:8080",
@@ -25,55 +28,15 @@ export default defineConfig({
     setupFiles: ["./src/test-setup.ts"],
     globals: true,
     coverage: {
-      // The Go side keeps its floors in scripts/coverage-floors and enforces
-      // them in coverage-gate.sh; this is the same idea in the tool that
-      // measures this half. A hard floor, not a ratchet: each number sits a
-      // couple of points under what the suite measures today, which is
-      // margin for an honest refactor rather than slack. Raise them the same
-      // way the Go ones are raised -- measure first, then set.
       provider: "v8",
-      // text is for humans reading the CI log; html is the browsable report
-      // a developer opens after a local run; lcov is what diff-cover reads in
-      // scripts/patch-coverage.sh, the "is the code I just wrote tested?" half
-      // of the gate. The thresholds below answer the other half. Written
-      // under the repo's coverage/ beside the Go reports, which is where that
-      // script looks and what .gitignore already covers.
-      //
-      // projectRoot on the lcov reporter: its SF: paths are written relative
-      // to it, and diff-cover matches them against git's paths, which are
-      // repo-root-relative. Left at the default (this directory) they read
-      // "src/lib/x.ts", nothing in the diff matches, and diff-cover passes
-      // vacuously with "no lines with coverage information" -- a bug that
-      // has shipped before in a sibling repo. An absolute path, because the
-      // reporter does not resolve this option against vitest's root the way
-      // it resolves reportsDirectory.
-      reporter: [
-        "text",
-        "html",
-        // URL.pathname rather than node:url's fileURLToPath: this config is
-        // type-checked with vite/client's types only, and pulling in
-        // @types/node for one call is not worth it. decodeURIComponent
-        // undoes the percent-encoding a checkout path with a space would get.
-        [
-          "lcovonly",
-          {
-            projectRoot: decodeURIComponent(
-              new URL("..", import.meta.url).pathname,
-            ),
-          },
-        ],
-      ],
+      // lcov feeds ship's coverage gates (ship.yaml ui.lcov); text-summary is
+      // for the human reading the log.
+      reporter: ["text-summary", "lcov"],
       reportsDirectory: "../coverage/ui",
       include: ["src/**/*.{ts,tsx}"],
       // main.tsx is three lines of bootstrap that mount the app into a real
       // DOM, and test-setup.ts is the harness itself.
       exclude: ["src/main.tsx", "src/test-setup.ts", "src/**/*.test.{ts,tsx}"],
-      thresholds: {
-        statements: 89,
-        branches: 82,
-        functions: 89,
-        lines: 90,
-      },
     },
   },
 });

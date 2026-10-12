@@ -15,8 +15,8 @@ import (
 
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/store"
+	"github.com/trick77/netra/internal/shared/agentversion"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
-	"github.com/trick77/netra/internal/shared/version"
 )
 
 // maxBodyBytes caps a single ingest POST. A 60s batch of host samples is a
@@ -245,7 +245,7 @@ func plausibleTs(tsMs int64, future time.Time) bool {
 	return !ts.Before(minPlausibleTs) && !ts.After(future)
 }
 
-// rejectOldAgent refuses a batch from an agent below version.MinAgent, and
+// rejectOldAgent refuses a batch from an agent below agentversion.MinAgent, and
 // returns the stored metadata hash it read on the way so reconcileMetadata
 // does not have to read the same row again.
 //
@@ -295,7 +295,7 @@ func (h *IngestHandler) rejectOldAgent(ctx context.Context, w http.ResponseWrite
 		return storedHash, false
 	}
 
-	if version.AtLeast(reported, version.MinAgent) {
+	if agentversion.AtLeast(reported, agentversion.MinAgent) {
 		return storedHash, false
 	}
 
@@ -311,7 +311,7 @@ func (h *IngestHandler) rejectOldAgent(ctx context.Context, w http.ResponseWrite
 	}
 
 	slog.Warn("refusing ingest from an agent below the minimum version",
-		"host_id", hostID, "agent_version", reported, "min_agent_version", version.MinAgent)
+		"host_id", hostID, "agent_version", reported, "min_agent_version", agentversion.MinAgent)
 	writeProtoStatus(w, http.StatusUpgradeRequired, &netrav1.IngestResponse{
 		RetryAfterS: uint32(upgradeRequiredRetryAfter.Seconds()),
 	})

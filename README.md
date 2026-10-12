@@ -365,33 +365,37 @@ neither, shipping no utmp writer and usually no logind either.
 ## Build from source
 
 Go (hub, agent, simulator) lives in `backend/`, the React UI in `ui/`. Run
-everything through `make` from the repository root, or run `go` inside
-`backend/`.
+everything through `make` from the repository root.
 
 ```sh
 make build          # hub + agent into bin/
-make build-hub      # runs `make ui` first
+make build-hub      # runs `make fe-build` first
 make build-agent
 ```
 
-Build the UI with `make ui`, not `npm run build` directly: vite's
-`emptyOutDir` wipes the tracked `backend/internal/hub/web/dist/.gitkeep` that
-`go:embed` needs, and the make rule restores it.
+Build the UI with `make fe-build`: it clears the stale build and keeps the
+tracked `backend/internal/hub/web/dist/.gitkeep` that `go:embed` needs.
 
-Container images: `build/Containerfile.hub` and `build/Containerfile.agent`. Both
-build from the repository root as context (the Go module lives in `backend/`), e.g.
-`podman build -f build/Containerfile.hub .`.
+Container images: one `Containerfile`, built from the repository root. The hub is
+the default target, the agent is `--target netra-agent`, e.g.
+`podman build -f Containerfile --target netra-agent .`.
 
-## Tests
+## Gate and tests
+
+The gate is [ship](https://github.com/trick77/ship), configured in `ship.yaml`:
 
 ```sh
-make test                                     # unit
-make test-integration                         # needs BACKEND_TEST_DSN at a TimescaleDB
-make test-shell                               # shellcheck -s sh + the suite under dash
+make hooks                                    # once per clone: the pre-push hook runs the gate
+make check                                    # the gate by hand
+make test                                     # Go unit tests (-race)
+make fe-test                                  # UI tests
+make test-integration                         # needs BACKEND_TEST_DSN at a TimescaleDB, not in the gate
 ```
 
 `test-integration` runs with `-p 1` on purpose — the test store drops the shared
 schema, so parallel package binaries race on one database.
+
+Releases are cut by hand: `gh workflow run Release -f bump=patch`.
 
 ## Docs
 

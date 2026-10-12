@@ -11,7 +11,7 @@ import (
 
 // Same construction as embed_internal_test.go's testFS, and for the same
 // reason: the real embedded dist/ holds nothing but .gitkeep on a checkout
-// that has not run `make ui`, so every behavioural assertion runs against a
+// that has not run `make fe-build`, so every behavioural assertion runs against a
 // synthetic tree. index.html is present precisely so the tests below can prove
 // it is NOT what an anonymous caller gets.
 func publicTestFS() fstest.MapFS {
@@ -86,7 +86,7 @@ func TestPublicAssetsRefusesAnythingElse(t *testing.T) {
 	}
 }
 
-// An allowlisted name that is not in dist/ -- a binary built without `make ui`,
+// An allowlisted name that is not in dist/ -- a binary built without `make fe-build`,
 // or a raster nobody regenerated -- must 404 too. http.FileServer would answer
 // a missing file with its own 404, but only after the allowlist has let the
 // request through, and the explicit check is what keeps that from depending on

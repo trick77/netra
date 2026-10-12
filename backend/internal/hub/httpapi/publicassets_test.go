@@ -13,7 +13,7 @@ import (
 // blank tab on the one screen every user meets first.
 //
 // The assertion is "not a redirect", not "200". dist/ is tracked as an empty
-// .gitkeep, so on a checkout that has not run `make ui` these files genuinely
+// .gitkeep, so on a checkout that has not run `make fe-build` these files genuinely
 // are not embedded and 404 is the honest answer; what must never happen is a
 // 303 to /login, whatever the build state. Anything else would make this test
 // pass or fail on whether someone had built the UI.
