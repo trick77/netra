@@ -31,11 +31,12 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	rd := read.NewService(s.Pool())
 
 	mux := http.NewServeMux()
-	// The one deliberate exception to the paragraph above: the probes answer
-	// an unauthenticated caller, from the internet included, because the
-	// container healthcheck runs inside it with no credential to present.
-	// /healthz is liveness; /readyz pings the database. Their bodies are fixed
-	// and carry no error detail (that goes to the log).
+	// The one exception to the paragraph above: the probes take no credential,
+	// because the container healthcheck runs inside it with none to present.
+	// They are not reachable from the internet: kit answers them to a direct
+	// local caller only, so through Traefik they are a 404. /healthz is
+	// liveness; /readyz pings the database. Their bodies carry no error detail
+	// (that goes to the log).
 	httpx.Health(mux, slog.Default(), httpx.Check{Name: "database", Run: s.Pool().Ping})
 	mux.Handle("POST /api/agent/v1/ingest", NewIngestHandler(a, s))
 
@@ -86,7 +87,8 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	// mutation's 403 both get a line under the request id. Routine lines are
 	// debug; the UI's polled reads are dropped even there while they succeed
 	// (every open tab re-reads its page each minute), a failing one still logs.
-	// The probes never log here: Health logs readiness changes itself.
+	// A probe never logs here: Health logs readiness changes itself. A refused
+	// one, from outside the container, logs as any 404.
 	return httpx.Chain(mux,
 		httpx.AccessLog(slog.Default(), httpx.AccessLogOptions{
 			// Traefik is the one hop in front (compose.yaml publishes no port):
