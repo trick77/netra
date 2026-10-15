@@ -11,7 +11,6 @@ ui:
   lint: npm run lint
   # Reporters from ui/vite.config.ts (lcov into ../coverage/ui), not overridden on the command line.
   test: npm run test -- --coverage
-  lcov: coverage/ui/lcov.info
   # vite's emptyOutDir would wipe the tracked .gitkeep go:embed needs: ship empties the rest before the build.
   embed: backend/internal/hub/web/dist
 steps:
