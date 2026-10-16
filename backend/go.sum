@@ -26,8 +26,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/trick77/ship/kit v0.9.0 h1:4CdyFq+Vq4t/uTfx4HU5qIzQ5XeqsmO0QZjB7Zwp9sg=
-github.com/trick77/ship/kit v0.9.0/go.mod h1:cE+kQhN2nb5j2ML174YKdGrC41M2GxnILzQLqFupsHE=
+github.com/trick77/ship/kit v0.13.0 h1:xC5LKlAkFX7ipSEcvJJO/mOlbiYRUL27A4OpiXshPt4=
+github.com/trick77/ship/kit v0.13.0/go.mod h1:cE+kQhN2nb5j2ML174YKdGrC41M2GxnILzQLqFupsHE=
 github.com/trick77/ship/kit/auth v0.3.0 h1:YslIu5e44IOhHr64SdWyy2lGEltRtfAMAo3yCza76Fo=
 github.com/trick77/ship/kit/auth v0.3.0/go.mod h1:HaCfFgEvLpWdzDX+K9WbTCGY1FEucjSiZUXBze+8mvY=
 golang.org/x/crypto v0.57.0 h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=

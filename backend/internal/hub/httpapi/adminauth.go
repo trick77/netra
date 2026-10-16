@@ -1,10 +1,10 @@
 package httpapi
 
 import (
-	"crypto/subtle"
 	"net/http"
 
 	"github.com/trick77/ship/kit/httpx"
+	"github.com/trick77/ship/kit/secret"
 )
 
 // RequireAdmin gates the admin API and the UI on BACKEND_ADMIN_TOKEN.
@@ -18,22 +18,17 @@ import (
 func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Handler {
 	sessions := NewSessions(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// An empty configured token must deny everything, not match the empty
-		// bearer of a request that sent no header at all -- ConstantTimeCompare
-		// reports equal for two empty strings, which would authorize every
-		// caller. config.Load rejects an empty BACKEND_ADMIN_TOKEN, but NewRouter
-		// takes a Config by value and test code builds literals directly, so
-		// that guard is one struct literal away from being bypassed.
+		// An empty configured token must deny everything: config.Load rejects an
+		// empty BACKEND_ADMIN_TOKEN, but NewRouter takes a Config by value and
+		// test code builds literals directly, so that guard is one struct
+		// literal away from being bypassed. secret.Match refuses an empty want
+		// on its own; the session path needs the guard here.
 		//
-		// bearer() is the ingest path's parser, shared so the hub has ONE
-		// definition of a valid Authorization header. It requires the "Bearer "
-		// prefix; the TrimPrefix this replaces left a header without one
-		// untouched, so a bare `Authorization: <token>` authenticated here and
-		// was rejected on /api/agent/.
-		presented := bearer(r)
-		authorized := token != "" &&
-			(subtle.ConstantTimeCompare([]byte(presented), []byte(token)) == 1 ||
-				validSession(sessions, r))
+		// httpx.Bearer is the ingest path's parser too, so the hub has ONE
+		// definition of a valid Authorization header: a bare
+		// `Authorization: <token>` is no bearer.
+		presented, _ := httpx.Bearer(r)
+		authorized := token != "" && (secret.Match(presented, token) || validSession(sessions, r))
 		if authorized {
 			next.ServeHTTP(w, r)
 			return
