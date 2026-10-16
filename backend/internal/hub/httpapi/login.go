@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"crypto/subtle"
 	"embed"
 	"html/template"
 	"log/slog"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	kitauth "github.com/trick77/ship/kit/auth"
+	"github.com/trick77/ship/kit/secret"
 )
 
 // templateFS carries the login page into the binary, the same way migrationFS
@@ -139,7 +139,7 @@ func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	submitted := r.PostFormValue("token")
-	if subtle.ConstantTimeCompare([]byte(submitted), []byte(h.adminToken)) != 1 {
+	if !secret.Match(submitted, h.adminToken) {
 		h.render(w, http.StatusUnauthorized, map[string]any{
 			"Title": "Log in", "Error": "That is not the admin token.", "OIDC": h.oidc != nil,
 		})

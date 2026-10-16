@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/trick77/ship/kit/httpx"
@@ -88,7 +87,8 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hostID, err := h.auth.Authenticate(ctx, bearer(r))
+	bearer, _ := httpx.Bearer(r) // "" without one: Authenticate refuses it
+	hostID, err := h.auth.Authenticate(ctx, bearer)
 	if errors.Is(err, auth.ErrUnauthorized) {
 		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -401,15 +401,6 @@ func latest(samples []*netrav1.HostSample) *netrav1.HostSample {
 		}
 	}
 	return out
-}
-
-func bearer(r *http.Request) string {
-	const prefix = "Bearer "
-	v := r.Header.Get("Authorization")
-	if !strings.HasPrefix(v, prefix) {
-		return ""
-	}
-	return strings.TrimPrefix(v, prefix)
 }
 
 func writeProto(w http.ResponseWriter, m proto.Message) {
