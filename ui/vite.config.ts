@@ -11,7 +11,7 @@ export default defineConfig({
   plugins: [react(), tailwind()],
   // Built straight into the Go embed directory, which also holds a tracked
   // .gitkeep so `//go:embed all:dist` always has something to embed.
-  // emptyOutDir:true would delete it; the Makefile's fe-build clears the rest.
+  // emptyOutDir:true would delete it; ship check (ui.embed) and make fe-build clear the rest.
   build: { outDir: "../backend/internal/hub/web/dist", emptyOutDir: false },
   server: {
     proxy: {
