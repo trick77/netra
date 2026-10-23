@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -32,6 +33,11 @@ var templateFS embed.FS
 //
 //go:embed assets/login-cover.webp
 var loginCover []byte
+
+// maxLoginBodyBytes caps the login form. It holds one token field; without
+// this the unauthenticated POST would read up to net/http's 10 MB form
+// default before the token is even checked.
+const maxLoginBodyBytes = 8 << 10
 
 // loginHandler serves the no-JS login page and the session it mints.
 //
@@ -133,7 +139,14 @@ func (h *loginHandler) form(w http.ResponseWriter, r *http.Request) {
 // submit is the form post. The submitted value is never echoed back into the
 // response: a wrong token is often a right token for something else.
 func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(innermost(w), r.Body, maxLoginBodyBytes)
 	if err := r.ParseForm(); err != nil {
+		if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
+			h.render(w, r, http.StatusRequestEntityTooLarge, map[string]any{
+				"Title": "Log in", "Error": "The form is too large.", "OIDC": h.oidc != nil,
+			})
+			return
+		}
 		h.render(w, r, http.StatusBadRequest, map[string]any{
 			"Title": "Log in", "Error": "Could not read the form.", "OIDC": h.oidc != nil,
 		})

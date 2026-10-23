@@ -239,6 +239,32 @@ func TestLoginRejectsAnUnparseableForm(t *testing.T) {
 	}
 }
 
+// The login form is unauthenticated and internet-reachable: a body far over
+// a form's size gets the login page with a 413 and the connection closed,
+// before the token is looked at. A normal post keeps its connection.
+func TestIntegrationLoginRefusesAnOversizedFormAndClosesTheConnection(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	normal := postFormUnauthenticated(t, srv, "/login", url.Values{"token": {"hunter2"}})
+	if normal.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("normal status = %d, want 401", normal.StatusCode)
+	}
+	if normal.Close {
+		t.Error("a normal login post closed the connection")
+	}
+
+	resp := postFormUnauthenticated(t, srv, "/login", url.Values{"token": {strings.Repeat("a", 64<<10)}})
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Errorf("content type = %q, want the login page", got)
+	}
+	if !resp.Close {
+		t.Error("the connection stays open after an oversized form")
+	}
+}
+
 // A form on a sibling subdomain must not log the admin out, or log a browser
 // in with the attacker's token.
 func TestIntegrationLoginAndLogoutRefuseCrossOriginPosts(t *testing.T) {
