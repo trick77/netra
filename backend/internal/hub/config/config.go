@@ -60,7 +60,8 @@ type OIDCConfig struct {
 func (c OIDCConfig) Enabled() bool { return c.Issuer != "" }
 
 // MaxAdminTokenBytes bounds BACKEND_ADMIN_TOKEN. The login form caps its body
-// at 8 KiB; a token this long still fits with every byte url-encoded as %XX.
+// at four times this, so a token this long still fits with every byte
+// url-encoded as %XX.
 // `openssl rand -hex 32`, the documented way to make one, is 64.
 const MaxAdminTokenBytes = 2 << 10
 

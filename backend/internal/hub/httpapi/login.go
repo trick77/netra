@@ -13,6 +13,8 @@ import (
 	kitauth "github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/secret"
+
+	"github.com/trick77/netra/internal/hub/config"
 )
 
 // templateFS carries the login page into the binary, the same way migrationFS
@@ -36,9 +38,10 @@ var loginCover []byte
 
 // maxLoginBodyBytes caps the login form. It holds one token field; without
 // this the unauthenticated POST would read up to the router's 4 MiB before the
-// token is even checked. config.Load bounds the admin token so that the
-// longest one fits even with every byte url-encoded as %XX.
-const maxLoginBodyBytes = 8 << 10
+// token is even checked. Derived from the admin token bound config.Load
+// enforces, so the longest token fits even with every byte url-encoded as %XX
+// (three bytes each) plus the field name: 8 KiB.
+const maxLoginBodyBytes = 4 * config.MaxAdminTokenBytes
 
 // loginHandler serves the no-JS login page and the session it mints.
 //
