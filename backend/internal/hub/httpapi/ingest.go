@@ -99,7 +99,7 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	r.Body = http.MaxBytesReader(innermost(w), r.Body, maxBodyBytes)
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxErr *http.MaxBytesError
