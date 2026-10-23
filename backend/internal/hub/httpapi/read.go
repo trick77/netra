@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -351,7 +350,6 @@ func writeReadError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, read.ErrInvalid):
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	default:
-		slog.Error("read request failed", "path", r.URL.Path, "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		httpx.ServerError(w, r, err, "internal error")
 	}
 }

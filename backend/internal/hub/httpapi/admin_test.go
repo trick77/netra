@@ -80,6 +80,40 @@ func TestIntegrationAdminCreateHostRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+// The body is read under a cap, so an admin session cannot be used to make the
+// hub buffer an arbitrarily large request.
+func TestIntegrationAdminCreateHostRejectsAnOversizedBody(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	body := `{"hostname":"` + strings.Repeat("a", 8<<10) + `"}`
+	resp := doAdmin(t, srv, http.MethodPost, "/api/v1/hosts", body)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+// A database failure is a 500 with a fixed phrase, on both halves of the API:
+// the driver's error names tables and columns, and it stays in the log.
+func TestIntegrationAdminDatabaseFailureIsABare500(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	if _, err := s.Pool().Exec(context.Background(), `ALTER TABLE hosts RENAME TO hosts_gone`); err != nil {
+		t.Fatalf("rename hosts: %v", err)
+	}
+
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/api/v1/hosts", `{"hostname":"web01"}`}, // admin
+		{http.MethodGet, "/api/v1/hosts", ""},                      // read
+	} {
+		resp := doAdmin(t, srv, tc.method, tc.path, tc.body)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("%s %s: status = %d, want 500", tc.method, tc.path, resp.StatusCode)
+		}
+		if body := readBody(t, resp); strings.Contains(body, "hosts") {
+			t.Errorf("%s %s: body leaks the database error: %s", tc.method, tc.path, body)
+		}
+	}
+}
+
 // A name already taken at that site is a 409 the operator can act on, not a
 // 500 that reads as "the hub is broken".
 func TestIntegrationAdminDuplicateHostnameIs409(t *testing.T) {

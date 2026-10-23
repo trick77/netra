@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/ship/kit/run"
+
 	"google.golang.org/protobuf/proto"
 
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
@@ -171,10 +173,8 @@ func (h *Hub) Ingest(ctx context.Context, token string, req *netrav1.IngestReque
 		if attempt > 0 {
 			wait := retryAfter(lastErr)
 			slog.Warn("ingest failed, retrying", "attempt", attempt, "in", wait.String(), "err", lastErr)
-			select {
-			case <-ctx.Done():
+			if !run.Sleep(ctx, wait) {
 				return nil, ctx.Err()
-			case <-time.After(wait):
 			}
 		}
 

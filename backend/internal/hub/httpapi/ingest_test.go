@@ -238,6 +238,20 @@ func TestIntegrationIngestRejectsWrongToken(t *testing.T) {
 	}
 }
 
+// A token lookup that fails is the hub's fault, not the agent's: a 500, never
+// a 401 that would read as a revoked token.
+func TestIntegrationIngestAuthenticateFailureIs500(t *testing.T) {
+	srv, token, s := newFixture(t)
+	if _, err := s.Pool().Exec(context.Background(), `ALTER TABLE tokens RENAME TO tokens_gone`); err != nil {
+		t.Fatalf("rename tokens: %v", err)
+	}
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{Seq: 1})
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
 func TestIntegrationIngestRejectsNonPost(t *testing.T) {
 	srv, token, _ := newFixture(t)
 

@@ -1,9 +1,7 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +11,10 @@ import (
 	"github.com/trick77/netra/internal/hub/admin"
 	"github.com/trick77/netra/internal/hub/read"
 )
+
+// maxAdminBodyBytes caps an admin JSON body. The largest is a hostname, which
+// DNS bounds at 253 bytes, so anything near this is not a request.
+const maxAdminBodyBytes = 4 << 10
 
 type adminHandler struct {
 	svc *admin.Service
@@ -68,8 +70,8 @@ func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Hostname string `json:"hostname"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "malformed JSON body")
+	if !httpx.DecodeJSONWith(w, r, &req, maxAdminBodyBytes,
+		httpx.DecodeOptions{BadRequest: "malformed JSON body"}) {
 		return
 	}
 
@@ -181,8 +183,7 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, admin.ErrConflict):
 		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
-		slog.Error("admin request failed", "path", r.URL.Path, "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		httpx.ServerError(w, r, err, "internal error")
 	}
 }
 
