@@ -22,7 +22,8 @@ import (
 )
 
 // maxBodyBytes caps a single ingest POST. A 60s batch of host samples is a
-// few hundred bytes; this is generous headroom that still bounds memory.
+// few hundred bytes; this is generous headroom that still bounds memory. It is
+// the largest body any route takes, so NewRouter bounds every request with it.
 const maxBodyBytes = 4 << 20
 
 // storageFailureRetryAfter is handed back to the agent on a 503 so it waits
@@ -99,7 +100,7 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(innermost(w), r.Body, maxBodyBytes)
+	// NewRouter's httpx.MaxBody bounds the read at maxBodyBytes.
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxErr *http.MaxBytesError

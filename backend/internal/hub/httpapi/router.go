@@ -89,6 +89,10 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	// (every open tab re-reads its page each minute), a failing one still logs.
 	// A probe never logs here: Health logs readiness changes itself. A refused
 	// one, from outside the container, logs as any 404.
+	//
+	// MaxBody bounds every body at the largest one a route takes (ingest), so
+	// no route, present or future, reads an unbounded one; routes that take
+	// less tighten it (admin JSON, the login form).
 	return httpx.Chain(mux,
 		httpx.AccessLog(slog.Default(), httpx.AccessLogOptions{
 			// Traefik is the one hop in front (compose.yaml publishes no port):
@@ -98,6 +102,7 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 		}),
 		httpx.Recover(slog.Default()),
 		httpx.CrossOrigin,
+		httpx.MaxBody(maxBodyBytes),
 	)
 }
 

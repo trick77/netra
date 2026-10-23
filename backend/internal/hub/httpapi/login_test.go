@@ -2,12 +2,16 @@ package httpapi_test
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/trick77/ship/kit/httpx"
+
+	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
 )
 
@@ -239,11 +243,15 @@ func TestLoginRejectsAnUnparseableForm(t *testing.T) {
 	}
 }
 
-// The login form is unauthenticated and internet-reachable: a body far over
-// a form's size gets the login page with a 413 and the connection closed,
-// before the token is looked at. A normal post keeps its connection.
-func TestIntegrationLoginRefusesAnOversizedFormAndClosesTheConnection(t *testing.T) {
-	srv, _ := newAdminFixture(t)
+// The login form is unauthenticated and internet-reachable: a body just over
+// the cap gets the login page with a 413 and the connection closed, before the
+// token is looked at. A normal post keeps its connection. AccessLog wraps the
+// writer as the router does, which is what hid net/http's own response from
+// the limit before.
+func TestLoginRefusesAnOversizedFormAndClosesTheConnection(t *testing.T) {
+	h := httpx.AccessLog(slog.New(slog.DiscardHandler), httpx.AccessLogOptions{})(httpapi.NewLoginHandler("token", nil))
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
 
 	normal := postFormUnauthenticated(t, srv, "/login", url.Values{"token": {"hunter2"}})
 	if normal.StatusCode != http.StatusUnauthorized {
@@ -253,7 +261,10 @@ func TestIntegrationLoginRefusesAnOversizedFormAndClosesTheConnection(t *testing
 		t.Error("a normal login post closed the connection")
 	}
 
-	resp := postFormUnauthenticated(t, srv, "/login", url.Values{"token": {strings.Repeat("a", 64<<10)}})
+	// Just over: net/http closes on its own when 256 KiB or more is left
+	// unread, so a bigger body would pass without the cap doing anything.
+	resp := postFormUnauthenticated(t, srv, "/login",
+		url.Values{"token": {strings.Repeat("a", httpapi.MaxLoginBodyBytesForTest)}})
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", resp.StatusCode)
 	}
@@ -262,6 +273,19 @@ func TestIntegrationLoginRefusesAnOversizedFormAndClosesTheConnection(t *testing
 	}
 	if !resp.Close {
 		t.Error("the connection stays open after an oversized form")
+	}
+}
+
+// The longest admin token config.Load accepts still signs in through the
+// form when every byte of it url-encodes to %XX.
+func TestLoginAcceptsTheLongestAdminTokenFullyEncoded(t *testing.T) {
+	token := strings.Repeat("/", config.MaxAdminTokenBytes)
+	srv := httptest.NewServer(httpapi.NewLoginHandler(token, nil))
+	t.Cleanup(srv.Close)
+
+	resp := postFormUnauthenticated(t, srv, "/login", url.Values{"token": {token}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
 	}
 }
 

@@ -35,8 +35,9 @@ var templateFS embed.FS
 var loginCover []byte
 
 // maxLoginBodyBytes caps the login form. It holds one token field; without
-// this the unauthenticated POST would read up to net/http's 10 MB form
-// default before the token is even checked.
+// this the unauthenticated POST would read up to the router's 4 MiB before the
+// token is even checked. config.Load bounds the admin token so that the
+// longest one fits even with every byte url-encoded as %XX.
 const maxLoginBodyBytes = 8 << 10
 
 // loginHandler serves the no-JS login page and the session it mints.
@@ -70,7 +71,7 @@ func NewLoginHandler(adminToken string, svc *kitauth.OIDC) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /login", http.HandlerFunc(h.form))
-	mux.Handle("POST /login", http.HandlerFunc(h.submit))
+	mux.Handle("POST /login", httpx.MaxBody(maxLoginBodyBytes)(http.HandlerFunc(h.submit)))
 	mux.Handle("POST /logout", http.HandlerFunc(h.logout))
 	mux.Handle("GET /auth/login", http.HandlerFunc(h.oidcStart))
 	mux.Handle("GET /auth/callback", http.HandlerFunc(h.oidcCallback))
@@ -117,9 +118,7 @@ func (h *loginHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Warn("login: oidc callback", "err", err)
-		h.render(w, r, http.StatusUnauthorized, map[string]any{
-			"Title": "Log in", "Error": "Sign-in did not complete.", "OIDC": true,
-		})
+		h.fail(w, r, http.StatusUnauthorized, "Sign-in did not complete.")
 		return
 	}
 
@@ -139,25 +138,19 @@ func (h *loginHandler) form(w http.ResponseWriter, r *http.Request) {
 // submit is the form post. The submitted value is never echoed back into the
 // response: a wrong token is often a right token for something else.
 func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(innermost(w), r.Body, maxLoginBodyBytes)
 	if err := r.ParseForm(); err != nil {
-		if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
-			h.render(w, r, http.StatusRequestEntityTooLarge, map[string]any{
-				"Title": "Log in", "Error": "The form is too large.", "OIDC": h.oidc != nil,
-			})
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			h.fail(w, r, http.StatusRequestEntityTooLarge, "The form is too large.")
 			return
 		}
-		h.render(w, r, http.StatusBadRequest, map[string]any{
-			"Title": "Log in", "Error": "Could not read the form.", "OIDC": h.oidc != nil,
-		})
+		h.fail(w, r, http.StatusBadRequest, "Could not read the form.")
 		return
 	}
 
 	submitted := r.PostFormValue("token")
 	if !secret.Match(submitted, h.adminToken) {
-		h.render(w, r, http.StatusUnauthorized, map[string]any{
-			"Title": "Log in", "Error": "That is not the admin token.", "OIDC": h.oidc != nil,
-		})
+		h.fail(w, r, http.StatusUnauthorized, "That is not the admin token.")
 		return
 	}
 
@@ -172,6 +165,11 @@ func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 func (h *loginHandler) logout(w http.ResponseWriter, r *http.Request) {
 	h.sessions.Clear(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// fail renders the login page again with msg.
+func (h *loginHandler) fail(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	h.render(w, r, status, map[string]any{"Title": "Log in", "Error": msg, "OIDC": h.oidc != nil})
 }
 
 // The template is executed into a buffer before anything is written.
