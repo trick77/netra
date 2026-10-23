@@ -3,12 +3,14 @@ package httpapi
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"time"
 
 	kitauth "github.com/trick77/ship/kit/auth"
+	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/secret"
 )
 
@@ -109,7 +111,7 @@ func (h *loginHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Warn("login: oidc callback", "err", err)
-		h.render(w, http.StatusUnauthorized, map[string]any{
+		h.render(w, r, http.StatusUnauthorized, map[string]any{
 			"Title": "Log in", "Error": "Sign-in did not complete.", "OIDC": true,
 		})
 		return
@@ -125,14 +127,14 @@ func (h *loginHandler) form(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	h.render(w, http.StatusOK, map[string]any{"Title": "Log in", "OIDC": h.oidc != nil})
+	h.render(w, r, http.StatusOK, map[string]any{"Title": "Log in", "OIDC": h.oidc != nil})
 }
 
 // submit is the form post. The submitted value is never echoed back into the
 // response: a wrong token is often a right token for something else.
 func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.render(w, http.StatusBadRequest, map[string]any{
+		h.render(w, r, http.StatusBadRequest, map[string]any{
 			"Title": "Log in", "Error": "Could not read the form.", "OIDC": h.oidc != nil,
 		})
 		return
@@ -140,7 +142,7 @@ func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 
 	submitted := r.PostFormValue("token")
 	if !secret.Match(submitted, h.adminToken) {
-		h.render(w, http.StatusUnauthorized, map[string]any{
+		h.render(w, r, http.StatusUnauthorized, map[string]any{
 			"Title": "Log in", "Error": "That is not the admin token.", "OIDC": h.oidc != nil,
 		})
 		return
@@ -148,10 +150,7 @@ func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 
 	// Minted by the token, not by a person.
 	if err := h.sessions.Issue(w, kitauth.Claims{Subject: adminTokenSubject}); err != nil {
-		slog.Error("login: issue session", "err", err)
-		h.render(w, http.StatusInternalServerError, map[string]any{
-			"Title": "Log in", "Error": "Could not sign in.", "OIDC": h.oidc != nil,
-		})
+		httpx.ServerError(w, r, fmt.Errorf("login: issue session: %w", err), "could not sign in")
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -166,13 +165,10 @@ func (h *loginHandler) logout(w http.ResponseWriter, r *http.Request) {
 // Executing straight to the ResponseWriter commits the status line on the
 // first byte, so a template that fails halfway leaves a truncated page that
 // cannot be corrected.
-func (h *loginHandler) render(w http.ResponseWriter, status int, data map[string]any) {
+func (h *loginHandler) render(w http.ResponseWriter, r *http.Request, status int, data map[string]any) {
 	var buf bytes.Buffer
 	if err := h.login.ExecuteTemplate(&buf, "layout", data); err != nil {
-		slog.Error("login: render", "err", err)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		http.Error(w, "the page could not be rendered", http.StatusInternalServerError)
+		httpx.ServerError(w, r, fmt.Errorf("login: render: %w", err), "the page could not be rendered")
 		return
 	}
 
@@ -180,6 +176,6 @@ func (h *loginHandler) render(w http.ResponseWriter, status int, data map[string
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if _, err := buf.WriteTo(w); err != nil {
-		slog.Error("login: write response", "err", err)
+		slog.ErrorContext(r.Context(), "login: write response", "err", err)
 	}
 }
