@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -94,8 +95,7 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("authenticate", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		httpx.ServerError(w, r, fmt.Errorf("authenticate: %w", err), "internal error")
 		return
 	}
 
@@ -117,7 +117,7 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storedHash, rejected := h.rejectOldAgent(ctx, w, hostID, &req)
+	storedHash, rejected := h.rejectOldAgent(w, r, hostID, &req)
 	if rejected {
 		return
 	}
@@ -126,15 +126,15 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Informational: TimescaleDB invalidates continuous aggregates
 		// automatically on INSERT into an older chunk, so no action is
 		// needed here beyond making replay observable.
-		slog.Debug("ingesting backfilled batch", "host_id", hostID, "seq", req.GetSeq())
+		slog.DebugContext(ctx, "ingesting backfilled batch", "host_id", hostID, "seq", req.GetSeq())
 	}
 
 	samples, dropped := filterByTs(req.GetHostSamples(), time.Now().Add(maxPlausibleFuture))
 	logDropped(hostID, "host sample", dropped)
 
 	if _, err := h.store.InsertHostSamples(ctx, hostID, samples); err != nil {
-		slog.Error("insert host samples", "host_id", hostID, "err", err)
-		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+		slog.ErrorContext(ctx, "insert host samples", "host_id", hostID, "err", err)
+		writeProtoStatus(w, r, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
@@ -177,13 +177,13 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		nets, _ := filterByTs(req.GetNet(), time.Now().Add(maxPlausibleFuture))
 		rx, tx := latestNetTotals(nets)
 		if err := h.store.UpsertHostCurrent(ctx, hostID, s, rx, tx); err != nil {
-			slog.Error("upsert host_current", "host_id", hostID, "err", err)
+			slog.ErrorContext(ctx, "upsert host_current", "host_id", hostID, "err", err)
 		}
 	}
 
 	if err := h.storeFamilies(ctx, hostID, &req); err != nil {
-		slog.Error("insert per-entity families", "host_id", hostID, "err", err)
-		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+		slog.ErrorContext(ctx, "insert per-entity families", "host_id", hostID, "err", err)
+		writeProtoStatus(w, r, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
@@ -196,8 +196,8 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// agent-health problems they exist to expose. Asking for a retry is cheap
 	// because host_samples dedupes the replay.
 	if _, err := h.store.InsertAgentSamples(ctx, hostID, samples); err != nil {
-		slog.Error("insert agent samples", "host_id", hostID, "err", err)
-		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+		slog.ErrorContext(ctx, "insert agent samples", "host_id", hostID, "err", err)
+		writeProtoStatus(w, r, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
@@ -206,8 +206,8 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Same treatment, same reasoning: primary rows on the host samples' own
 	// natural key, deduped on replay, so a retry costs one repeated POST.
 	if _, err := h.store.InsertHostSnmpSamples(ctx, hostID, samples); err != nil {
-		slog.Error("insert host snmp samples", "host_id", hostID, "err", err)
-		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+		slog.ErrorContext(ctx, "insert host snmp samples", "host_id", hostID, "err", err)
+		writeProtoStatus(w, r, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
@@ -215,8 +215,8 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// And the third host-level table, on the same terms.
 	if _, err := h.store.InsertHostProtoSamples(ctx, hostID, samples); err != nil {
-		slog.Error("insert host proto samples", "host_id", hostID, "err", err)
-		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+		slog.ErrorContext(ctx, "insert host proto samples", "host_id", hostID, "err", err)
+		writeProtoStatus(w, r, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
@@ -224,14 +224,14 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	requestMetadata, err := h.reconcileMetadata(ctx, hostID, &req, storedHash)
 	if err != nil {
-		slog.Error("reconcile metadata", "host_id", hostID, "err", err)
-		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+		slog.ErrorContext(ctx, "reconcile metadata", "host_id", hostID, "err", err)
+		writeProtoStatus(w, r, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
 	}
 
-	writeProto(w, &netrav1.IngestResponse{
+	writeProto(w, r, &netrav1.IngestResponse{
 		AckSeq:          req.GetSeq(),
 		RequestMetadata: requestMetadata,
 	})
@@ -276,11 +276,12 @@ func plausibleTs(tsMs int64, future time.Time) bool {
 // gets one batch in before the handshake reveals its version. That is inherent
 // to a protocol where the version rides the handshake, and one batch of
 // slightly misclassified rows is the cheaper side of the trade.
-func (h *IngestHandler) rejectOldAgent(ctx context.Context, w http.ResponseWriter, hostID int32, req *netrav1.IngestRequest) ([]byte, bool) {
+func (h *IngestHandler) rejectOldAgent(w http.ResponseWriter, r *http.Request, hostID int32, req *netrav1.IngestRequest) ([]byte, bool) {
+	ctx := r.Context()
 	storedHash, storedVersion, err := h.store.IngestIdentity(ctx, hostID)
 	if err != nil {
-		slog.Error("read ingest identity", "host_id", hostID, "err", err)
-		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+		slog.ErrorContext(ctx, "read ingest identity", "host_id", hostID, "err", err)
+		writeProtoStatus(w, r, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return nil, true
@@ -308,13 +309,13 @@ func (h *IngestHandler) rejectOldAgent(ctx context.Context, w http.ResponseWrite
 	// means the next hash-only POST is judged on this version directly.
 	if fromBlock {
 		if err := h.store.SaveMetadata(ctx, hostID, req.GetMetadataHash(), req.GetMetadata()); err != nil {
-			slog.Error("save metadata for rejected agent", "host_id", hostID, "err", err)
+			slog.ErrorContext(ctx, "save metadata for rejected agent", "host_id", hostID, "err", err)
 		}
 	}
 
-	slog.Warn("refusing ingest from an agent below the minimum version",
+	slog.WarnContext(ctx, "refusing ingest from an agent below the minimum version",
 		"host_id", hostID, "agent_version", reported, "min_agent_version", agentversion.MinAgent)
-	writeProtoStatus(w, http.StatusUpgradeRequired, &netrav1.IngestResponse{
+	writeProtoStatus(w, r, http.StatusUpgradeRequired, &netrav1.IngestResponse{
 		RetryAfterS: uint32(upgradeRequiredRetryAfter.Seconds()),
 	})
 	return storedHash, true
@@ -403,18 +404,17 @@ func latest(samples []*netrav1.HostSample) *netrav1.HostSample {
 	return out
 }
 
-func writeProto(w http.ResponseWriter, m proto.Message) {
-	writeProtoStatus(w, http.StatusOK, m)
+func writeProto(w http.ResponseWriter, r *http.Request, m proto.Message) {
+	writeProtoStatus(w, r, http.StatusOK, m)
 }
 
 // writeProtoStatus writes m as the protobuf body of a non-200 response, so
 // fields like retry_after_s reach the agent even on a failure status. Plain
 // http.Error would discard them.
-func writeProtoStatus(w http.ResponseWriter, status int, m proto.Message) {
+func writeProtoStatus(w http.ResponseWriter, r *http.Request, status int, m proto.Message) {
 	raw, err := proto.Marshal(m)
 	if err != nil {
-		slog.Error("marshal response", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal error")
+		httpx.ServerError(w, r, fmt.Errorf("marshal response: %w", err), "internal error")
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-protobuf")

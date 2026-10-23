@@ -219,6 +219,26 @@ func TestLoginCoverIsServedWithoutASession(t *testing.T) {
 	}
 }
 
+// A body that does not parse as a form is the caller's fault: the login page
+// again with a 400, not a 500.
+func TestLoginRejectsAnUnparseableForm(t *testing.T) {
+	srv := httptest.NewServer(httpapi.NewLoginHandler("token", nil))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Post(srv.URL+"/login", "application/x-www-form-urlencoded", strings.NewReader("token=%zz"))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Errorf("content type = %q, want the login page", got)
+	}
+}
+
 // A form on a sibling subdomain must not log the admin out, or log a browser
 // in with the attacker's token.
 func TestIntegrationLoginAndLogoutRefuseCrossOriginPosts(t *testing.T) {

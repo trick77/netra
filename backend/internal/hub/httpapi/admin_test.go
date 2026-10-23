@@ -1,11 +1,17 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/trick77/ship/kit/httpx"
+	"github.com/trick77/ship/kit/logging"
 
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/httpapi"
@@ -78,6 +84,100 @@ func TestIntegrationAdminCreateHostRejectsMalformedJSON(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
+}
+
+// The body is read under a cap, so an admin session cannot be used to make the
+// hub buffer an arbitrarily large request.
+func TestIntegrationAdminCreateHostRejectsAnOversizedBody(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	body := `{"hostname":"` + strings.Repeat("a", 8<<10) + `"}`
+	resp := doAdmin(t, srv, http.MethodPost, "/api/v1/hosts", body)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+// A database failure is a 500 with a fixed phrase, on both halves of the API:
+// the driver's error names tables and columns, and it stays in the log.
+func TestIntegrationAdminDatabaseFailureIsABare500(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	if _, err := s.Pool().Exec(context.Background(), `ALTER TABLE hosts RENAME TO hosts_gone`); err != nil {
+		t.Fatalf("rename hosts: %v", err)
+	}
+
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/api/v1/hosts", `{"hostname":"web01"}`}, // admin
+		{http.MethodGet, "/api/v1/hosts", ""},                      // read
+	} {
+		resp := doAdmin(t, srv, tc.method, tc.path, tc.body)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("%s %s: status = %d, want 500", tc.method, tc.path, resp.StatusCode)
+		}
+		if body := readBody(t, resp); strings.Contains(body, "hosts") {
+			t.Errorf("%s %s: body leaks the database error: %s", tc.method, tc.path, body)
+		}
+	}
+}
+
+// The 500's log line carries the request id the response echoes, which is
+// what joins it to the access line for the same request.
+func TestIntegrationAdmin500LogLineCarriesTheRequestID(t *testing.T) {
+	// Given a captured default logger, installed before the router is built
+	var logs syncBuffer
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	if _, err := logging.Setup(logging.Options{Level: "debug", Writer: &logs}); err != nil {
+		t.Fatalf("logging.Setup: %v", err)
+	}
+	srv, s := newAdminFixture(t)
+	if _, err := s.Pool().Exec(context.Background(), `ALTER TABLE hosts RENAME TO hosts_gone`); err != nil {
+		t.Fatalf("rename hosts: %v", err)
+	}
+
+	// When a request fails on the database
+	resp := doAdmin(t, srv, http.MethodGet, "/api/v1/hosts", "")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+
+	// Then the "request failed" line names the response's request id
+	id := resp.Header.Get(httpx.RequestIDHeader)
+	if id == "" {
+		t.Fatalf("response has no %s header", httpx.RequestIDHeader)
+	}
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, `msg="request failed"`) {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("no request failed line in:\n%s", logs.String())
+	}
+	if !strings.Contains(line, "request_id="+id) {
+		t.Errorf("request failed line lacks request_id=%s: %s", id, line)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe to read while the server goroutine is
+// still writing the access line.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // A name already taken at that site is a 409 the operator can act on, not a

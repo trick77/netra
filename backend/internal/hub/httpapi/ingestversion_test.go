@@ -224,3 +224,23 @@ func TestIntegrationIngestAcceptsTheMinimumAndTheUnparsable(t *testing.T) {
 		})
 	}
 }
+
+// A refused agent whose metadata cannot be saved is still refused: the save is
+// diagnostics, the refusal is the gate.
+func TestIntegrationIngestRefusesAnOldAgentEvenWhenItsMetadataCannotBeSaved(t *testing.T) {
+	srv, token, s := newFixture(t)
+	breakUpdatesTransiently(t, s, "hosts")
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq:          1,
+		HostSamples:  aSample(),
+		MetadataHash: []byte("12345678"),
+		Metadata:     &netrav1.Metadata{Hostname: "h1", AgentVersion: tooOld},
+	})
+	if resp.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("status = %d, want 426", resp.StatusCode)
+	}
+	if n := countHostSamples(t, s); n != 0 {
+		t.Errorf("host_samples rows = %d, want 0", n)
+	}
+}

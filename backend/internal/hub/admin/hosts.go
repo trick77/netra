@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trick77/ship/kit/run"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -321,10 +323,8 @@ func retryOnDeadlock(ctx context.Context, fn func() error) error {
 		slog.Warn("retrying a statement Postgres deadlocked",
 			"attempt", attempt+1, "of", deleteAttempts, "err", err)
 
-		select {
-		case <-ctx.Done():
+		if !run.Sleep(ctx, deleteRetryBackoff) {
 			return ctx.Err()
-		case <-time.After(deleteRetryBackoff):
 		}
 	}
 

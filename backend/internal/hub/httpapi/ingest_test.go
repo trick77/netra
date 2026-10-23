@@ -16,6 +16,7 @@ import (
 	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/store"
+	"github.com/trick77/netra/internal/shared/agentversion"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
@@ -235,6 +236,20 @@ func TestIntegrationIngestRejectsWrongToken(t *testing.T) {
 	}
 	if string(body) != string(missingBody) {
 		t.Fatalf("wrong-token body %q differs from missing-token body %q", body, missingBody)
+	}
+}
+
+// A token lookup that fails is the hub's fault, not the agent's: a 500, never
+// a 401 that would read as a revoked token.
+func TestIntegrationIngestAuthenticateFailureIs500(t *testing.T) {
+	srv, token, s := newFixture(t)
+	if _, err := s.Pool().Exec(context.Background(), `ALTER TABLE tokens RENAME TO tokens_gone`); err != nil {
+		t.Fatalf("rename tokens: %v", err)
+	}
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{Seq: 1})
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
 	}
 }
 
@@ -1057,5 +1072,96 @@ func TestIntegrationIngestStoresInterfaceInventory(t *testing.T) {
 	}
 	if physical == nil || *physical {
 		t.Errorf("bond0 physical = %v, want false", physical)
+	}
+}
+
+// Every host-level table answers a transient failure the same way: 503 with
+// retry_after_s, so the agent re-sends a batch the hub dedupes on replay.
+func TestIntegrationIngestHostLevelTableFailureReturns503(t *testing.T) {
+	for _, table := range []string{"host_samples", "host_snmp_samples", "host_proto_samples"} {
+		t.Run(table, func(t *testing.T) {
+			srv, token, s := newFixture(t)
+			breakTableTransiently(t, s, table)
+
+			resp := post(t, srv, token, &netrav1.IngestRequest{
+				Seq: 1,
+				HostSamples: []*netrav1.HostSample{{
+					TsMs:             1_700_000_000_000,
+					CpuTotal:         proto.Float64(33),
+					IpInReceivesPerS: proto.Float64(1016),
+					TcpInSegsPerS:    proto.Float64(4200),
+				}},
+			})
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", resp.StatusCode)
+			}
+			var out netrav1.IngestResponse
+			decodeBody(t, resp, &out)
+			if out.RetryAfterS == 0 {
+				t.Fatal("RetryAfterS = 0, want non-zero on a storage-failure 503")
+			}
+		})
+	}
+}
+
+// A metadata block that cannot be saved is a 503 too: acking the batch would
+// leave the hub without the metadata it asked for.
+func TestIntegrationIngestMetadataSaveFailureReturns503(t *testing.T) {
+	srv, token, s := newFixture(t)
+	breakUpdatesTransiently(t, s, "hosts")
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq:          1,
+		HostSamples:  []*netrav1.HostSample{{TsMs: 1_700_000_000_000, CpuTotal: proto.Float64(33)}},
+		MetadataHash: []byte("12345678"),
+		Metadata:     &netrav1.Metadata{Hostname: "h1", AgentVersion: agentversion.MinAgent},
+	})
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+// A backfilled batch is stored like any other; the flag only makes the replay
+// visible in the log.
+func TestIntegrationIngestStoresABackfilledBatch(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq:         1,
+		Backfill:    true,
+		HostSamples: []*netrav1.HostSample{{TsMs: 1_700_000_000_000, CpuTotal: proto.Float64(33)}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var n int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM host_samples`).Scan(&n); err != nil {
+		t.Fatalf("count host_samples: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("host_samples rows = %d, want 1", n)
+	}
+}
+
+// breakUpdatesTransiently is breakTableTransiently for UPDATEs, for the
+// hosts row SaveMetadata rewrites.
+func breakUpdatesTransiently(t *testing.T, s *store.Store, table string) {
+	t.Helper()
+	ctx := context.Background()
+
+	fn := table + "_reject_update"
+	if _, err := s.Pool().Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger AS $$
+		BEGIN
+			RAISE EXCEPTION 'simulated transient storage failure' USING ERRCODE = '53100';
+		END;
+		$$ LANGUAGE plpgsql`, fn)); err != nil {
+		t.Fatalf("create %s: %v", fn, err)
+	}
+	if _, err := s.Pool().Exec(ctx, fmt.Sprintf(
+		`CREATE TRIGGER %s BEFORE UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION %s()`,
+		fn, table, fn)); err != nil {
+		t.Fatalf("break %s: %v", table, err)
 	}
 }
