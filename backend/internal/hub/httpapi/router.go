@@ -90,9 +90,11 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	// A probe never logs here: Health logs readiness changes itself. A refused
 	// one, from outside the container, logs as any 404.
 	//
-	// MaxBody bounds every body at the largest one a route takes (ingest), so
-	// no route, present or future, reads an unbounded one; routes that take
-	// less tighten it (admin JSON, the login form).
+	// MaxBody bounds body reads at the largest body a route takes (ingest), so
+	// no handler, present or future, reads an unbounded one; routes that take
+	// less tighten it (admin JSON, the login form, ingest itself). It does not
+	// touch a route that never reads r.Body: net/http's own drain-or-close on
+	// the unread rest applies there as before.
 	return httpx.Chain(mux,
 		httpx.AccessLog(slog.Default(), httpx.AccessLogOptions{
 			// Traefik is the one hop in front (compose.yaml publishes no port):
