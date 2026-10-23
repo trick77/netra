@@ -5,12 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
-
-	"github.com/trick77/ship/kit/secret"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,7 +75,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, bearer string) (int32,
 
 	// The lookup already matched on equality; the constant-time compare guards
 	// against a future change that widens the query.
-	if !secret.Match(string(want), string(stored)) {
+	if subtle.ConstantTimeCompare(stored, want) != 1 {
 		return 0, ErrUnauthorized
 	}
 
