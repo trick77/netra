@@ -82,6 +82,20 @@ describe("LoginPage", () => {
     expect(screen.getByLabelText("Admin token")).toHaveValue("");
   });
 
+  it("reports an over-long value as too long, not as a hub failure", async () => {
+    fetchMock.mockResolvedValue(new Response("<html>", { status: 413 }));
+    const onSuccess = vi.fn();
+    render(<LoginPage onSuccess={onSuccess} />);
+
+    await submit("far-too-long");
+
+    expect(
+      await screen.findByText("That value is too long to be the admin token."),
+    ).toBeInTheDocument();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Admin token")).toHaveValue("");
+  });
+
   it("reports a transport failure separately from a rejection", async () => {
     fetchMock.mockRejectedValue(new TypeError("network"));
     render(<LoginPage />);

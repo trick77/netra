@@ -9,6 +9,13 @@ import (
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
+// The body limits, so the over-limit tests size their bodies from them and
+// stay over the limit when one is lowered.
+const (
+	MaxBodyBytesForTest      = maxBodyBytes
+	MaxLoginBodyBytesForTest = maxLoginBodyBytes
+)
+
 // NewSessionCookieForTest mints the cookie a sign-in would: user "" is a
 // session from the admin token, anything else a person's from the provider.
 func NewSessionCookieForTest(adminToken, user string) *http.Cookie {

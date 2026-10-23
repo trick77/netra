@@ -590,37 +590,62 @@ func TestIntegrationIngestHostCurrentFailureIsLoggedNotFatal(t *testing.T) {
 // silent partial accept: io.ReadAll(io.LimitReader(...)) would truncate an
 // over-limit body at whatever byte the limit lands on, which can still parse
 // as a valid (short) batch — the hub would then ack a seq the agent never
-// fully got stored, permanently losing the truncated samples. MaxBytesReader
-// must instead fail the read outright.
+// fully got stored, permanently losing the truncated samples. The read must
+// instead fail outright, and the 413 must close the connection rather than
+// drain the rest of the body to keep it. Both through the real router, where
+// AccessLog wraps the writer, and on the bare handler: the handler carries its
+// own bound, so ingest stays capped wherever it is mounted.
 func TestIntegrationIngestRejectsOversizedBody(t *testing.T) {
-	srv, token, s := newFixture(t)
-
-	oversized := bytes.Repeat([]byte{0x0a}, 5<<20) // 5 MiB > 4 MiB maxBodyBytes
-
-	httpReq, err := http.NewRequest(http.MethodPost, srv.URL, bytes.NewReader(oversized))
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) (url, token string, s *store.Store)
+	}{
+		{"router", func(t *testing.T) (string, string, *store.Store) {
+			srv, s := newAdminFixture(t)
+			return srv.URL + "/api/agent/v1/ingest", newHostWithToken(t, s, "h1"), s
+		}},
+		{"bare handler", func(t *testing.T) (string, string, *store.Store) {
+			srv, token, s := newFixture(t)
+			return srv.URL, token, s
+		}},
 	}
-	httpReq.Header.Set("Content-Type", "application/x-protobuf")
-	httpReq.Header.Set("Authorization", "Bearer "+token)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url, token, s := tt.setup(t)
 
-	resp, err := srv.Client().Do(httpReq)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
+			// Just over the limit: net/http closes on its own when 256 KiB or
+			// more is left unread, and drains a smaller rest to reuse the
+			// connection.
+			oversized := bytes.Repeat([]byte{0x0a}, httpapi.MaxBodyBytesForTest+64<<10)
+			httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(oversized))
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			httpReq.Header.Set("Content-Type", "application/x-protobuf")
+			httpReq.Header.Set("Authorization", "Bearer "+token)
 
-	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413", resp.StatusCode)
-	}
+			resp, err := http.DefaultClient.Do(httpReq)
+			if err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			t.Cleanup(func() { _ = resp.Body.Close() })
 
-	var count int
-	if err := s.Pool().QueryRow(context.Background(),
-		`SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("stored rows = %d, want 0 — an oversized body must not be silently truncated and partially accepted", count)
+			if resp.StatusCode != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413", resp.StatusCode)
+			}
+			if !resp.Close {
+				t.Error("the connection stays open after an over-limit body")
+			}
+
+			var count int
+			if err := s.Pool().QueryRow(context.Background(),
+				`SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
+				t.Fatalf("query: %v", err)
+			}
+			if count != 0 {
+				t.Fatalf("stored rows = %d, want 0 — an oversized body must not be silently truncated and partially accepted", count)
+			}
+		})
 	}
 }
 

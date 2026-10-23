@@ -50,15 +50,18 @@ export function LoginPage({ onSuccess }: LoginPageProps) {
         return;
       }
 
-      // The 401 body is the server-rendered login page. Rendering hub HTML
-      // inside the SPA would be both wrong and a needless injection surface,
-      // so the status alone decides the message -- and the submitted value is
-      // never echoed back, matching loginSubmit's reasoning.
+      // The 401 and 413 bodies are the server-rendered login page. Rendering
+      // hub HTML inside the SPA would be both wrong and a needless injection
+      // surface, so the status alone decides the message -- and the submitted
+      // value is never echoed back, matching loginSubmit's reasoning. A 413
+      // is a value longer than any admin token the hub accepts.
       setToken("");
       setError(
         res.status === 401
           ? "That is not the admin token."
-          : "The hub could not process the login. Try again.",
+          : res.status === 413
+            ? "That value is too long to be the admin token."
+            : "The hub could not process the login. Try again.",
       );
     } catch {
       // fetch only rejects on transport failure, which is a different problem

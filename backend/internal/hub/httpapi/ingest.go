@@ -22,7 +22,9 @@ import (
 )
 
 // maxBodyBytes caps a single ingest POST. A 60s batch of host samples is a
-// few hundred bytes; this is generous headroom that still bounds memory.
+// few hundred bytes; this is generous headroom that still bounds memory. The
+// agent and netra-sim size their batches against exactly this. It is also the
+// largest body any route takes, so NewRouter bounds every body read with it.
 const maxBodyBytes = 4 << 20
 
 // storageFailureRetryAfter is handed back to the agent on a 503 so it waits
@@ -76,8 +78,11 @@ type IngestHandler struct {
 // accepted as normal: replaying the ring buffer after an outage flushes
 // batches back to back (IngestRequest.backfill), and an agent restart can
 // land a second sample inside the same minute, once.
-func NewIngestHandler(a *auth.Authenticator, s *store.Store) *IngestHandler {
-	return &IngestHandler{auth: a, store: s}
+//
+// The handler bounds its own body at maxBodyBytes, wherever it is mounted, so
+// a raised router cap does not raise ingest's.
+func NewIngestHandler(a *auth.Authenticator, s *store.Store) http.Handler {
+	return httpx.MaxBody(maxBodyBytes)(&IngestHandler{auth: a, store: s})
 }
 
 func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +104,7 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	// NewIngestHandler's httpx.MaxBody bounds the read at maxBodyBytes.
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxErr *http.MaxBytesError
