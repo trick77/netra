@@ -39,6 +39,23 @@ func TestLoadRequiresAdminToken(t *testing.T) {
 	}
 }
 
+// The login form caps its body, so a token past the bound could never sign in
+// through it: refused at start, the bound itself accepted.
+func TestLoadBoundsAdminTokenLength(t *testing.T) {
+	t.Setenv("BACKEND_DB_DSN", "postgres://localhost/netra")
+
+	t.Setenv("BACKEND_ADMIN_TOKEN", strings.Repeat("a", MaxAdminTokenBytes))
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() with a %d-byte token: %v", MaxAdminTokenBytes, err)
+	}
+
+	t.Setenv("BACKEND_ADMIN_TOKEN", strings.Repeat("a", MaxAdminTokenBytes+1))
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "BACKEND_ADMIN_TOKEN") {
+		t.Fatalf("Load() with a %d-byte token: err = %v, want one naming BACKEND_ADMIN_TOKEN", MaxAdminTokenBytes+1, err)
+	}
+}
+
 func TestLoadOIDCDisabledByDefault(t *testing.T) {
 	t.Setenv("BACKEND_DB_DSN", "postgres://x")
 	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")

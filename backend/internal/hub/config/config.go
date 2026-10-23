@@ -59,6 +59,11 @@ type OIDCConfig struct {
 // Load rejects, not a silent fallback to token-only login.
 func (c OIDCConfig) Enabled() bool { return c.Issuer != "" }
 
+// MaxAdminTokenBytes bounds BACKEND_ADMIN_TOKEN. The login form caps its body
+// at 8 KiB; a token this long still fits with every byte url-encoded as %XX.
+// `openssl rand -hex 32`, the documented way to make one, is 64.
+const MaxAdminTokenBytes = 2 << 10
+
 // Load reads the environment and applies defaults. It fails rather than
 // starting with no database or an unauthenticated admin API, and reports every
 // fault at once rather than one per restart.
@@ -83,6 +88,11 @@ func Load() (Config, error) {
 			ClientID:     r.String("BACKEND_OIDC_CLIENT_ID", ""),
 			ClientSecret: r.String("BACKEND_OIDC_CLIENT_SECRET", ""),
 		},
+	}
+
+	// Longer would start a hub whose login form answers every attempt 413.
+	if len(cfg.AdminToken) > MaxAdminTokenBytes {
+		r.Fail("BACKEND_ADMIN_TOKEN is longer than %d bytes", MaxAdminTokenBytes)
 	}
 
 	if cfg.OIDC.Enabled() {

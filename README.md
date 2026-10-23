@@ -40,7 +40,7 @@ Fill in the three values in `.env`:
 | Variable | How |
 | --- | --- |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
-| `BACKEND_ADMIN_TOKEN` | `openssl rand -hex 32` |
+| `BACKEND_ADMIN_TOKEN` | `openssl rand -hex 32` (at most 2048 bytes: the login form caps its body) |
 | `BACKEND_HOSTNAME` | the name Traefik routes to, and the address agents post to — `BACKEND_HUB_URL` is derived from it |
 
 All three ship empty and all three are required: `docker compose up` refuses to
