@@ -125,7 +125,7 @@ services:
     # service container, which starts from an empty volume every run, and
     # wrong here: an unattended `docker compose pull` would move the operator's
     # database out from under their data directory. Bump this on purpose.
-    image: timescale/timescaledb:2.30.2-pg17
+    image: timescale/timescaledb:2.31.0-pg17
     restart: unless-stopped
 
     # Internal network only — never on `traefik`. Nothing outside this compose
