@@ -858,75 +858,18 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 	return execBatch(ctx, s.pool, batch, "container sample")
 }
 
-// markerPrefix is where setup-agent.sh bind-mounts the .netra marker files
-// inside the agent container. It is the path the agent MEASURES through, never
-// a name a host answers to, and it must not reach this table: an operator with
-// no netra anywhere on the box was shown "/netra/fs/ark is 94 % full".
-//
-// The same string is markerPrefix in internal/agent/collector/filesystems.go,
-// where the agent stopped sending it. Restated rather than shared: the hub
-// cannot import agent internals, and a package for one constant would couple
-// two binaries that otherwise only meet over the wire.
-//
-// This is the LAST defence rather than a redundant one. A one-time repair
-// migration used to strip the prefix from rows already carrying it; that is
-// gone, because the schema was squashed and the database recreated, so no such
-// row survives. What does survive is the agent that has not been upgraded yet
-// -- the half an operator upgrades LAST -- and it re-sends the prefixed label
-// on every scrape. Ingest is the only thing standing between that and a fleet
-// page warning about "/netra/fs/ark is 94 % full" on a host with no netra
-// anywhere on it.
-const markerPrefix = "/netra/fs/"
-
-// hostSideLabel is the label a host answers to, given what the agent sent.
-//
-// Anchored with TrimPrefix rather than sliced by length: /netra/fs/ is ten
-// characters, and an off-by-one turns `ark` into `rk`, which is wrong in a way
-// that still looks like a plausible filesystem name on the page.
-func hostSideLabel(label string) string {
-	return strings.TrimPrefix(label, markerPrefix)
-}
-
-// hostSideMountpoint is the mount point, or nothing if the agent only knew its
-// own bind target.
-//
-// Dropped rather than stripped, which is where this differs from the label
-// above. Stripping would turn /netra/fs/ark into `ark`, and a bare label does
-// beat a container path -- but `ark` is a LABEL, and a mount point is the path
-// an operator would type into df. An agent that sends only the bind target does
-// not know that path, and saying so lets the COALESCE below keep whichever real
-// one the hub already has -- from an earlier agent, or from the .env of the one
-// that follows.
-func hostSideMountpoint(mountpoint string) string {
-	if strings.HasPrefix(mountpoint, markerPrefix) {
-		return ""
-	}
-	return mountpoint
-}
-
 // resolveFilesystemIDs upserts the filesystems named in rows and returns
-// label -> id, keyed on the label AS SENT so InsertFilesystemSamples looks its
-// rows up unchanged: what is normalised is what gets stored, not what the
-// caller passes back in.
+// label -> id. The agent strips its container-side marker prefix before
+// sending (agent/collector/filesystems.go), so labels arrive as the host names
+// them.
 func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*netrav1.FilesystemSample) (map[string]int32, error) {
 	out := make(map[string]int32)
 	if len(rows) == 0 {
 		return out, nil
 	}
 
-	// One upsert per FILESYSTEM, not per label the batch happens to spell.
-	//
-	// Two spellings can arrive together: a replayed ring buffer written either
-	// side of an agent upgrade carries both /netra/fs/ark and ark, and both
-	// name one disk. Resolving as the rows come would let whichever appeared
-	// first decide the mount point, so the marker path -- the one spelling
-	// that knows no host path at all -- could silently outrank /mnt/ark on
-	// batch order. Deciding what to store before storing it removes the
-	// ordering question rather than answering it.
-	//
-	// filesystem_samples is PRIMARY KEY (host_id, ts, fs_id), so the two
-	// spellings landing on one fs_id dedupe there exactly as a replayed batch
-	// already does.
+	// One upsert per filesystem, not per row: a batch carries each label once
+	// per sample, and what to store is decided before storing it.
 	type upsert struct {
 		mountpoint string
 		deviceID   *int64
@@ -935,12 +878,9 @@ func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*
 	want := make(map[string]*upsert, len(rows))
 
 	for _, r := range rows {
-		sent := r.GetLabel()
-		// The nameless are skipped AFTER normalising, not before: a bare
-		// "/netra/fs/" strips to nothing, and inserting that would put a
-		// filesystem with no name at all in the table -- a row the page can
-		// only render as blank, carrying samples nothing can attribute.
-		label := hostSideLabel(sent)
+		// A nameless filesystem would be a row the page can only render as
+		// blank, carrying samples nothing can attribute.
+		label := r.GetLabel()
 		if label == "" {
 			continue
 		}
@@ -953,7 +893,7 @@ func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*
 		// Last one that actually knows wins, for both columns. An agent that
 		// does not know a value sends the zero one, and a row is never
 		// demoted by a row that knows less than it does.
-		if mp := hostSideMountpoint(r.GetMountpoint()); mp != "" {
+		if mp := r.GetMountpoint(); mp != "" {
 			u.mountpoint = mp
 		}
 		if d := int64OrNil(r.DeviceId); d != nil {
@@ -965,7 +905,6 @@ func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*
 	// on successful resolutions: `order` holds each label once, so a label
 	// Postgres refuses simply gets no entry in `out` and its samples are
 	// dropped with it.
-	ids := make(map[string]int32, len(order))
 	for _, label := range order {
 		u := want[label]
 
@@ -991,19 +930,7 @@ func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*
 		if !ok {
 			continue
 		}
-		ids[label] = id
-	}
-
-	// Keyed on the label AS SENT, so InsertFilesystemSamples looks its rows up
-	// unchanged.
-	for _, r := range rows {
-		sent := r.GetLabel()
-		if sent == "" {
-			continue
-		}
-		if id, ok := ids[hostSideLabel(sent)]; ok {
-			out[sent] = id
-		}
+		out[label] = id
 	}
 	return out, nil
 }
@@ -1055,11 +982,7 @@ func (s *Store) InsertFilesystemSamples(ctx context.Context, hostID int32, rows 
 // read off a windowed grid goes blank the moment the window holds nothing --
 // which for a machine that is switched off overnight is most of the time.
 //
-// Keyed on the RESOLVED fs_id, not on the label as sent. resolveFilesystemIDs
-// collapses the two spellings of one mount -- the marker-prefixed
-// /netra/fs/ark and a bare ark -- onto a single id, so a newest-map keyed on
-// the label picks one spelling and can hand the gauge the older of the two
-// readings for the same disk.
+// Keyed on the resolved fs_id: the newest reading per filesystem wins.
 func (s *Store) upsertFilesystemCurrent(ctx context.Context, hostID int32, rows []*netrav1.FilesystemSample, ids map[string]int32) error {
 	newest := make(map[int32]*netrav1.FilesystemSample, len(ids))
 	for _, r := range rows {
