@@ -613,7 +613,7 @@ export function getConditions(): Promise<ConditionsResponse> {
   return request<ConditionsResponse>("/api/v1/conditions");
 }
 
-// BACKEND_HUB_URL as the hub itself has it, or "" when it is unset. The
+// https://<PUBLIC_FQDN> as the hub itself has it, or "" when PUBLIC_FQDN is unset. The
 // browser reaches the hub on loopback, so window.location says nothing about
 // the name agents post to; only the hub knows it, and the setup command is
 // wrong without it.

@@ -51,7 +51,7 @@ func run() error {
 		return err
 	}
 
-	hubURL := flag.String("hub", envOr("BACKEND_HUB_URL", "http://127.0.0.1:8080"), "hub base URL")
+	hubURL := flag.String("hub", defaultHubURL(), "hub base URL")
 	adminToken := flag.String("admin-token", os.Getenv("BACKEND_ADMIN_TOKEN"), "hub admin token")
 	dsn := flag.String("dsn", os.Getenv("BACKEND_SIM_DSN"),
 		"hub database DSN, used only to materialise continuous aggregates over the backfill; "+
@@ -128,9 +128,11 @@ func splitList(s string) []string {
 	return out
 }
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// defaultHubURL is the hub the compose stack routes on when PUBLIC_FQDN is set, the
+// local dev hub otherwise. -hub overrides either.
+func defaultHubURL() string {
+	if fqdn := strings.TrimSpace(os.Getenv("PUBLIC_FQDN")); fqdn != "" {
+		return "https://" + fqdn
 	}
-	return fallback
+	return "http://127.0.0.1:8080"
 }

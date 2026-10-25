@@ -34,7 +34,7 @@ const adminTokenSubject = "admin-token"
 // old one. There is no session table to clear and no server-side state.
 //
 // Secure, because the hub sits behind TLS: Traefik fronts it on
-// FQDN's websecure entrypoint and the container publishes no host
+// PUBLIC_FQDN's websecure entrypoint and the container publishes no host
 // port, so there is no plain-HTTP deployment for this cookie to be needed on.
 func NewSessions(adminToken string) *kitauth.Sessions {
 	s, err := kitauth.NewSessions(kitauth.SessionConfig{
