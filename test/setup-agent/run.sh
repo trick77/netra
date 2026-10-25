@@ -89,10 +89,10 @@ for CASEFILE in "$HERE"/cases/*.sh; do
     # succeeds without moving, `pwd -P` names the working directory -- the
     # repository root -- and the cleanup trap rm -rf's the checkout. That
     # happened under a sandbox that denied /tmp.
-    _raw=$(mktemp -d) && [ -n "$_raw" ] || {
+    if ! _raw=$(mktemp -d) || [ -z "$_raw" ]; then
         printf 'run.sh: mktemp -d failed; refusing to run without a temp dir\n' >&2
         exit 2
-    }
+    fi
     TMP=$(cd "$_raw" && pwd -P) || {
         printf 'run.sh: cannot resolve %s\n' "$_raw" >&2
         exit 2
