@@ -3,7 +3,7 @@
 # Host prep before the first run:
 #
 #   mkdir -p data/timescaledb
-#   cp .env.example .env && $EDITOR .env      # two secrets AND BACKEND_HOSTNAME
+#   cp .env.example .env && $EDITOR .env      # two secrets AND FQDN
 #   docker compose up -d
 #
 # Agents are configured separately, on each monitored host — see
@@ -51,12 +51,12 @@ services:
       # a proxied request, so it cannot infer its own public name from one.
       #
       # Safe as a bare expansion ONLY because the router rule below marks
-      # BACKEND_HOSTNAME required with `:?`, so compose refuses to start rather
+      # FQDN required with `:?`, so compose refuses to start rather
       # than reaching this line unset. Drop that `:?` and this becomes the
       # literal "https://", which the hub trims to "https:/" — non-empty, so
       # the UI renders it as a configured value and hands out a setup command
       # nobody can run.
-      BACKEND_HUB_URL: "https://${BACKEND_HOSTNAME}"
+      BACKEND_HUB_URL: "https://${FQDN}"
 
       # Browser sign-in. Optional: leave BACKEND_OIDC_ISSUER unset and the admin
       # token stays the only way in, exactly as before. Setting it without the
@@ -64,7 +64,7 @@ services:
       # silently -- a half-configured provider should not look like a decision.
       #
       # The redirect URI is derived from BACKEND_HUB_URL, so it cannot drift from
-      # the name Traefik routes on. Register https://${BACKEND_HOSTNAME}/auth/callback
+      # the name Traefik routes on. Register https://${FQDN}/auth/callback
       # at the provider.
       BACKEND_OIDC_ISSUER: "${BACKEND_OIDC_ISSUER:-}"
       BACKEND_OIDC_CLIENT_ID: "${BACKEND_OIDC_CLIENT_ID:-}"
@@ -102,11 +102,11 @@ services:
       # it as losing the fleet.
       #
       # `:?` rather than a default. A default here is worse than no value at
-      # all: an operator who never set BACKEND_HOSTNAME got a router matching a
+      # all: an operator who never set FQDN got a router matching a
       # domain this project does not own, compose started clean, the hub went
       # healthy, and agent ingest was unreachable with nothing anywhere saying
       # why. Now the run stops with the message below.
-      traefik.http.routers.netra.rule: Host(`${BACKEND_HOSTNAME:?set BACKEND_HOSTNAME in .env — the name Traefik routes the hub on}`)
+      traefik.http.routers.netra.rule: Host(`${FQDN:?set FQDN in .env — the name Traefik routes the hub on}`)
       traefik.http.routers.netra.entrypoints: websecure
       # tls: "true" with no certresolver — the certificate is pre-loaded in
       # Traefik's static config, so there is no ACME challenge to run here.

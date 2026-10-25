@@ -122,7 +122,7 @@ func TestLoadOIDCRequiresItsCompanions(t *testing.T) {
 
 func TestRedirectURLIsDerivedFromHubURL(t *testing.T) {
 	// Derived, not configured: the value the provider redirects to cannot drift
-	// from the name Traefik routes on, because both come from BACKEND_HOSTNAME.
+	// from the name Traefik routes on, because both come from FQDN.
 	t.Setenv("BACKEND_DB_DSN", "postgres://x")
 	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
 	t.Setenv("BACKEND_HUB_URL", "https://netra.example.com/")
