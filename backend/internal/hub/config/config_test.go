@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -80,31 +82,31 @@ func TestLoadOIDCRequiresItsCompanions(t *testing.T) {
 	}{
 		{"no client id", map[string]string{
 			"BACKEND_OIDC_ISSUER": "https://auth.example.com",
-			"BACKEND_HUB_URL":     "https://netra.example.com",
+			"PUBLIC_FQDN":         "netra.example.com",
 		}, "BACKEND_OIDC_CLIENT_ID"},
 		{"no client secret", map[string]string{
 			"BACKEND_OIDC_ISSUER":    "https://auth.example.com",
 			"BACKEND_OIDC_CLIENT_ID": "netra",
-			"BACKEND_HUB_URL":        "https://netra.example.com",
+			"PUBLIC_FQDN":            "netra.example.com",
 		}, "BACKEND_OIDC_CLIENT_SECRET"},
 		{"no hub url to derive the redirect from", map[string]string{
 			"BACKEND_OIDC_ISSUER":        "https://auth.example.com",
 			"BACKEND_OIDC_CLIENT_ID":     "netra",
 			"BACKEND_OIDC_CLIENT_SECRET": "shh",
-		}, "BACKEND_HUB_URL"},
-		{"hub url is not https", map[string]string{
+		}, "PUBLIC_FQDN"},
+		{"fqdn carries a scheme", map[string]string{
 			"BACKEND_OIDC_ISSUER":        "https://auth.example.com",
 			"BACKEND_OIDC_CLIENT_ID":     "netra",
 			"BACKEND_OIDC_CLIENT_SECRET": "shh",
-			"BACKEND_HUB_URL":            "http://netra.example.com",
-		}, "https://"},
+			"PUBLIC_FQDN":                "https://netra.example.com",
+		}, "PUBLIC_FQDN"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BACKEND_DB_DSN", "postgres://x")
 			t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
-			t.Setenv("BACKEND_HUB_URL", "")
+			t.Setenv("PUBLIC_FQDN", "")
 			for k, v := range tc.env {
 				t.Setenv(k, v)
 			}
@@ -122,10 +124,10 @@ func TestLoadOIDCRequiresItsCompanions(t *testing.T) {
 
 func TestRedirectURLIsDerivedFromHubURL(t *testing.T) {
 	// Derived, not configured: the value the provider redirects to cannot drift
-	// from the name Traefik routes on, because both come from FQDN.
+	// from the name Traefik routes on, because both come from PUBLIC_FQDN.
 	t.Setenv("BACKEND_DB_DSN", "postgres://x")
 	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
-	t.Setenv("BACKEND_HUB_URL", "https://netra.example.com/")
+	t.Setenv("PUBLIC_FQDN", "netra.example.com")
 	t.Setenv("BACKEND_OIDC_ISSUER", "https://auth.example.com")
 	t.Setenv("BACKEND_OIDC_CLIENT_ID", "netra")
 	t.Setenv("BACKEND_OIDC_CLIENT_SECRET", "shh")
@@ -139,12 +141,56 @@ func TestRedirectURLIsDerivedFromHubURL(t *testing.T) {
 	}
 }
 
+// The address agents post to is the name Traefik routes on, so it is PUBLIC_FQDN
+// behind https and nothing else; unset stays unset rather than a guess.
+func TestLoadDerivesHubURLFromFQDN(t *testing.T) {
+	t.Setenv("BACKEND_DB_DSN", "postgres://x")
+	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
+
+	t.Setenv("PUBLIC_FQDN", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HubURL != "" {
+		t.Errorf("HubURL = %q with PUBLIC_FQDN unset, want empty", cfg.HubURL)
+	}
+
+	t.Setenv("PUBLIC_FQDN", "netra.example.com")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.HubURL, "https://netra.example.com"; got != want {
+		t.Errorf("HubURL = %q, want %q", got, want)
+	}
+}
+
+// A URL where the bare name belongs would render "https://https://…" into
+// every setup command; refused at start instead, naming the variable.
+func TestLoadRefusesFQDNThatIsNotABareHost(t *testing.T) {
+	t.Setenv("BACKEND_DB_DSN", "postgres://x")
+	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
+
+	for _, bad := range []string{
+		"https://netra.example.com", "netra.example.com/", "netra.example.com/hub",
+		" netra.example.com", "netra.example.com ", "netra.example.com:8443", "admin@netra.example.com",
+		"netra.example.com?x=1", "netra.example.com#x", "[::1]",
+	} {
+		t.Setenv("PUBLIC_FQDN", bad)
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "PUBLIC_FQDN") {
+			t.Errorf("PUBLIC_FQDN=%q: err = %v, want one naming PUBLIC_FQDN", bad, err)
+		}
+	}
+}
+
 // go-oidc compares the discovered issuer to the configured one byte for byte,
 // so a trailing slash (Authentik's issuers end in one) must survive Load.
 func TestLoadKeepsIssuerTrailingSlash(t *testing.T) {
 	t.Setenv("BACKEND_DB_DSN", "postgres://x")
 	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
-	t.Setenv("BACKEND_HUB_URL", "https://netra.example.com")
+	t.Setenv("PUBLIC_FQDN", "netra.example.com")
 	t.Setenv("BACKEND_OIDC_ISSUER", "https://auth.example.com/application/o/netra/")
 	t.Setenv("BACKEND_OIDC_CLIENT_ID", "netra")
 	t.Setenv("BACKEND_OIDC_CLIENT_SECRET", "shh")
@@ -172,5 +218,24 @@ func TestLoadRejectsOldPrefix(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "BACKEND_LISTEN_ADDR") {
 		t.Fatalf("error %q does not name the replacement BACKEND_LISTEN_ADDR", err)
+	}
+}
+
+// The hostname lived under BACKEND_HUB_URL and FQDN before. A stale line is
+// reported so the operator renames it, never read.
+func TestStaleVariablesNamesOldHostnameVariables(t *testing.T) {
+	t.Setenv("BACKEND_HUB_URL", "")
+	os.Unsetenv("BACKEND_HUB_URL")
+	t.Setenv("FQDN", "")
+	os.Unsetenv("FQDN")
+	if got := StaleVariables(); len(got) != 0 {
+		t.Fatalf("StaleVariables() = %v with neither set, want none", got)
+	}
+
+	t.Setenv("BACKEND_HUB_URL", "https://netra.example.com")
+	t.Setenv("FQDN", "netra.example.com")
+	got := StaleVariables()
+	if want := []string{"BACKEND_HUB_URL", "FQDN"}; !slices.Equal(got, want) {
+		t.Fatalf("StaleVariables() = %v, want %v", got, want)
 	}
 }

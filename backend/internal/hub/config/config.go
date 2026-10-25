@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -17,24 +18,23 @@ type Config struct {
 	AdminToken  string
 	LogLevel    string
 
-	// HubURL is the address agents post to, used to render a
+	// HubURL is the address agents post to, https://<PUBLIC_FQDN>, used to render a
 	// ready-to-paste setup-agent.sh command in the UI and, when OIDC is
-	// configured, to derive the redirect URI. Deriving that rather than
-	// configuring it means the value Authelia is told to redirect to cannot
-	// drift from the name Traefik actually routes on: both come from
-	// FQDN.
+	// configured, to derive the redirect URI. Deriving both from PUBLIC_FQDN means
+	// the value Authelia is told to redirect to cannot drift from the name
+	// Traefik actually routes on.
 	//
 	// It is optional to the binary: the hub is reached on loopback by the
 	// browser and cannot infer its own public name from that request, so rather
-	// than guess, an unset value makes the UI render no setup command at all
+	// than guess, an unset PUBLIC_FQDN makes the UI render no setup command at all
 	// until an operator types one. A command correct except for its hostname
 	// would copy, run, succeed, and post that host's metrics to whoever owns the
 	// name.
 	//
-	// Optional here, required in compose.yaml, which derives it from
-	// FQDN and marks that `:?`. Running the binary directly with it
-	// unset is supported and degrades as described above -- browser sign-in is
-	// then unconfigurable too, since there is no redirect URI to derive.
+	// Optional here, required in compose.yaml, which marks PUBLIC_FQDN `:?` in the
+	// Traefik rule. Running the binary directly with it unset is supported and
+	// degrades as described above -- browser sign-in is then unconfigurable
+	// too, since there is no redirect URI to derive.
 	HubURL string
 
 	// OIDC is the optional browser login. Zero value means the hub behaves
@@ -83,12 +83,23 @@ func Load() (Config, error) {
 		// which, for a monitoring hub, is exactly when you need to look at it.
 		AdminToken: r.Required("BACKEND_ADMIN_TOKEN"),
 		LogLevel:   r.String("BACKEND_LOG_LEVEL", "info"),
-		HubURL:     strings.TrimRight(r.String("BACKEND_HUB_URL", ""), "/"),
 		OIDC: OIDCConfig{
 			Issuer:       r.String("BACKEND_OIDC_ISSUER", ""),
 			ClientID:     r.String("BACKEND_OIDC_CLIENT_ID", ""),
 			ClientSecret: r.String("BACKEND_OIDC_CLIENT_SECRET", ""),
 		},
+	}
+
+	// A bare hostname only: a scheme, path, port or userinfo here would render
+	// a URL the hub is never served under into every setup command. Read raw,
+	// not trimmed: Traefik's Host rule gets the value as written, so a stray
+	// space must fail here rather than be hidden on one side only.
+	if fqdn := os.Getenv("PUBLIC_FQDN"); fqdn != "" {
+		if !isBareHost(fqdn) {
+			r.Fail("PUBLIC_FQDN must be a bare hostname such as netra.example.com, got %q", fqdn)
+		} else {
+			cfg.HubURL = "https://" + fqdn
+		}
 	}
 
 	// Longer would start a hub whose login form answers every attempt 413.
@@ -103,14 +114,12 @@ func Load() (Config, error) {
 		if cfg.OIDC.ClientSecret == "" {
 			r.Fail("BACKEND_OIDC_CLIENT_SECRET is required when BACKEND_OIDC_ISSUER is set")
 		}
-		// The redirect URI is derived from HubURL, so an unset BACKEND_HUB_URL
-		// would send the provider to "/auth/callback" with no host. Fail here
-		// rather than at the first login attempt.
-		switch {
-		case cfg.HubURL == "":
-			r.Fail("BACKEND_HUB_URL is required when BACKEND_OIDC_ISSUER is set (the OIDC redirect URI is derived from it)")
-		case !strings.HasPrefix(cfg.HubURL, "https://"):
-			r.Fail("BACKEND_HUB_URL must be https:// when BACKEND_OIDC_ISSUER is set (the session cookie is Secure and will not be sent over http)")
+		// The redirect URI is derived from HubURL, so an unset PUBLIC_FQDN would send
+		// the provider to "/auth/callback" with no host. Fail here rather than
+		// at the first login attempt. HubURL is always https, which the Secure
+		// session cookie needs.
+		if cfg.HubURL == "" {
+			r.Fail("PUBLIC_FQDN is required when BACKEND_OIDC_ISSUER is set (the OIDC redirect URI is derived from it)")
 		}
 	}
 
@@ -123,6 +132,30 @@ func Load() (Config, error) {
 // RedirectURL is the OIDC redirect URI, derived from HubURL. It must match the
 // redirect_uris entry registered for this client at the provider exactly.
 func (c Config) RedirectURL() string { return c.HubURL + "/auth/callback" }
+
+// isBareHost reports whether v is a hostname and nothing else: it must come
+// back from a URL parse as the whole host, with no port, userinfo, path,
+// query or fragment around it.
+func isBareHost(v string) bool {
+	u, err := url.Parse("https://" + v)
+	return err == nil && u.Host == v && u.Hostname() == v
+}
+
+// staleNames held the hub's public hostname before PUBLIC_FQDN.
+var staleNames = []string{"BACKEND_HUB_URL", "FQDN"}
+
+// StaleVariables returns the old hostname variables still set in the
+// environment. They are not read; main warns about each so the operator
+// renames the line instead of wondering why the setup command is missing.
+func StaleVariables() []string {
+	var set []string
+	for _, name := range staleNames {
+		if _, ok := os.LookupEnv(name); ok {
+			set = append(set, name)
+		}
+	}
+	return set
+}
 
 // rejectOldPrefix refuses to start while a NETRA_-prefixed variable is still
 // set. Every hub variable was renamed to BACKEND_ in one go, and the swap is

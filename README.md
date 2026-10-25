@@ -41,11 +41,11 @@ Fill in the three values in `.env`:
 | --- | --- |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
 | `BACKEND_ADMIN_TOKEN` | `openssl rand -hex 32` (at most 2048 bytes: the login form caps its body) |
-| `FQDN` | the name Traefik routes to, and the address agents post to — `BACKEND_HUB_URL` is derived from it |
+| `PUBLIC_FQDN` | bare hostname Traefik routes to; agents post to `https://<PUBLIC_FQDN>` |
 
 All three ship empty and all three are required: `docker compose up` refuses to
 start until they are set, rather than falling back to a value that looks like it
-works. An unset `FQDN` in particular used to default to a domain this
+works. An unset `PUBLIC_FQDN` in particular used to default to a domain this
 project does not own, which started cleanly, reported healthy, and left agent
 ingest unreachable with nothing anywhere saying why.
 
@@ -60,9 +60,9 @@ in, exactly as before.
 | `BACKEND_OIDC_CLIENT_ID` | |
 | `BACKEND_OIDC_CLIENT_SECRET` | |
 
-Register `https://<FQDN>/auth/callback` as the redirect URI. It is
-derived from `BACKEND_HUB_URL` rather than configured separately, so it cannot
-drift from the name Traefik routes on.
+Register `https://<PUBLIC_FQDN>/auth/callback` as the redirect URI. It is
+derived from `PUBLIC_FQDN` rather than configured separately, so it cannot drift from
+the name Traefik routes on.
 
 Setting the issuer without the credentials is refused at startup rather than
 falling back to token-only login: a half-configured provider should not look
@@ -129,7 +129,7 @@ apparently fresh directory ends up skipping initialisation.
 
 ### What is exposed
 
-Traefik fronts the whole hub on `FQDN` — agent ingest, the read API,
+Traefik fronts the whole hub on `PUBLIC_FQDN` — agent ingest, the read API,
 the admin API and the management UI. The container publishes no host port at
 all, so netra cannot collide with anything else on the box and there is no
 tunnel to set up: open <https://your-hostname/> and log in with
