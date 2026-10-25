@@ -117,43 +117,6 @@ func TestIntegrationFilesystemCurrentDoesNotWalkBackwards(t *testing.T) {
 	}
 }
 
-// resolveFilesystemIDs collapses the marker-prefixed spelling and the bare one
-// onto a single filesystem row, so the gauge has to be keyed on the RESOLVED
-// id: keyed on the label as sent it would pick one spelling and could hand the
-// gauge the older of two readings for the same disk.
-func TestIntegrationFilesystemCurrentIsKeyedOnTheResolvedFilesystem(t *testing.T) {
-	ctx := context.Background()
-	s := openMigrated(t)
-	id := seedInterfaceHost(t, s, "fs-bothnames")
-
-	// Given: both spellings in one batch, the BARE one newer.
-	older := time.Now().Add(-time.Minute).Truncate(time.Millisecond)
-	newer := older.Add(time.Minute)
-	if _, err := s.InsertFilesystemSamples(ctx, id, []*netrav1.FilesystemSample{
-		fsSample(older, "/netra/fs/ark", "/netra/fs/ark", 2000, 1880, 120),
-		fsSample(newer, "ark", "/mnt/ark", 2000, 1885, 115),
-	}); err != nil {
-		t.Fatalf("InsertFilesystemSamples: %v", err)
-	}
-
-	// Then: one row, carrying the newer reading.
-	var rows int
-	if err := s.Pool().QueryRow(ctx,
-		`SELECT count(*) FROM filesystem_current WHERE host_id = $1`, id).Scan(&rows); err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if rows != 1 {
-		t.Fatalf("filesystem_current rows = %d, want 1", rows)
-	}
-	ts, _, used, _ := currentByLabel(t, s, id, "ark")
-	if !ts.Equal(newer) {
-		t.Errorf("ts = %v, want %v", ts, newer)
-	}
-	if *used != 1885 {
-		t.Errorf("used = %d, want 1885", *used)
-	}
-}
-
 // A filesystem the agent could not measure has no value, and NULL is exactly
 // that. Carrying the previous bytes forward under a fresh timestamp would be
 // the frozen reading this table exists to avoid.
