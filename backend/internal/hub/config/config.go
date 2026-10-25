@@ -22,7 +22,7 @@ type Config struct {
 	// configured, to derive the redirect URI. Deriving that rather than
 	// configuring it means the value Authelia is told to redirect to cannot
 	// drift from the name Traefik actually routes on: both come from
-	// BACKEND_HOSTNAME.
+	// FQDN.
 	//
 	// It is optional to the binary: the hub is reached on loopback by the
 	// browser and cannot infer its own public name from that request, so rather
@@ -32,7 +32,7 @@ type Config struct {
 	// name.
 	//
 	// Optional here, required in compose.yaml, which derives it from
-	// BACKEND_HOSTNAME and marks that `:?`. Running the binary directly with it
+	// FQDN and marks that `:?`. Running the binary directly with it
 	// unset is supported and degrades as described above -- browser sign-in is
 	// then unconfigurable too, since there is no redirect URI to derive.
 	HubURL string
