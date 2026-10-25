@@ -60,6 +60,9 @@ func run() error {
 	slog.Info("starting netra hub",
 		"version", version.String(),
 		"listen", cfg.ListenAddr)
+	for _, name := range config.StaleVariables() {
+		slog.Warn("variable is no longer read", "name", name, "replacement", "PUBLIC_FQDN")
+	}
 
 	// SIGINT/SIGTERM end the whole run, startup included: a stop while
 	// Migrate waits on another replica's lock, or OIDC discovery hangs, unwinds

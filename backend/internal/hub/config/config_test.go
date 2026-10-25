@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -154,7 +156,7 @@ func TestLoadDerivesHubURLFromFQDN(t *testing.T) {
 		t.Errorf("HubURL = %q with PUBLIC_FQDN unset, want empty", cfg.HubURL)
 	}
 
-	t.Setenv("PUBLIC_FQDN", " netra.example.com ")
+	t.Setenv("PUBLIC_FQDN", "netra.example.com")
 	cfg, err = Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -170,7 +172,11 @@ func TestLoadRefusesFQDNThatIsNotABareHost(t *testing.T) {
 	t.Setenv("BACKEND_DB_DSN", "postgres://x")
 	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
 
-	for _, bad := range []string{"https://netra.example.com", "netra.example.com/", "netra.example.com/hub"} {
+	for _, bad := range []string{
+		"https://netra.example.com", "netra.example.com/", "netra.example.com/hub",
+		" netra.example.com", "netra.example.com ", "netra.example.com:8443", "admin@netra.example.com",
+		"netra.example.com?x=1", "netra.example.com#x", "[::1]",
+	} {
 		t.Setenv("PUBLIC_FQDN", bad)
 		_, err := Load()
 		if err == nil || !strings.Contains(err.Error(), "PUBLIC_FQDN") {
@@ -212,5 +218,24 @@ func TestLoadRejectsOldPrefix(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "BACKEND_LISTEN_ADDR") {
 		t.Fatalf("error %q does not name the replacement BACKEND_LISTEN_ADDR", err)
+	}
+}
+
+// The hostname lived under BACKEND_HUB_URL and FQDN before. A stale line is
+// reported so the operator renames it, never read.
+func TestStaleVariablesNamesOldHostnameVariables(t *testing.T) {
+	t.Setenv("BACKEND_HUB_URL", "")
+	os.Unsetenv("BACKEND_HUB_URL")
+	t.Setenv("FQDN", "")
+	os.Unsetenv("FQDN")
+	if got := StaleVariables(); len(got) != 0 {
+		t.Fatalf("StaleVariables() = %v with neither set, want none", got)
+	}
+
+	t.Setenv("BACKEND_HUB_URL", "https://netra.example.com")
+	t.Setenv("FQDN", "netra.example.com")
+	got := StaleVariables()
+	if want := []string{"BACKEND_HUB_URL", "FQDN"}; !slices.Equal(got, want) {
+		t.Fatalf("StaleVariables() = %v, want %v", got, want)
 	}
 }

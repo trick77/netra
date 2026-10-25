@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -89,11 +90,12 @@ func Load() (Config, error) {
 		},
 	}
 
-	// A bare hostname only: a scheme or path here would render
-	// "https://https://…" or a path-prefixed ingest URL into every setup
-	// command, which the hub is never served under.
-	if fqdn := strings.TrimSpace(r.String("PUBLIC_FQDN", "")); fqdn != "" {
-		if strings.Contains(fqdn, "://") || strings.Contains(fqdn, "/") {
+	// A bare hostname only: a scheme, path, port or userinfo here would render
+	// a URL the hub is never served under into every setup command. Read raw,
+	// not trimmed: Traefik's Host rule gets the value as written, so a stray
+	// space must fail here rather than be hidden on one side only.
+	if fqdn := os.Getenv("PUBLIC_FQDN"); fqdn != "" {
+		if !isBareHost(fqdn) {
 			r.Fail("PUBLIC_FQDN must be a bare hostname such as netra.example.com, got %q", fqdn)
 		} else {
 			cfg.HubURL = "https://" + fqdn
@@ -130,6 +132,30 @@ func Load() (Config, error) {
 // RedirectURL is the OIDC redirect URI, derived from HubURL. It must match the
 // redirect_uris entry registered for this client at the provider exactly.
 func (c Config) RedirectURL() string { return c.HubURL + "/auth/callback" }
+
+// isBareHost reports whether v is a hostname and nothing else: it must come
+// back from a URL parse as the whole host, with no port, userinfo, path,
+// query or fragment around it.
+func isBareHost(v string) bool {
+	u, err := url.Parse("https://" + v)
+	return err == nil && u.Host == v && u.Hostname() == v
+}
+
+// staleNames held the hub's public hostname before PUBLIC_FQDN.
+var staleNames = []string{"BACKEND_HUB_URL", "FQDN"}
+
+// StaleVariables returns the old hostname variables still set in the
+// environment. They are not read; main warns about each so the operator
+// renames the line instead of wondering why the setup command is missing.
+func StaleVariables() []string {
+	var set []string
+	for _, name := range staleNames {
+		if _, ok := os.LookupEnv(name); ok {
+			set = append(set, name)
+		}
+	}
+	return set
+}
 
 // rejectOldPrefix refuses to start while a NETRA_-prefixed variable is still
 // set. Every hub variable was renamed to BACKEND_ in one go, and the swap is
