@@ -84,7 +84,19 @@ for CASEFILE in "$HERE"/cases/*.sh; do
     # physical paths and the strip is a plain prefix match. This bites the SMART
     # transport detection (which resolves /sys/class/block/*/device symlinks),
     # so the harness gets it right before that code exists.
-    TMP=$(cd "$(mktemp -d)" && pwd -P)
+    #
+    # Two guarded steps, never `cd "$(mktemp -d)"`: when mktemp fails, `cd ""`
+    # succeeds without moving, `pwd -P` names the working directory -- the
+    # repository root -- and the cleanup trap rm -rf's the checkout. That
+    # happened under a sandbox that denied /tmp.
+    _raw=$(mktemp -d) && [ -n "$_raw" ] || {
+        printf 'run.sh: mktemp -d failed; refusing to run without a temp dir\n' >&2
+        exit 2
+    }
+    TMP=$(cd "$_raw" && pwd -P) || {
+        printf 'run.sh: cannot resolve %s\n' "$_raw" >&2
+        exit 2
+    }
     export TMP CASE_NAME
 
     printf '\n=== %s\n' "$CASE_NAME"
