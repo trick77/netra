@@ -8,7 +8,6 @@
 # Detects what this host actually has, asks before changing anything, and renders
 # the agent's compose.yaml and .env from templates. It INSTALLS NOTHING: Docker
 # pulls the agent image when the stack is started.
-# See docs/superpowers/specs/2026-08-07-netra-design.md §12a.
 #
 # ============================================================================
 # PROBE PATHS vs EMIT PATHS — read this before adding any path

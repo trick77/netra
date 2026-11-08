@@ -400,7 +400,6 @@ Releases are cut by hand: `gh workflow run Release -f bump=patch`.
 
 ## Docs
 
-* Design of record: `docs/superpowers/specs/2026-08-07-netra-design.md`
 * Configuration reference: the four annotated deploy files — `compose.yaml`,
   `.env.example`, `deploy/agent/compose.yaml.example`,
   `deploy/agent/.env.example`
