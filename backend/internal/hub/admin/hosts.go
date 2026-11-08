@@ -86,14 +86,6 @@ func describeConstraint(pgErr *pgconn.PgError) string {
 	}
 }
 
-// Host is one row of the admin host list.
-type Host struct {
-	ID       int32
-	Hostname string
-	// LastSeen is nil when the host has never posted a sample.
-	LastSeen *time.Time
-}
-
 // Service performs admin operations against the hub database.
 type Service struct {
 	pool *pgxpool.Pool

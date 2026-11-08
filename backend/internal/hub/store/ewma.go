@@ -175,14 +175,15 @@ func (s *Store) foldFamily(ctx context.Context, src foldSource) error {
 
 	touched := make(map[ewmaKey]map[int]bool)
 	for rows.Next() {
-		var key ewmaKey
-		var chip string
+		var hostID int32
+		var subject, chip string
 		var limitHigh, limitCrit, value *float64
 		var ts time.Time
-		if err := rows.Scan(&key.hostID, &key.subject, &chip,
+		if err := rows.Scan(&hostID, &subject, &chip,
 			&limitHigh, &limitCrit, &value, &ts); err != nil {
 			return fmt.Errorf("scan sample: %w", err)
 		}
+		key := ewmaKey{hostID: hostID, subject: subject}
 		if value == nil {
 			continue
 		}
@@ -287,13 +288,15 @@ func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditio
 
 	out := make(map[ewmaKey]conditions.EWMA)
 	for rows.Next() {
-		var key ewmaKey
+		var hostID int32
+		var subject string
 		var e conditions.EWMA
 		var excursion *time.Time
-		if err := rows.Scan(&key.hostID, &key.subject, &e.Fast,
+		if err := rows.Scan(&hostID, &subject, &e.Fast,
 			&e.FirstTS, &e.UpdatedTS, &excursion); err != nil {
 			return nil, fmt.Errorf("scan state: %w", err)
 		}
+		key := ewmaKey{hostID: hostID, subject: subject}
 		if excursion != nil {
 			e.ExcursionSince = *excursion
 		}
@@ -312,13 +315,15 @@ func (s *Store) loadEWMA(ctx context.Context, kind string) (map[ewmaKey]conditio
 	defer buckets.Close()
 
 	for buckets.Next() {
-		var key ewmaKey
+		var hostID int32
+		var subject string
 		var hour int16
 		var b conditions.Bucket
-		if err := buckets.Scan(&key.hostID, &key.subject, &hour,
+		if err := buckets.Scan(&hostID, &subject, &hour,
 			&b.Slow, &b.Var, &b.Weight, &b.Exc); err != nil {
 			return nil, fmt.Errorf("scan bucket: %w", err)
 		}
+		key := ewmaKey{hostID: hostID, subject: subject}
 		// A bucket whose subject row is missing is skipped rather than
 		// resurrecting the subject from it: the per-subject row carries the
 		// span the warm-up is measured against, and a state with buckets but no
