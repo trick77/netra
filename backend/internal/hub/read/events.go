@@ -2,49 +2,11 @@ package read
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/trick77/netra/internal/hub/systemdstate"
 )
-
-// Event is one row of /api/v1/events.
-type Event struct {
-	// ID is a string because the log unions three tables with three different
-	// keys: events has an integer identity, package_events is keyed
-	// (host_id, ts, name) and systemd_unit_events (host_id, unit_id, ts).
-	// Synthesising integers across those keyspaces invites a collision that
-	// would silently drop a row from a React list; a prefixed string cannot.
-	// Nothing reads it apart from the row key, so it costs nothing.
-	ID       string    `json:"id"`
-	HostID   int32     `json:"host_id"`
-	Hostname string    `json:"hostname"`
-	TS       time.Time `json:"ts"`
-	Type     string    `json:"type"`
-	// Subject is the thing the event is about -- an array name, a device, an
-	// interface -- and is null for events about the host as a whole, such as
-	// an agent upgrade.
-	Subject *string `json:"subject"`
-	// Detail is the event's payload, passed through as stored. Its shape is
-	// the emitting collector's, not this API's.
-	Detail json.RawMessage `json:"detail"`
-	// Severity is "info", "warning" or "critical", and every branch of the
-	// union answers it.
-	//
-	// It is a column on `events` and a derivation on the other two, which is
-	// deliberate rather than an inconsistency. A unit's severity is a pure
-	// function of its state -- systemdstate.NotableSQL, one definition --
-	// so storing it would duplicate a derived value AND let it drift, since
-	// ApplySystemdSnapshot rewrites unit state and a stored severity would not
-	// follow. A package upgrade is a fact, not an emergency, and is always
-	// info.
-	//
-	// The only channel. It was duplicated into the detail JSON while the UI
-	// read it from there; both event views take it from here now, and the
-	// producers have stopped writing the key.
-	Severity string `json:"severity"`
-}
 
 // EventQuery is a parsed /api/v1/events request. A zero HostID means every
 // host; a zero Since means the default window.

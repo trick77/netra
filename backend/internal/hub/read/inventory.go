@@ -20,104 +20,6 @@ import (
 // they would both render as [] and "is this host registered?" would have no
 // answer through the API.
 
-// Container is one row of /hosts/{id}/containers.
-type Container struct {
-	ID    int32   `json:"id"`
-	Key   string  `json:"container_key"`
-	Name  *string `json:"name"`
-	Image *string `json:"image"`
-	// IsAgent marks netra's own container. A fleet view that does not
-	// separate it reports the monitoring as part of the workload.
-	IsAgent bool `json:"is_agent"`
-	// When this container's newest sample was TAKEN, from
-	// containers.last_seen.
-	//
-	// The agent enumerates running containers, so a container that was
-	// removed -- or merely stopped -- simply stops appearing, and this is the
-	// only thing that says so: nothing on the wire announces a removal, and
-	// the row itself is kept until someone purges it or the nightly prune
-	// reaches it at 120 days.
-	//
-	// Stamped from the sample's ts, never from the hub's clock, for the same
-	// reason as Drive.LastSeen: the agent replays buffered scrapes after an
-	// outage, and now() would report overnight samples as taken on arrival.
-	//
-	// containers.first_seen is deliberately NOT here -- a hub timestamp, the
-	// prune's floor, and shipping it beside an agent-clocked last_seen would
-	// put a pair on the wire that can read first_seen > last_seen.
-	LastSeen time.Time `json:"last_seen"`
-
-	// What Docker itself says, as opposed to what the cgroup measures. Every
-	// one is a pointer, and null means "not reported" rather than a default --
-	// the same rule Unit.State follows below, and the reason the container page
-	// carried a card naming these as uncollected for as long as they were.
-	//
-	// DockerState is running, paused or restarting. It can never be "exited":
-	// sample rows are driven by the agent's cgroup walk, so a stopped container
-	// emits nothing at all and its absence is what LastSeen reports.
-	DockerState *string `json:"docker_state"`
-	// Health is healthy, unhealthy, starting or none. "none" is a reading --
-	// the image defines no HEALTHCHECK -- and is not the same as null.
-	Health *string `json:"health"`
-	// StateSince is when DockerState was entered, advanced only when the state
-	// actually changes. Same rule as Unit.Since.
-	StateSince *time.Time `json:"state_since"`
-	// RestartCount is Docker's own counter for this container. It resets when a
-	// container is recreated, so against a compose-keyed history a DECREASE is
-	// a redeploy and an increase is a crash-restart.
-	RestartCount *int64 `json:"restart_count"`
-	// StartedAt is when Docker says this container's CURRENT incarnation came
-	// up, and it is the only thing here that answers "how long has it been up".
-	//
-	// Not StateSince, which is when the HUB first observed a state: for a
-	// container netra met yesterday that reads as yesterday however long it had
-	// actually been running, and nothing else on this struct contradicts it.
-	//
-	// Uptime is now - StartedAt only while LastSeen is current. For a row that
-	// has gone quiet the honest statement is "up for at least LastSeen -
-	// StartedAt", because nothing here says the container is still running --
-	// which is why this is an instant and not a duration: a duration would rot
-	// between the write and the read.
-	//
-	// Null is "no agent could inspect it" -- no socket, or a socket that
-	// refuses inspect -- the same fact RestartCount reports as null, and for
-	// the same reason: they ride one inspect response. It never means "just
-	// started".
-	StartedAt *time.Time `json:"started_at"`
-	// Labels is every label the daemon reported. An empty object is a container
-	// with no labels; null is a container nobody could ask about.
-	Labels map[string]string `json:"labels"`
-
-	// RestartsWindow is how many times this container restarted inside
-	// RestartWindow, SUMMED from the container_restart event log rather than
-	// differenced from a counter -- see migration 0019.
-	//
-	// Summed, never counted: one event can carry a delta of three, because a
-	// crash-looping container advances Docker's counter by more than one
-	// between two observations. Counting rows would report that loop as a
-	// single restart.
-	//
-	// This is the reading that catches a container which is broken without
-	// ever LOOKING broken -- one that dies and comes back every few minutes is
-	// docker_state "running" at almost every scrape, and no snapshot reveals
-	// it. It is the same job Unit.Restarts1h does for systemd.
-	//
-	// Zero is a real answer: the log was read and there were none. It is not
-	// the same as RestartCount being null, which is nobody having looked.
-	RestartsWindow int64 `json:"restarts_window"`
-	// RecreatesWindow is redeploys in the same window -- operator actions, not
-	// faults. Kept apart from the restarts above because mixing them would
-	// make every deploy look like an incident.
-	RecreatesWindow int64 `json:"recreates_window"`
-	// LastRestart is when the newest restart in the window was recorded, or
-	// null for none. On an event whose detail says ts_source "observed" this
-	// is an upper bound rather than a moment -- see 0019.
-	LastRestart *time.Time `json:"last_restart"`
-	// RestartsWindowSeconds is the window the two counts were taken over,
-	// echoed so a client never has to assume the server's default.
-	RestartsWindowSeconds int64 `json:"restarts_window_seconds"`
-}
-
 // RestartWindow is how far back the container listings count restarts.
 //
 // Twenty-four hours because that is the question a fleet list is scanned for --
@@ -149,54 +51,6 @@ const restartsLateral = `
 	        AND e.type IN ('container_restart', 'container_recreate')
 	        AND e.ts > now() - $%d::interval
 	) r ON TRUE`
-
-// Filesystem is one row of /hosts/{id}/filesystems, and the same shape the
-// host list embeds per host.
-//
-// The capacity figures are the GAUGE, from filesystem_current -- the last
-// reading netra has for this mount, with no window and no rollup lag. They are
-// not the series: the filesystem metric family still answers "what has this
-// disk been doing", and a consumer drawing a line wants that. This answers
-// "how full is it", which for a machine that is switched off is still a
-// question with a true answer. 0013_filesystem_current.sql has the argument.
-//
-// The comment on filesystem_samples in 0001_init.sql governs any fullness a
-// consumer computes from these: used / (used + free), never used / total.
-type Filesystem struct {
-	ID         int32   `json:"id"`
-	Label      string  `json:"label"`
-	Mountpoint *string `json:"mountpoint"`
-	// DeviceID is the st_dev the collector dedups bind mounts by, not a
-	// reference to the devices table.
-	DeviceID *int64 `json:"device_id"`
-	// TS dates the three figures below. Null when this mount has never
-	// reported one.
-	//
-	// Load-bearing, not decoration: `filesystems` is never pruned, so a mount
-	// that stopped being reported keeps its row and its last bytes forever.
-	// Compared against the host's own last_seen it separates a host that is
-	// off -- every mount's reading legitimately its last -- from a host that
-	// is talking while this one mount is not, which is a retired mount and
-	// must not be shown as a fact about now.
-	TS    *time.Time `json:"ts"`
-	Total *int64     `json:"total"`
-	Used  *int64     `json:"used"`
-	Free  *int64     `json:"free"`
-}
-
-// Address is one row of /hosts/{id}/addresses.
-type Address struct {
-	Iface   string  `json:"iface"`
-	IfIndex *int32  `json:"if_index"`
-	Address string  `json:"address"`
-	Family  int16   `json:"family"`
-	Scope   *string `json:"scope"`
-	VRF     *string `json:"vrf"`
-
-	Description *string   `json:"description"`
-	FirstSeen   time.Time `json:"first_seen"`
-	LastSeen    time.Time `json:"last_seen"`
-}
 
 // Drive is one row of /hosts/{id}/drives: a physical disk and its latest SMART
 // reading per attribute.
@@ -259,78 +113,6 @@ type DriveAttribute struct {
 	ID         int16  `json:"id"`
 	Raw        *int64 `json:"raw"`
 	Normalized *int16 `json:"normalized"`
-}
-
-// Interface is one row of /hosts/{id}/interfaces: one link, with no addresses
-// on it.
-//
-// Separate from Address because an interface with no address is the case worth
-// showing -- a failed bond, an unplugged spare NIC -- and an address-keyed list
-// cannot hold one.
-type Interface struct {
-	Iface   string `json:"iface"`
-	IfIndex *int32 `json:"if_index"`
-	// The kernel's operstate verbatim: up, down, unknown, lowerlayerdown,
-	// dormant, testing, notpresent. Not a bool -- see HostInterface in the
-	// proto for why the agent does not classify.
-	OperState *string `json:"oper_state"`
-	// NULL, not 0, wherever the kernel has no answer: a virtual device has no
-	// link speed and a down one refuses to report its.
-	SpeedMbps   *int64  `json:"speed_mbps"`
-	Duplex      *string `json:"duplex"`
-	MTU         *int32  `json:"mtu"`
-	MAC         *string `json:"mac"`
-	Description *string `json:"description"`
-	// Whether the interface has a /sys/class/net/<iface>/device link, which
-	// is a NIC on a bus rather than a bond, bridge or VLAN. NULL from an agent
-	// older than the field or a host without sysfs.
-	Physical *bool `json:"physical"`
-
-	FirstSeen time.Time `json:"first_seen"`
-	LastSeen  time.Time `json:"last_seen"`
-}
-
-// Package is one row of /hosts/{id}/packages.
-type Package struct {
-	Name      string    `json:"name"`
-	Version   string    `json:"version"`
-	Arch      string    `json:"arch"`
-	Format    string    `json:"format"`
-	SizeBytes *int64    `json:"size_bytes"`
-	FirstSeen time.Time `json:"first_seen"`
-	LastSeen  time.Time `json:"last_seen"`
-	// When this package's version last moved, as opposed to when the row was
-	// first written or last re-emitted. See migration 0008.
-	VersionChangedAt time.Time `json:"version_changed_at"`
-}
-
-// Unit is one row of /hosts/{id}/units: a unit that needs attention, and the
-// state it is in.
-//
-// The state is read straight off systemd_units. It used to be a LAST-VALUE
-// lookup into systemd_unit_events, on the reasoning that the collector emits
-// events rather than samples (spec 5.3) so "what state is this unit in" is by
-// construction "what did the newest event say". That reasoning held only while
-// every transition arrived; the agent now also sends a periodic snapshot so
-// the hub can be told what IS, and the answer lives on the row. See Units
-// below and systemd_units in 0001_init.sql.
-//
-// Since is when the unit ENTERED this state, not when the hub last heard about
-// it -- the write paths advance it only when the state actually changes. A
-// unit with no state recorded yet reports null rather than "active", which
-// would be a guess.
-type Unit struct {
-	ID       int32      `json:"id"`
-	Name     string     `json:"unit_name"`
-	State    *string    `json:"state"`
-	Substate *string    `json:"substate"`
-	Since    *time.Time `json:"since"`
-	// Restarts1h is how many state changes this unit has recorded in the last
-	// hour, and it is the ONLY thing that reveals a unit which is broken
-	// without ever looking broken -- a service that runs for a few minutes,
-	// dies, and comes back is healthy at nearly every scrape. See
-	// systemdstate.FlapThreshold.
-	Restarts1h int32 `json:"restarts_1h"`
 }
 
 // Containers lists the containers seen on a host.
@@ -571,19 +353,6 @@ const driveSelect = `
 		        WHERE s.host_id = d.host_id AND s.device_id = d.id
 		        ORDER BY s.attr_id, s.ts DESC
 		  ) a ON TRUE`
-
-// driveRow is one driveSelect row before it is folded: a drive, and at most
-// one of its attributes.
-type driveRow struct {
-	device     string
-	model      *string
-	serial     *string
-	sizeBytes  *int64
-	lastSeen   time.Time
-	attrID     *int16
-	raw        *int64
-	normalized *int16
-}
 
 func scanDriveRow(rows pgx.Rows) (driveRow, error) {
 	var r driveRow

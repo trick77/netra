@@ -68,26 +68,6 @@ const (
 // transitions that describe nothing.
 const clearAfter = 2
 
-// Key identifies one condition: a kind, about one subject, on one host.
-//
-// Subject is finer than the UI displays. The fleet page collapses a host's
-// drives into a single row, and that is a RENDERING decision -- if the state
-// machine collapsed too, the condition would open and close every time the
-// fullest mount changed from /var to /mnt.
-type Key struct {
-	HostID  int32
-	Kind    string
-	Subject string
-}
-
-// Open is a condition currently recorded as open, as read back from the store.
-type Open struct {
-	ID           int64
-	Key          Key
-	Severity     string
-	MissingTicks int
-}
-
 // Finding is one subject the evaluator judged to be in a bad state.
 type Finding struct {
 	Key      Key
