@@ -4,9 +4,9 @@ go 1.27.2
 
 require (
 	github.com/coreos/go-systemd/v22 v22.7.0
-	github.com/go-jose/go-jose/v4 v4.1.7
+	github.com/go-jose/go-jose/v4 v4.1.8
 	github.com/godbus/dbus/v5 v5.2.4
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/trick77/ship/kit v0.18.0
 	github.com/trick77/ship/kit/auth v0.4.0
 	google.golang.org/protobuf v1.36.12
