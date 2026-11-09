@@ -2,7 +2,7 @@
 
 # Database schema
 
-30 tables; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
+30 tables, 33 views; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
 
 ## agent_samples
 
@@ -204,7 +204,7 @@ Indexes:
 
 Checks:
 
-- `CHECK (severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text]))`
+- `CONSTRAINT events_severity_check CHECK (severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text]))`
 
 ## filesystem_current
 
@@ -326,9 +326,9 @@ Indexes:
 
 Checks:
 
-- `CHECK ((resolved_ts IS NULL) = (resolved_reason IS NULL))`
-- `CHECK (resolved_reason = ANY (ARRAY['cleared'::text, 'vanished'::text]))`
-- `CHECK (severity = ANY (ARRAY['warning'::text, 'critical'::text]))`
+- `CONSTRAINT host_conditions_resolution_complete CHECK ((resolved_ts IS NULL) = (resolved_reason IS NULL))`
+- `CONSTRAINT host_conditions_resolved_reason_check CHECK (resolved_reason = ANY (ARRAY['cleared'::text, 'vanished'::text]))`
+- `CONSTRAINT host_conditions_severity_check CHECK (severity = ANY (ARRAY['warning'::text, 'critical'::text]))`
 
 ## host_current
 
@@ -669,7 +669,7 @@ Foreign keys:
 
 Checks:
 
-- `CHECK (hour >= 0 AND hour < 24)`
+- `CONSTRAINT metric_ewma_hour_hour_check CHECK (hour >= 0 AND hour < 24)`
 
 ## net_samples
 
@@ -837,39 +837,39 @@ Indexes:
 
 ## Views
 
-- `agent_samples_1d` (view)
-- `agent_samples_1h` (view)
-- `agent_samples_5m` (view)
-- `collector_samples_1d` (view)
-- `collector_samples_1h` (view)
-- `collector_samples_5m` (view)
-- `container_samples_1d` (view)
-- `container_samples_1h` (view)
-- `container_samples_5m` (view)
-- `cpu_core_samples_1d` (view)
-- `cpu_core_samples_1h` (view)
-- `cpu_core_samples_5m` (view)
-- `disk_io_samples_1d` (view)
-- `disk_io_samples_1h` (view)
-- `disk_io_samples_5m` (view)
-- `filesystem_samples_1d` (view)
-- `filesystem_samples_1h` (view)
-- `filesystem_samples_5m` (view)
-- `host_proto_samples_1d` (view)
-- `host_proto_samples_1h` (view)
-- `host_proto_samples_5m` (view)
-- `host_samples_1d` (view)
-- `host_samples_1h` (view)
-- `host_samples_5m` (view)
-- `host_snmp_samples_1d` (view)
-- `host_snmp_samples_1h` (view)
-- `host_snmp_samples_5m` (view)
-- `net_samples_1d` (view)
-- `net_samples_1h` (view)
-- `net_samples_5m` (view)
-- `sensor_samples_1d` (view)
-- `sensor_samples_1h` (view)
-- `sensor_samples_5m` (view)
+- `agent_samples_1d` (continuous aggregate)
+- `agent_samples_1h` (continuous aggregate)
+- `agent_samples_5m` (continuous aggregate)
+- `collector_samples_1d` (continuous aggregate)
+- `collector_samples_1h` (continuous aggregate)
+- `collector_samples_5m` (continuous aggregate)
+- `container_samples_1d` (continuous aggregate)
+- `container_samples_1h` (continuous aggregate)
+- `container_samples_5m` (continuous aggregate)
+- `cpu_core_samples_1d` (continuous aggregate)
+- `cpu_core_samples_1h` (continuous aggregate)
+- `cpu_core_samples_5m` (continuous aggregate)
+- `disk_io_samples_1d` (continuous aggregate)
+- `disk_io_samples_1h` (continuous aggregate)
+- `disk_io_samples_5m` (continuous aggregate)
+- `filesystem_samples_1d` (continuous aggregate)
+- `filesystem_samples_1h` (continuous aggregate)
+- `filesystem_samples_5m` (continuous aggregate)
+- `host_proto_samples_1d` (continuous aggregate)
+- `host_proto_samples_1h` (continuous aggregate)
+- `host_proto_samples_5m` (continuous aggregate)
+- `host_samples_1d` (continuous aggregate)
+- `host_samples_1h` (continuous aggregate)
+- `host_samples_5m` (continuous aggregate)
+- `host_snmp_samples_1d` (continuous aggregate)
+- `host_snmp_samples_1h` (continuous aggregate)
+- `host_snmp_samples_5m` (continuous aggregate)
+- `net_samples_1d` (continuous aggregate)
+- `net_samples_1h` (continuous aggregate)
+- `net_samples_5m` (continuous aggregate)
+- `sensor_samples_1d` (continuous aggregate)
+- `sensor_samples_1h` (continuous aggregate)
+- `sensor_samples_5m` (continuous aggregate)
 
 ## Types not stored as rows
 
@@ -886,7 +886,7 @@ In `internal/hub/read`. Event is one row of /api/v1/events.
 | `Type` | `string` |  |
 | `Subject` | `*string` | Subject is the thing the event is about -- an array name, a device, an interface -- and is null for events about the host as a whole, such as an agent upgrade. |
 | `Detail` | `json.RawMessage` | Detail is the event's payload, passed through as stored. Its shape is the emitting collector's, not this API's. |
-| `Severity` | `string` | Severity is "info", "warning" or "critical", and every branch of the union answers it. It is a column on `events` and a derivation on the other two, which is deliberate rather than an inconsistency. A unit's severity is a pure function of its state -- systemdstate.NotableSQL, one definition -- so storing it would duplicate a derived value AND let it drift, since ApplySystemdSnapshot rewrites unit state and a stored severity would not follow. A package upgrade is a fact, not an emergency, and is always info. This field is the only channel for severity. It was duplicated into the detail JSON while the UI read it from there; both event views take it from here now and ignore the key. The agent's producers have stopped writing it; the hub's condition events still carry it in their detail. |
+| `Severity` | `string` | Severity is "info", "warning" or "critical", and every branch of the union answers it.<br>It is a column on `events` and a derivation on the other two, which is deliberate rather than an inconsistency. A unit's severity is a pure function of its state -- systemdstate.NotableSQL, one definition -- so storing it would duplicate a derived value AND let it drift, since ApplySystemdSnapshot rewrites unit state and a stored severity would not follow. A package upgrade is a fact, not an emergency, and is always info.<br>This field is the only channel for severity. It was duplicated into the detail JSON while the UI read it from there; both event views take it from here now and ignore the key. The agent's producers have stopped writing it; the hub's condition events still carry it in their detail. |
 
 ### read.driveRow
 
@@ -1368,14 +1368,14 @@ erDiagram
     devices }o--|| hosts : "host_id"
     disk_io_samples }o--|| hosts : "host_id"
     events }o--|| hosts : "host_id"
-    filesystem_current }o--|| filesystems : "fs_id, host_id"
+    filesystem_current |o--|| filesystems : "fs_id, host_id"
     filesystem_current }o--|| hosts : "host_id"
     filesystem_samples }o--|| filesystems : "fs_id, host_id"
     filesystem_samples }o--|| hosts : "host_id"
     filesystems }o--|| hosts : "host_id"
     host_addresses }o--|| hosts : "host_id"
     host_conditions }o--|| hosts : "host_id"
-    host_current }o--|| hosts : "host_id"
+    host_current |o--|| hosts : "host_id"
     host_interfaces }o--|| hosts : "host_id"
     host_packages }o--|| hosts : "host_id"
     host_proto_samples }o--|| hosts : "host_id"

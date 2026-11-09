@@ -7,7 +7,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.8
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/jackc/pgx/v5 v5.12.0
-	github.com/trick77/ship/kit v0.20.1
+	github.com/trick77/ship/kit v0.21.0
 	github.com/trick77/ship/kit/auth v0.4.1
 	google.golang.org/protobuf v1.36.12
 )
