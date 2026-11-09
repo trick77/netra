@@ -2,7 +2,7 @@
 
 # Database schema
 
-30 tables, 33 views; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
+30 tables, 33 continuous aggregates; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
 
 ## agent_samples
 
