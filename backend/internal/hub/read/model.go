@@ -38,9 +38,10 @@ type Event struct {
 	// follow. A package upgrade is a fact, not an emergency, and is always
 	// info.
 	//
-	// The only channel. It was duplicated into the detail JSON while the UI
-	// read it from there; both event views take it from here now, and the
-	// producers have stopped writing the key.
+	// This field is the only channel for severity. It was duplicated into the
+	// detail JSON while the UI read it from there; both event views take it
+	// from here now and ignore the key. The agent's producers have stopped
+	// writing it; the hub's condition events still carry it in their detail.
 	Severity string `json:"severity"`
 }
 
