@@ -53,13 +53,20 @@ export function railSeverity(
  * the column defaults to `info`, so a row that stated nothing was
  * indistinguishable from one that said "this is routine".
  *
- * That argument has expired. Producers no longer write the detail key at all,
- * the wire field is the only channel, and the ingest gate refuses agents too
- * old to set it -- so every row that reaches here HAS stated a severity, and
- * `info` means the emitter called it routine. The other two branches of the
+ * That argument has expired. Agents no longer write the detail key, the wire
+ * field is the only channel, and the ingest gate refuses agents too old to set
+ * it -- so every row that reaches here HAS stated a severity, and `info` means
+ * the emitter called it routine or stated a word outside the three, which the
+ * hub stores as info rather than reject. The other two branches of the
  * read layer's union are answered too: the hub derives a unit's severity from
  * its state (systemdstate.NotableSQL) and a package upgrade is always info, so
  * `severity` is populated for all three (internal/hub/read/events.go).
+ *
+ * The hub's own rows still carry a `severity` detail key -- condition events
+ * (internal/hub/store/conditions.go) and the unit branch of the read layer --
+ * but it never says more than the column (the unit branch writes it only for
+ * notable rows, so a recovery carries none). No code path reads it (only tests
+ * pin it), and NOT_FACTS in message.ts keeps it out of the sentence.
  *
  * Reading it is now the stronger choice rather than the lazy one: it is the
  * same value alerting acts on, and alerting cannot call into this file. A rule
