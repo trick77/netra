@@ -461,8 +461,10 @@ type kmsgClass struct {
 	// Type is the event type stored in the events table, and the word the UI
 	// offers in its type filter.
 	Type string
-	// Severity is what the emitter states about itself, carried in the detail.
-	// Both event views read detail.severity before anything else, so stating
+	// Severity is what the emitter states about itself: "info", "warning" or
+	// "critical", and the hub stores any other word as info. It rides the
+	// event's severity field (see event), and both event views take it as it
+	// is through severityOf in ui/src/features/events/severity.ts, so stating
 	// it here is what makes a kernel event render as critical without either
 	// of them growing a table of kernel words.
 	Severity string
