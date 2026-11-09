@@ -47,8 +47,8 @@ export const KERNEL_EVENT_TYPES = [
  *
  * A kind missing from this list still renders -- the dropdown unions it with
  * whatever arrived -- but falls through to the generic detail dump, which for
- * a transition reads "root — transition opened · severity warning" instead of
- * a sentence. So this grows when an observer does, not when a constant does. */
+ * a transition reads "root — transition opened · opened_ts …" instead of a
+ * sentence. So this grows when an observer does, not when a constant does. */
 export const CONDITION_EVENT_TYPES = [
   "silent",
   "sporadic",
