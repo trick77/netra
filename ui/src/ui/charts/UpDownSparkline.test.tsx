@@ -219,17 +219,91 @@ describe("UpDownSparkline", () => {
       expect(mid?.getAttribute("stroke")).toBe("var(--axis)");
     });
 
-    it("still rules the axis when the host reported nothing", () => {
+    it("rules a dotted zero line when the host reported nothing", () => {
       // Given a host that reported no traffic at all
       const { container } = render(
-        <UpDownSparkline up={[null, null]} down={[null, null]} max={4} />,
+        <UpDownSparkline
+          up={[null, null]}
+          down={[null, null]}
+          max={4}
+          width={100}
+        />,
       );
 
       // When the chart is read
-      // Then neither fill is drawn, but the axis still says where zero was
+      // Then neither fill is drawn, and zero is a dotted rule across the
+      // whole box: a solid zero would claim 0 B/s, a reading nobody took
       expect(container.querySelector("path[data-up]")).toBeNull();
       expect(container.querySelector("path[data-down]")).toBeNull();
-      expect(container.querySelector("line[data-mid]")).not.toBeNull();
+      expect(container.querySelector("line[data-mid]")).toBeNull();
+      const gap = container.querySelector("line[data-gap]");
+      expect(gap?.getAttribute("x1")).toBe("0");
+      expect(gap?.getAttribute("x2")).toBe("100");
+      expect(gap?.getAttribute("stroke-dasharray")).not.toBeNull();
+    });
+
+    it("dots the zero line only where neither direction reported", () => {
+      // Given a pair silent in its last two buckets, and in only one
+      // direction in its second
+      const { container } = render(
+        <UpDownSparkline
+          up={[1, null, 3, null, null]}
+          down={[1, 2, 3, null, null]}
+          max={4}
+          width={100}
+          pad={0}
+        />,
+      );
+
+      // Then zero is solid up to half a column past the last reading (a
+      // bucket is w/n wide) and dotted after it
+      const mids = Array.from(container.querySelectorAll("line[data-mid]"));
+      const gaps = Array.from(container.querySelectorAll("line[data-gap]"));
+      expect(
+        mids.map((l) => [l.getAttribute("x1"), l.getAttribute("x2")]),
+      ).toEqual([["0", "60"]]);
+      expect(
+        gaps.map((l) => [l.getAttribute("x1"), l.getAttribute("x2")]),
+      ).toEqual([["60", "100"]]);
+    });
+
+    it("keeps zero solid under a lone reading's column", () => {
+      // Given one reading between silent buckets, which mirrorPaths draws
+      // as a column w/n wide
+      const { container } = render(
+        <UpDownSparkline
+          up={[null, null, 5, null, null]}
+          down={[null, null, null, null, null]}
+          max={5}
+          width={100}
+          pad={0}
+        />,
+      );
+
+      // Then zero is solid exactly under that column and dotted either side
+      const mids = Array.from(container.querySelectorAll("line[data-mid]"));
+      expect(
+        mids.map((l) => [l.getAttribute("x1"), l.getAttribute("x2")]),
+      ).toEqual([["40", "60"]]);
+      expect(container.querySelectorAll("line[data-gap]")).toHaveLength(2);
+    });
+
+    it("counts the peak envelope as a reading", () => {
+      // Given a bucket where only the peak column has a value
+      const { container } = render(
+        <UpDownSparkline
+          up={[1, 2, null, null]}
+          down={[1, 2, null, null]}
+          upBand={[1, 2, 3, null]}
+          downBand={[1, 2, 3, null]}
+          width={100}
+          pad={0}
+        />,
+      );
+
+      // Then the zero line stays solid under the envelope it carries
+      const gap = container.querySelector("line[data-gap]");
+      expect(Number(gap?.getAttribute("x1"))).toBeGreaterThan(66);
     });
   });
 

@@ -25,6 +25,42 @@ function draw(ui: React.ReactElement) {
 }
 
 describe("Chart", () => {
+  describe("gapRule on a line chart", () => {
+    it("draws one rule, only where every series is silent", () => {
+      const series: ChartSeries[] = [
+        { name: "a", color: "var(--s1)", values: [1, null, null, null, null] },
+        { name: "b", color: "var(--s2)", values: [1, 2, 3, null, null] },
+      ];
+      const c = draw(
+        <Chart
+          series={series}
+          width={100}
+          height={20}
+          max={4}
+          min={0}
+          pad={0}
+          gapRule
+        />,
+      );
+      const gaps = [...c.querySelectorAll("line[data-gap]")];
+      expect(
+        gaps.map((g) => [g.getAttribute("x1"), g.getAttribute("x2")]),
+      ).toEqual([["50", "100"]]);
+    });
+
+    it("draws no rule without gapRule", () => {
+      const c = draw(
+        <Chart
+          series={[{ name: "a", color: "var(--s1)", values: [1, null, 3] }]}
+          width={100}
+          height={20}
+          max={4}
+        />,
+      );
+      expect(c.querySelector("line[data-gap]")).toBeNull();
+    });
+  });
+
   // The envelope is not the mirror mark's alone. A plain rate panel whose
   // tier materialised a max column throws it away otherwise -- strictly less
   // than the same numbers drawn about a midline.

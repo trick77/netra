@@ -80,6 +80,72 @@ function splitRuns(n: number, isGap: (i: number) => boolean): number[][] {
 }
 
 /**
+ * The x-ranges a chart has no reading for: every stretch where ALL of
+ * `series` are null (or past their end), in the same coordinates `linePath`
+ * and `mirrorPaths` place their points at.
+ *
+ * A hole in a small trend reads as a rendering fault -- the line simply
+ * stops, and on a row of cells the eye goes to the gaps rather than to the
+ * readings. A small trend draws these spans as a dotted rule instead, which
+ * says "nothing reported here" without inventing a value: the rule sits on
+ * the baseline and is never filled.
+ *
+ * An interior gap runs from the last reading before it to the first one
+ * after it. A leading or trailing gap runs to the box edge (0 or `w`), not
+ * to `pad`: there is no reading to stop short of. A series with no slots at
+ * all (`[]`, nothing in the window) has no gap to draw -- the caller has
+ * nothing to place one on -- while an all-null series is one gap across
+ * the whole box.
+ *
+ * `reach` is how far a reading's own mark extends either side of its x. A
+ * line's point has none; a mirrored pair draws a lone reading as a column
+ * `w / n` wide (see mirrorPaths), and a gap must stop at that column's edge
+ * rather than run under it.
+ */
+export function gapSpans(
+  series: readonly (readonly (number | null)[])[],
+  w: number,
+  pad = 0,
+  reach = 0,
+): { x1: number; x2: number }[] {
+  const n = series.reduce((m, s) => Math.max(m, s.length), 0);
+  if (n === 0) return [];
+  const runs = splitRuns(n, (i) => series.every((s) => s[i] == null));
+  const edge = round1(w);
+  if (runs.length === 0) return [{ x1: 0, x2: edge }];
+  const after = (i: number) => round1(scaleX(i, n, w, pad) + reach);
+  const before = (i: number) => round1(scaleX(i, n, w, pad) - reach);
+  const spans: { x1: number; x2: number }[] = [];
+  const first = runs[0]![0]!;
+  const last = runs.at(-1)!.at(-1)!;
+  if (first > 0) spans.push({ x1: 0, x2: before(first) });
+  for (let r = 1; r < runs.length; r++) {
+    spans.push({ x1: after(runs[r - 1]!.at(-1)!), x2: before(runs[r]![0]!) });
+  }
+  if (last < n - 1) spans.push({ x1: after(last), x2: edge });
+  return spans.filter((s) => s.x2 > s.x1);
+}
+
+/**
+ * The complement of `spans` inside [0, w]: where a full-width rule still
+ * has data under it. Zero-length pieces are dropped.
+ */
+export function solidSpans(
+  spans: readonly { x1: number; x2: number }[],
+  w: number,
+): { x1: number; x2: number }[] {
+  const out: { x1: number; x2: number }[] = [];
+  const edge = round1(w);
+  let from = 0;
+  for (const s of spans) {
+    if (s.x1 > from) out.push({ x1: from, x2: s.x1 });
+    from = Math.max(from, s.x2);
+  }
+  if (from < edge) out.push({ x1: from, x2: edge });
+  return out;
+}
+
+/**
  * The min/max of a value series, ignoring nulls -- the extent `linePath`'s
  * `min`/`max` parameters need. Exists because the obvious inline
  * alternative, `Math.min(...vals)` / `Math.max(...vals)`, is a footgun:

@@ -2,6 +2,9 @@
 // where the fill closes, where the axis floor/ceiling sits) comes from
 // geometry.ts verbatim -- this component only turns that output into SVG
 // markup and never recomputes or "fixes up" a coordinate itself.
+//
+// A stretch with no reading is a dotted rule on the baseline, not a hole
+// (Chart's gapRule): every small trend in the app draws absence the same way.
 import { extent } from "./geometry";
 import { Chart } from "./Chart";
 import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
@@ -71,6 +74,7 @@ export function Sparkline({
       pad={pad}
       mark={fill ? "area" : "line"}
       label={label}
+      gapRule
     />
   );
 }

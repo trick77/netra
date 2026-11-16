@@ -2,13 +2,97 @@ import { describe, expect, it } from "vitest";
 import {
   areaPath,
   extent,
+  gapSpans,
   linePath,
   mirrorPaths,
   mirrorStackBands,
+  solidSpans,
   stackBands,
 } from "./geometry";
 
 describe("geometry", () => {
+  describe("gapSpans", () => {
+    it("runs an interior gap from the last reading to the next one", () => {
+      // x of index i is i/4 * 100 over five slots
+      expect(gapSpans([[5, 1, null, null, 4]], 100)).toEqual([
+        { x1: 25, x2: 100 },
+      ]);
+    });
+
+    it("runs a leading and a trailing gap to the box edge, not to pad", () => {
+      expect(gapSpans([[null, 2, 3, null]], 100, 10)).toEqual([
+        { x1: 0, x2: 36.7 },
+        { x1: 63.3, x2: 100 },
+      ]);
+    });
+
+    it("is one span across the box for an all-null series", () => {
+      expect(gapSpans([[null, null, null]], 100)).toEqual([{ x1: 0, x2: 100 }]);
+    });
+
+    it("has nothing to draw for a series with no slots", () => {
+      expect(gapSpans([[]], 100)).toEqual([]);
+    });
+
+    it("is a gap only where every series is silent", () => {
+      expect(
+        gapSpans(
+          [
+            [1, null, 3, null, null],
+            [1, 2, 3, null],
+          ],
+          100,
+        ),
+      ).toEqual([{ x1: 50, x2: 100 }]);
+    });
+
+    it("finds no gap in a full series", () => {
+      expect(gapSpans([[1, 2, 3]], 100)).toEqual([]);
+    });
+
+    it("stops a gap at the edge of a reading's own reach", () => {
+      expect(gapSpans([[null, null, 5, null, null]], 100, 0, 10)).toEqual([
+        { x1: 0, x2: 40 },
+        { x1: 60, x2: 100 },
+      ]);
+    });
+
+    it("drops a gap the reach of its neighbours closes", () => {
+      expect(gapSpans([[1, null, 3]], 10, 0, 6)).toEqual([]);
+    });
+  });
+
+  describe("solidSpans", () => {
+    it("is the complement of the gaps inside the box", () => {
+      expect(
+        solidSpans(
+          [
+            { x1: 0, x2: 20 },
+            { x1: 50, x2: 60 },
+          ],
+          100,
+        ),
+      ).toEqual([
+        { x1: 20, x2: 50 },
+        { x1: 60, x2: 100 },
+      ]);
+    });
+
+    it("is empty when one gap covers the box", () => {
+      expect(solidSpans([{ x1: 0, x2: 100 }], 100)).toEqual([]);
+    });
+
+    it("leaves no zero-length piece on a fractional width", () => {
+      expect(solidSpans([{ x1: 50, x2: 100 }], 100.04)).toEqual([
+        { x1: 0, x2: 50 },
+      ]);
+    });
+
+    it("is the whole box when there is no gap", () => {
+      expect(solidSpans([], 100)).toEqual([{ x1: 0, x2: 100 }]);
+    });
+  });
+
   describe("extent", () => {
     // The exact footgun this function exists to prevent: Math.min/Math.max
     // coerce null to 0 via Number(null), so Math.min(...[5, null, 3]) is 0 --

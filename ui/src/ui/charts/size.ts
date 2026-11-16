@@ -308,6 +308,20 @@ export const GRID_DASH = "1 2";
 export const GRID_WIDTH = 1;
 
 /**
+ * The rule a small trend draws where it has no reading (see gapSpans).
+ *
+ * Dots, not dashes, so it cannot be mistaken for a REFERENCE rule ("4 3"):
+ * a near-zero dash with a round cap draws a dot GAP_WIDTH across, and the
+ * gap is the space between dot centres. In --ink-3, quieter than any series
+ * ink: it marks an absence, and an absence must never out-shout the readings
+ * beside it. Only the small trends draw it; a panel has a grid and an axis
+ * that already carry the gap.
+ */
+export const GAP_STROKE = "var(--ink-3)";
+export const GAP_DASH = "0.01 2.75";
+export const GAP_WIDTH = 1.25;
+
+/**
  * The midline of a mirrored chart -- where zero is.
  *
  * Stronger than a gridline and stronger than the spine, because on a

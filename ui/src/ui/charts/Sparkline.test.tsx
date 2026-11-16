@@ -9,6 +9,33 @@ describe("Sparkline", () => {
     expect(container.querySelectorAll("path[data-line]")).toHaveLength(2);
   });
 
+  it("rules a dotted baseline across a stretch with no reading", () => {
+    // Given a trend that stopped reporting halfway
+    const { container } = render(
+      <Sparkline
+        values={[1, 2, 3, null, null]}
+        width={100}
+        height={20}
+        pad={0}
+      />,
+    );
+
+    // Then the silent half is one dotted rule on the baseline, from the
+    // last reading to the box edge, and it is not a data line
+    const gaps = Array.from(container.querySelectorAll("line[data-gap]"));
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]!.getAttribute("x1")).toBe("50");
+    expect(gaps[0]!.getAttribute("x2")).toBe("100");
+    expect(Number(gaps[0]!.getAttribute("y1"))).toBeGreaterThan(19);
+    expect(gaps[0]!.getAttribute("stroke-dasharray")).not.toBeNull();
+    expect(container.querySelectorAll("path[data-line]")).toHaveLength(1);
+  });
+
+  it("draws no rule for a trend with no slots at all", () => {
+    const { container } = render(<Sparkline values={[]} />);
+    expect(container.querySelector("line[data-gap]")).toBeNull();
+  });
+
   it("marks the isolated point as a dot, not a joined segment", () => {
     const { container } = render(<Sparkline values={[1, 2, null, 4]} />);
     expect(
