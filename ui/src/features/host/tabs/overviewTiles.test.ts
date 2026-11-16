@@ -3,6 +3,7 @@ import type { HostDetail, MetricsResponse } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { overviewTiles, type Tile } from "./overviewTiles";
 import { diskSeverityFor } from "../../fleet/conditions";
+import { SEVERITY_COLOR, STALE_TREND_COLOR } from "../../../ui/Meter";
 
 // The hub's own disk thresholds, as the conditions catalogue serves them. The
 // tile has to pick WHICH mount to name, and it picks by severity before
@@ -128,10 +129,10 @@ describe("overviewTiles system group", () => {
   });
 
   // The LINE is another matter: it is the fleet row's silhouette one click
-  // later, and there green says "measured, and fine". Status hue at every
-  // severity, never a series colour, so a threshold tile and the fleet cell
-  // it came from draw one reading in one colour.
-  it("draws the trend in the fleet row's severity hue, ok included", () => {
+  // later. Severity colour at every severity (--ok-fill at ok), never a
+  // series colour, so a threshold tile and the fleet cell it came from draw
+  // one reading in one colour.
+  it("draws the trend in the fleet row's severity colour, ok included", () => {
     const quiet = tiles({
       hostMetrics: hostMetrics(["cpu_total"], [12], [12]),
     });
@@ -139,18 +140,18 @@ describe("overviewTiles system group", () => {
       hostMetrics: hostMetrics(["cpu_total"], [99], [99]),
     });
 
-    expect(find(quiet.system, "CPU")?.color).toBe("var(--st-ok)");
+    expect(find(quiet.system, "CPU")?.color).toBe(SEVERITY_COLOR.ok);
     expect(find(pinned.system, "CPU")?.color).toBe("var(--st-crit)");
   });
 
-  // No current value, no severity to draw: the history is grey, the same
-  // neutral the fleet draws a host that stopped reporting in.
-  it("draws a CPU with no current reading in the neutral", () => {
+  // No current value, no severity to draw: the history is the stale ink, the
+  // same the fleet draws a host that stopped reporting in.
+  it("draws a CPU with no current reading in the stale ink", () => {
     const { system } = tiles({
       hostMetrics: hostMetrics(["cpu_total"], [12], [null]),
     });
 
-    expect(find(system, "CPU")?.color).toBe("var(--ink-2)");
+    expect(find(system, "CPU")?.color).toBe(STALE_TREND_COLOR);
   });
 
   it("says absent, never 0, for a tier that does not carry the column", () => {
@@ -451,6 +452,8 @@ describe("overviewTiles kernel and pressure groups", () => {
   // page means severity, so a reading with none draws in none. These used to
   // wear four different series colours across six tiles, answering "which
   // column is this" when the label already does.
+  // A tile with no current value draws the stale ink instead, the same a
+  // threshold tile and the fleet row draw a silent host in.
   it("draws every rate and count in the one neutral", () => {
     const { kernel, pressure } = tiles({
       hostMetrics: hostMetrics(
@@ -460,8 +463,19 @@ describe("overviewTiles kernel and pressure groups", () => {
     });
 
     for (const tile of [...kernel, ...pressure]) {
-      expect(tile.color).toBe("var(--ink-2)");
+      expect(tile.color).toBe(
+        tile.value === ABSENT ? STALE_TREND_COLOR : "var(--ink-2)",
+      );
     }
+    expect(find(kernel, "Context switches")?.color).toBe("var(--ink-2)");
+  });
+
+  it("dims a rate tile that has no current value", () => {
+    const { kernel } = tiles({
+      hostMetrics: hostMetrics(["ctxt_per_s"], [900000], [null]),
+    });
+
+    expect(find(kernel, "Context switches")?.color).toBe(STALE_TREND_COLOR);
   });
 
   // All three read together and all three open the same panel: swap-out

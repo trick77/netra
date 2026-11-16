@@ -49,16 +49,15 @@ export interface StatTileProps {
    *
    * `null` rather than "ok" on purpose, and it is the one thing this
    * component insists on: severityFromPercent() answers "ok" for a healthy
-   * reading, and painting that green would make a hue on this page mean
-   * "someone thought about it" instead of "look at this". A tile wears the
-   * status palette only when something is actually off, which is the same
-   * rule the attention band and the fleet list already follow. Callers map
-   * "ok" to null.
+   * reading, and tinting that would make a hue on this page mean "someone
+   * thought about it" instead of "look at this". A tile wears the status
+   * palette only when something is actually off, which is the same rule the
+   * attention band and the fleet list already follow. Callers map "ok" to
+   * null.
    *
-   * The trend LINE is the one exception, and it is `color`'s to decide, not
-   * this prop's: a threshold tile draws its line green at ok, because that
-   * is the fleet row's silhouette one click later and there green means
-   * "measured, and fine". The tint stays reserved for something being off.
+   * The trend LINE is `color`'s to decide, not this prop's: a threshold tile
+   * draws its line in the fleet row's silhouette inks (--ok-fill at ok), so
+   * the tile is that cell one click later.
    */
   severity?: FillSeverity | null;
   /** The chart this tile is a summary of. Given one, the tile is a real link
@@ -69,11 +68,10 @@ export interface StatTileProps {
 }
 
 /** The trend colour of a tile with nothing to judge: a rate or a count with
- * no threshold, or a threshold reading that has no current value. The same
- * grey the fleet row draws a silhouette in when there is no reading to colour
- * by (hostColumns.tsx imports this), and for the same reason: a hue
- * on this page means severity, so a reading that has none draws in none. The
- * series ramp is for a large chart with a legend, where hue names a band. */
+ * no threshold. A hue on this page means severity, so a reading that has
+ * none draws in none. (A threshold reading with no current value draws
+ * STALE_TREND_COLOR instead, a step quieter -- see ui/Meter.) The series ramp
+ * is for a large chart with a legend, where hue names a band. */
 export const NEUTRAL_TREND_COLOR = "var(--ink-2)";
 
 /** Wide enough to have a shape before ResizeObserver answers, narrow enough

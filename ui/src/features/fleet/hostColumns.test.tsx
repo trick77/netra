@@ -10,6 +10,7 @@ import { areaPath, linePath } from "../../ui/charts/geometry";
 import { SPARK_STRIP_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
 import { diskAxis, hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT, absolute } from "../../lib/format";
+import { SEVERITY_COLOR, STALE_TREND_COLOR } from "../../ui/Meter";
 
 function makeRow(overrides: Partial<HostRow> = {}): HostRow {
   return {
@@ -309,9 +310,8 @@ describe("hostColumns", () => {
       const calm = render(
         <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 21 } }))}</>,
       );
-      // Ok is a severity like any other and it is drawn: green says netra
-      // measured this mount and it is fine, where plain ink said the same
-      // thing an empty cell does.
+      // Ok is a severity like any other and carries its class; the class
+      // draws it neutral (see --ok-fill).
       expect(
         calm.container.querySelector(".disk-cell .metric-now .v")?.className,
       ).toBe("v st-ok");
@@ -738,17 +738,17 @@ describe("hostColumns", () => {
         2,
       ).paths;
       expect(line.getAttribute("d")).toBe(expected[0]);
-      // Filled to the baseline, in the row's neutral: this fixture's host
+      // Filled to the baseline, in the stale ink: this fixture's host
       // stopped reporting, so there is no current value to judge and the
       // silhouette is history without a reading. See the severity case below.
       const area = container.querySelector("path[data-area]")!;
-      expect(area.getAttribute("fill")).toBe("var(--ink-2)");
+      expect(area.getAttribute("fill")).toBe(STALE_TREND_COLOR);
     });
 
     // The whole cell is one reading: the silhouette takes the severity of the
-    // value the bar under it prints, ok included. Grey is what this table
-    // draws when it has nothing -- no data, not reporting -- so a healthy
-    // host has to look different from an empty one.
+    // value the bar under it prints, ok included. ok is --ok-fill and a host
+    // with no current reading is STALE_TREND_COLOR, so a healthy host still
+    // looks different from an empty one.
     it("draws the silhouette in the severity of the value under it", () => {
       const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
       const fill = (pct: number) => {
@@ -768,7 +768,8 @@ describe("hostColumns", () => {
         unmount();
         return got;
       };
-      expect(fill(21)).toBe("var(--st-ok)");
+      expect(fill(21)).toBe(SEVERITY_COLOR.ok);
+      expect(fill(21)).not.toBe(STALE_TREND_COLOR);
       expect(fill(76)).toBe("var(--st-warn)");
       expect(fill(88)).toBe("var(--st-warn)");
       expect(fill(96)).toBe("var(--st-crit)");
@@ -1138,10 +1139,10 @@ describe("hostColumns", () => {
       expect(area.getAttribute("d")).toBe(
         areaPath(expected, SPARK_WIDTH, SPARK_STRIP_HEIGHT, 2)[0],
       );
-      // The row's neutral, not a severity: this fixture stopped reporting, so
+      // The stale ink, not a severity: this fixture stopped reporting, so
       // mem_used has no current value to judge. A reporting host draws the
       // same silhouette in its own severity -- see the CPU cell's case.
-      expect(area.getAttribute("fill")).toBe("var(--ink-2)");
+      expect(area.getAttribute("fill")).toBe(STALE_TREND_COLOR);
     });
 
     it("renders nothing at all, not a chart with an invented ceiling, when mem_total is unknown", () => {

@@ -104,6 +104,17 @@
   --st-ok: #0ca30c;
   --st-warn: #fab219;
   --st-crit: #d03b3b;
+  /* The FILL of a healthy reading -- bar cell, silhouette -- which is
+     neutral, not --st-ok: colour on a reading means "look here", and a list
+     where every healthy cell was saturated green was as loud as its problem
+     rows. --st-ok stays for where ok is said in words (badges, drive pills).
+     A reading with no current value draws a step quieter (--ink-3, see
+     STALE_TREND_COLOR) so healthy and silent never share an ink. One token
+     for the SVG (SEVERITY_COLOR.ok) and the CSS (.segbar.st-ok).
+     An alias of --ink-2 on purpose: a healthy reading and one with no
+     threshold (a rate, a count) both ask for nothing, so they share the
+     neutral, and a retune of --ink-2 moves both. */
+  --ok-fill: var(--ink-2);
 
   /* palette "Clay".
 
@@ -342,6 +353,8 @@
      word all sit to the LEFT of it, and the traffic cell has no severity of
      its own to confuse them with. A reader who learns "orange here is
      outbound bytes" learns it once, in the one column that has no state.
+     The fleet list no longer draws this pair: it uses --traffic-in/-out
+     below, and only the host page's traffic panels keep these hues.
 
      Used exactly as named, and NOT compensated for the fill.
 
@@ -363,6 +376,17 @@
   --out-2: #fbc34c;
   --out-3: #fcd47f;
   --out-4: #fde5b2;
+  /* The fleet's traffic pair: two greys, light for in and darker for out.
+     The status pair above made the traffic cell the one saturated mark on a
+     healthy row once ok went neutral -- a permanent amber band beside amber
+     warnings that mean something. In the fleet list and the chart it
+     enlarges to, in and out are told apart by side of the midline and by
+     lightness; hue stays for state. The host page keeps the --in-N and
+     --out-N steps: its traffic panel stacks up to four interfaces per
+     direction, and four greys a side are not separable. Out is lifted well
+     above --ink-3 so it survives MIRROR_FILL_OPACITY in the enlarged chart. */
+  --traffic-in: #c7c4bb;
+  --traffic-out: #85837c;
   /* THE ANONYMOUS-STACK SWEEP: one hue per band, evenly divided, at a fixed
      saturation and lightness. lib/bands.ts's seriesHue() computes it and
      these two are the only fixed part.
@@ -1234,11 +1258,8 @@ tbody tr:hover .host-cell-name {
 }
 /* The figure takes the bar's severity, because they are one reading. Text
    steps, never the mark's hue -- see the --st-*-text note in the palette.
-   ok included: a green bar beside an ink figure said one thing twice and
-   only half of it the second time. */
-.metric-now .v.st-ok {
-  color: var(--st-ok-text);
-}
+   ok has no rule: it keeps the figure's own ink (.metric-now .v), since
+   colour on a reading means "look here". */
 .metric-now .v.st-warn {
   color: var(--st-warn-text);
 }
@@ -1302,16 +1323,12 @@ tbody tr:hover .host-cell-name {
   border-radius: 1px;
   background: var(--track);
 }
-/* Ok is green, not grey. The bar was briefly neutral at ok on the argument
-   that a healthy reading carries no decision, and the cost was that grey
-   already means three other things in this table -- no data, not reporting,
-   nothing collected. A quiet row and an empty one looked alike. Lit green
-   says netra measured this and it is fine, which is a reading; an unlit
-   track says nothing was measured. The whole cell agrees: silhouette, bar
-   and figure take one severity colour (see trendColor() in
-   hostColumns.tsx). */
+/* Ok is --ok-fill, neutral and lit well above the --track an unlit cell
+   shows, so a measured reading still reads as a reading. See --ok-fill for
+   why it is not green; the silhouette above it takes the same token
+   (SEVERITY_COLOR.ok in ui/Meter). */
 .segbar.st-ok i.on {
-  background: var(--st-ok);
+  background: var(--ok-fill);
 }
 .segbar.st-warn i.on {
   background: var(--st-warn);
@@ -3422,13 +3439,9 @@ details.sysfold > .body {
    Written as `.mrow .val.st-*` rather than leaning on the generic .st-* text
    rules further up: those are a single class and lose to `.mrow .val`, which
    is two -- which is exactly how a red bar came to sit beside a --muted
-   number at every percentage. `ok` gets no rule here, and that is now a
-   difference from the fleet row rather than a rule the app shares: the row's
-   figure is green at ok because its silhouette and bar are (see trendColor()
-   in hostColumns.tsx), and a meter row on the host page has neither beside
-   it -- one number in a stack of labelled numbers, where a green figure is
-   the only mark and reads as a status badge on a fact the reader already
-   asked for. StatTile takes the same view. */
+   number at every percentage. `ok` gets no rule here, the same as the fleet
+   row's figure: colour on a reading means "look here". StatTile takes the
+   same view. */
 .mrow .val.st-warn {
   color: var(--st-warn-text);
 }

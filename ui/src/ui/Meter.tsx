@@ -4,7 +4,6 @@
 // button), not a data or severity fill. See index.css's comment above
 // `.segbar`. Links and the active nav entry rest in ink and are no longer on
 // that list -- see the comment above `a` in index.css.
-import { NEUTRAL_TREND_COLOR } from "./StatTile";
 import { SegmentBar } from "./SegmentBar";
 import type { ReactNode } from "react";
 import { ABSENT, percent } from "../lib/format";
@@ -34,10 +33,16 @@ export type FillSeverity = Exclude<Severity, "neutral">;
  * Exported for a caller that paints an SVG and so cannot reach the colour
  * through SEVERITY_CLASS and a stylesheet -- the fleet row hands this
  * straight to Sparkline's `color`. One map, so a silhouette and the bar
- * under it cannot draw the same severity in two different greens.
+ * under it cannot draw the same severity in two different colours.
+ *
+ * ok is --ok-fill, neutral rather than green. Colour on a reading means
+ * "look here"; a fleet where every healthy cell is saturated green is as
+ * loud as one in trouble, and the amber and red rows stop standing out.
+ * Green stays for places that SAY ok in words (a badge, a drive pill). The
+ * segment bar's ok cells read the same token from CSS.
  */
 export const SEVERITY_COLOR: Record<FillSeverity, string> = {
-  ok: "var(--st-ok)",
+  ok: "var(--ok-fill)",
   warning: "var(--st-warn)",
   critical: "var(--st-crit)",
 };
@@ -49,16 +54,16 @@ export const SEVERITY_COLOR: Record<FillSeverity, string> = {
  * ONE colour system in the row, and it means severity. The three cells were
  * --cpu-1, --mem-used and --s6, hues that answered "which column is this" --
  * which the header answers already -- and an amber memory silhouette sat
- * beside an amber warn bar meaning something else entirely. They were then
- * all --ink-2, which fixed the collision by giving the silhouette nothing to
- * say at all: grey is also how this table draws a host with no data and one
- * that stopped reporting, so a healthy row and an empty one read alike.
+ * beside an amber warn bar meaning something else entirely.
  *
  * So the whole cell agrees instead. Silhouette, bar and figure take one
- * severity, and a row that is fine is green in all three -- a statement that
- * netra measured this, not the absence of one. Green is also the colour the
- * eye skips, which is what a fleet list wants: the rows that went amber are
- * the only ones that break the field.
+ * severity, and a row that is fine is neutral in all three. That was tried
+ * once before and reverted to green, because the neutral was also how a
+ * cell with no current reading looked, so a healthy row and an empty one
+ * read alike. They no longer share an ink: ok is --ok-fill, a reading with
+ * no current value is STALE_TREND_COLOR a clear step quieter, a stretch with
+ * no reading is a dotted rule (Chart's gapRule), and a silent host carries
+ * its severity mark.
  *
  * The CURRENT severity over the whole shape, not a line that changes hue at
  * the point it crossed 70: the cell is a reading of now with its history
@@ -66,14 +71,14 @@ export const SEVERITY_COLOR: Record<FillSeverity, string> = {
  * is not what a threshold means. The fill weight is unchanged
  * (AREA_FILL_OPACITY) -- the shade still says how high the line sits.
  *
- * NEUTRAL_TREND_COLOR when there is no current value to judge: a host that
+ * STALE_TREND_COLOR when there is no current value to judge: a host that
  * stopped reporting still draws the history it has, and colouring that by a
  * severity nobody measured would be an invention. The now-bar is already
  * absent in that case, so the cell reads as history without a reading.
  *
  * NOT the traffic cell. A rate has no ceiling, so there is no percentage, no
- * threshold and no severity to draw -- it keeps --in-1/--out-1, where hue
- * separates in from out across the midline.
+ * threshold and no severity to draw -- it draws --traffic-in/--traffic-out,
+ * two greys told apart by side of the midline and by lightness.
  *
  * Cell and the host page's tiles, which follow the same rule (see
  * overviewTiles.ts trendColor). The ENLARGED views and the host page's chart
@@ -88,9 +93,16 @@ export const SEVERITY_COLOR: Record<FillSeverity, string> = {
  */
 export function trendColor(pct: number | null): string {
   return pct === null
-    ? NEUTRAL_TREND_COLOR
+    ? STALE_TREND_COLOR
     : SEVERITY_COLOR[severityFromPercent(pct)];
 }
+
+/**
+ * A silhouette with history but no current reading: a step quieter than
+ * --ok-fill, so a host that stopped reporting never draws in the same ink
+ * as a healthy one.
+ */
+export const STALE_TREND_COLOR = "var(--ink-3)";
 
 // The series palette used to be reached from here, as an inline fill colour
 // on a continuous bar. A row of cells cannot be painted that way, so the four

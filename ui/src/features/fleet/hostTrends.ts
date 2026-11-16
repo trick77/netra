@@ -31,10 +31,17 @@ import { currentFilesystems } from "../../lib/host";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { SPARK_WIDTH, SWEPT_FILL_OPACITY } from "../../ui/charts/size";
-import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
 import type { HostRow } from "./hostColumns";
 import { diskState, type DiskThresholds } from "./conditions";
 import type { DiskSeverity } from "./conditions";
+
+/**
+ * The fleet's traffic pair, in the list and in the chart a cell enlarges
+ * to: two greys, not the host page's status-hue pair. See --traffic-in in
+ * index.css for why.
+ */
+export const TRAFFIC_IN = "var(--traffic-in)";
+export const TRAFFIC_OUT = "var(--traffic-out)";
 
 /**
  * The fleet list's trends: four families per host, turned into the series
@@ -546,10 +553,8 @@ export function trafficSeries(
  * The in/out pair an ENLARGED traffic view draws: the mean as the line, the
  * bucket peak as the envelope over it wherever the tier has one.
  *
- * One function rather than a copy in each dialog. The fleet row's cell and
- * the host overview's Traffic card are the same chart at two sizes and both
- * open into this; two hand-built copies of the same pair is exactly how they
- * came to disagree before.
+ * One function rather than a copy in each dialog: two hand-built copies of
+ * the same pair is exactly how a cell and its dialog came to disagree before.
  *
  * The envelope's outer edge is the silhouette the cell drew, so enlarging
  * does not change the shape -- and the stats table under the chart reads the
@@ -578,8 +583,8 @@ export function trafficDetailSeries(t: {
       ? { name, color, values: mean }
       : { name, color, values: mean, band: peak };
   return [
-    pair("in", UP_COLOR, t.rx, t.rxPeak ?? []),
-    pair("out", DOWN_COLOR, t.tx, t.txPeak ?? []),
+    pair("in", TRAFFIC_IN, t.rx, t.rxPeak ?? []),
+    pair("out", TRAFFIC_OUT, t.tx, t.txPeak ?? []),
   ];
 }
 

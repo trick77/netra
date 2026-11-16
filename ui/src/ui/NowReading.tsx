@@ -52,12 +52,8 @@ export function NowReading({
   severity?: FillSeverity;
 }) {
   const severity = given ?? severityFromPercent(pct);
-  // Every severity wears its colour, ok included. A quiet row was drawn in
-  // plain ink on the argument that green carries no decision, and what it
-  // actually cost was the reading itself: grey is also what an unknown, an
-  // idle and a stopped host look like, so "this host is fine" and "there is
-  // nothing here" were the same mark. Green is a statement -- netra looked,
-  // and it is healthy -- and it is the state the eye skips past anyway.
+  // Every severity gets its class; ok's is neutral (--ok-fill on the bar,
+  // plain ink on the figure). See SEVERITY_COLOR in ui/Meter for why.
   const figureClass = `v ${SEVERITY_CLASS[severity]}`;
   return (
     <div className="metric-now-wrap">

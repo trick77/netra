@@ -24,6 +24,7 @@ import {
 import { currentFilesystems, isReporting } from "../../../lib/host";
 import {
   SEVERITY_COLOR,
+  STALE_TREND_COLOR,
   severityFromPercent,
   type FillSeverity,
 } from "../../../ui/Meter";
@@ -200,10 +201,9 @@ export interface Tile {
   color: string;
   /**
    * null, never "ok". severityFromPercent answers "ok" for a healthy
-   * reading, and a green tile would make a hue on this page mean "someone
+   * reading, and a tinted tile would make a hue on this page mean "someone
    * checked" rather than "look at this" -- see StatTile's own note.
-   * The trend line is the exception and is `color`'s: it IS green at ok,
-   * see trendColor().
+   * The trend line is `color`'s, see trendColor().
    */
   severity: FillSeverity | null;
   /**
@@ -223,19 +223,29 @@ export interface Tile {
  * hues while healthy (CPU blue, memory purple, the disk cyan, swap violet)
  * and switch to the status hue only when off, so a grid of twelve tiles wore
  * seven colours, most of them answering "which column is this" when the label
- * over the figure answers that already. Green in the fleet row means
- * "measured, and fine", and this is the same reading one click later.
+ * over the figure answers that already. This is the same reading as the
+ * fleet row, one click later, so it draws in the same inks.
  *
  * Takes the FULL severity, not the offOnly() one Tile.severity carries: "ok"
- * is not a tint on the tile, but it is the colour of the line. null is a
- * reading with no current value, which draws in the neutral -- colouring
- * history by a severity nobody measured would be an invention.
+ * is not a tint on the tile, but it is the colour of the line (--ok-fill).
+ * null is a reading with no current value, which draws STALE_TREND_COLOR --
+ * colouring history by a severity nobody measured would be an invention.
  *
  * SEVERITY_COLOR is Meter's map, the one the fleet row reads too -- one map,
- * so the tile and the cell cannot draw one severity in two greens.
+ * so the tile and the cell cannot draw one severity in two colours.
  */
 function trendColor(severity: FillSeverity | null): string {
-  return severity === null ? NEUTRAL_TREND_COLOR : SEVERITY_COLOR[severity];
+  return severity === null ? STALE_TREND_COLOR : SEVERITY_COLOR[severity];
+}
+
+/**
+ * A tile with no threshold (a rate, a count): the neutral while it has a
+ * current value, the stale ink once it has none -- so a host that stopped
+ * reporting dims every tile alike instead of leaving half of them in the
+ * ink a healthy reading draws in.
+ */
+function unjudgedColor(now: number | null): string {
+  return now === null ? STALE_TREND_COLOR : NEUTRAL_TREND_COLOR;
 }
 
 /** Worse sorts higher. Only the two diskState can answer with, plus the
@@ -285,14 +295,15 @@ function rateTile(
   slug: string,
   sub?: string,
 ): Tile {
+  const now = current(res, base);
   return {
     key,
     label,
-    value: cardinal(current(res, base)),
+    value: cardinal(now),
     unit: "/s",
     sub,
     values: griddedValues(res, 0, base),
-    color: NEUTRAL_TREND_COLOR,
+    color: unjudgedColor(now),
     severity: null,
     slug,
   };
@@ -308,13 +319,14 @@ function levelTile(
   slug: string,
   sub?: string,
 ): Tile {
+  const now = current(res, base);
   return {
     key,
     label,
-    value: cardinal(current(res, base)),
+    value: cardinal(now),
     sub,
     values: griddedValues(res, 0, base),
-    color: NEUTRAL_TREND_COLOR,
+    color: unjudgedColor(now),
     severity: null,
     slug,
   };
