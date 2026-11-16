@@ -420,9 +420,8 @@ describe("hostColumns", () => {
       // The rule the fleet is read by: a machine nobody has heard from has
       // stale figures for everything else, so a "critical" derived from its
       // last known disk reading would claim to describe this minute. Offline
-      // outranks it, and says so with its own mark rather than borrowing the
-      // octagon. The disk that WAS 96% full is in the row's own Filesystem
-      // cell either way.
+      // outranks it, and says so in the mark's label. The disk that WAS 96%
+      // full is in the row's own Filesystem cell either way.
       it("says offline, not critical, for a silent host that also has one", () => {
         expect(
           mark(
@@ -1245,10 +1244,16 @@ describe("hostColumns", () => {
         const { container } = render(
           <>{hostCol.cell(makeRow({ last_seen: new Date().toISOString() }))}</>,
         );
-        return container.querySelector(".smark path")!.getAttribute("d")!;
+        // The whole drawing, not one path: both marks share an exclamation
+        // and differ by outline, which may be a <circle> rather than a path.
+        return container.querySelector(".smark")!.innerHTML;
       };
 
       expect(path("warning")).not.toBe(path("critical"));
+      // The OUTLINE differs, not just a coordinate inside it: a disc for
+      // critical (filled in CSS), and no disc on the warning triangle.
+      expect(path("critical")).toContain("<circle");
+      expect(path("warning")).not.toContain("<circle");
     });
 
     // And the word is still there for anyone not reading the row by eye.

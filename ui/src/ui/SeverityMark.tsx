@@ -5,24 +5,30 @@
 // list, where the word was the same four letters repeated down the leftmost
 // column and what a reader scans for is which rows have a mark at all.
 //
-// THE SECOND CHANNEL IS THE INTERIOR, and the first shipped version had
-// nothing of the sort. It drew its own paths: a filled triangle, and a filled
-// regular octagon at 13px. An octagon has eight sides, and eight sides across
-// thirteen pixels are sub-pixel corner cuts -- it rendered as a circle, which
-// is precisely the bare coloured dot Badge's required `children` exists to
-// prevent, and the triangle beside it was a solid blob. At a glance the pair
-// read as "a red thing" and "a yellow thing".
+// THE SECOND CHANNEL IS SHAPE AND WEIGHT, and the first shipped version had
+// neither. It drew its own paths: a filled triangle, and a filled regular
+// octagon at 13px. An octagon has eight sides, and eight sides across
+// thirteen pixels are sub-pixel corner cuts -- it rendered as a plain
+// disc, which is precisely the bare coloured dot Badge's required `children`
+// exists to prevent, and the triangle beside it was a solid blob. At a
+// glance the pair read as "a red thing" and "a yellow thing".
 //
 // lucide is this app's icon set -- the nav, the palette, the table chevron,
-// InfoTip, Button's spinner -- and it draws these properly: an outline with a
-// mark inside it, which is what makes an icon legible small. TriangleAlert
-// carries an exclamation and OctagonX a cross, so those two differ by
-// interior AND by outline, and either survives greyscale on its own. Drawing
-// our own was the mistake: a second channel is not something to freehand at
-// 13px.
+// InfoTip, Button's spinner -- and it draws these properly, with a mark
+// inside the outline, which is what makes an icon legible small. Drawing our
+// own was the mistake: a second channel is not something to freehand at 13px.
+//
+// Both marks carry an exclamation -- TriangleAlert and CircleAlert -- and
+// differ twice over, which survives greyscale: warning is an OUTLINED
+// triangle, critical a FILLED disc with the exclamation knocked out of it
+// (.smark.st-crit in index.css). Filled, because an outlined circle with a
+// mark inside is InfoTip's glyph turned upside down, and a reader who knows
+// that one would take a ringed "!" for a hint. Critical was OctagonX, a
+// cross, which read as "closed" or "dismiss" beside a hostname rather than
+// as "look here".
 //
 // TWO MARKS, not three. Offline is critical, and it draws critical's mark --
-// the same octagon, the same hue. It briefly had a bare X of its own, on the
+// the same circle, the same hue. It briefly had a bare X of its own, on the
 // argument that a host being gone is a different fact from a condition read
 // off a host that is answering, and that the two should therefore not share a
 // glyph. They are different facts, and the column still does not rank them:
@@ -37,13 +43,13 @@
 // label is the row's own word -- "offline", "never seen", "sporadic" -- so a
 // screen reader gets the specific fact rather than the severity band it falls
 // in, which is more than the mark says by eye.
-import { OctagonX, TriangleAlert } from "lucide-react";
+import { CircleAlert, TriangleAlert } from "lucide-react";
 
 export type MarkKind = "warning" | "critical";
 
 const MARKS = {
   warning: { Icon: TriangleAlert, cls: "st-warn" },
-  critical: { Icon: OctagonX, cls: "st-crit" },
+  critical: { Icon: CircleAlert, cls: "st-crit" },
 } as const;
 
 export function SeverityMark({
