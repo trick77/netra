@@ -16,11 +16,13 @@ import {
   areaPath,
   dotPath,
   extent,
+  gapSpans,
   linePath,
   mirrorCeilings,
   mirrorPaths,
   mirrorPeaks,
   mirrorStackBands,
+  solidSpans,
   stackBands,
 } from "./geometry";
 import {
@@ -28,6 +30,9 @@ import {
   AXIS_WIDTH,
   BAND_STROKE_WIDTH,
   BAND_Y_PAD,
+  GAP_DASH,
+  GAP_STROKE,
+  GAP_WIDTH,
   mirrorEdge,
   REFERENCE_DASH,
   REFERENCE_STROKE,
@@ -157,6 +162,13 @@ export interface ChartProps {
    * callers instead of hidden in two copies of the same component.
    */
   bandStroke?: number;
+  /**
+   * Draw a dotted rule across every stretch with no reading (see gapSpans),
+   * instead of leaving a hole. For the small trends only, and only for the
+   * line, area and mirror marks: a panel's grid and axis already carry a
+   * gap, and a dotted rule there would compete with the dotted grid.
+   */
+  gapRule?: boolean;
 }
 
 /**
@@ -187,6 +199,7 @@ export function Chart({
   cursor = null,
   onCursorChange,
   bandStroke = BAND_STROKE_WIDTH,
+  gapRule = false,
 }: ChartProps) {
   // React's useId, not a counter: two charts on one page must not mint the
   // same clip-path id, and a module-level counter is not stable across a
@@ -359,14 +372,14 @@ export function Chart({
           <MirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
         )}
         {mirrored && !mirrorStacked && (
-          <MirrorMarks {...{ series, w, h, max, pad }} />
+          <MirrorMarks {...{ series, w, h, max, pad, gapRule }} />
         )}
         {!mirrored && stacked && (
           <StackMarks {...{ series, w, h, max, pad, highlight, bandStroke }} />
         )}
         {!mirrored && !stacked && (
           <LineMarks
-            {...{ series, w, h, max, pad, highlight, floor }}
+            {...{ series, w, h, max, pad, highlight, floor, gapRule }}
             filled={mark === "area"}
           />
         )}
@@ -521,14 +534,14 @@ function MirrorMarks({
   h,
   max,
   pad,
+  gapRule = false,
 }: {
   series: ChartSeries[];
   w: number;
   h: number;
   max: number;
   pad: number;
-  /** Let each half use its own ceiling and the whole half-height. See
-   * mirrorPaths -- true only where no tick ladder claims a shared scale. */
+  gapRule?: boolean;
 }) {
   return (
     <>
@@ -629,16 +642,34 @@ function MirrorMarks({
                 coordinate: at an integer y it covers half the row above and
                 half the row below, rendering as a two-row smear that the
                 marks stand off rather than on. Offset, it fills exactly the
-                row the down half begins in. */}
-            <line
-              data-mid
-              x1={0}
-              x2={w}
-              y1={paths.mid + AXIS_WIDTH / 2}
-              y2={paths.mid + AXIS_WIDTH / 2}
-              stroke={ZERO_STROKE}
-              strokeWidth={AXIS_WIDTH}
-              shapeRendering="crispEdges"
+                row the down half begins in.
+
+                With gapRule the zero line is solid only where the pair has a
+                reading and dotted where neither half does: a solid zero
+                across a silent stretch reads as "0 B/s", which is a reading
+                nobody took. */}
+            <MidRule
+              y={paths.mid + AXIS_WIDTH / 2}
+              w={w}
+              gaps={
+                gapRule
+                  ? gapSpans(
+                      // The envelope counts as a reading: zero stays solid
+                      // under anything drawn above or below it.
+                      [up, ...(down ? [down] : [])].flatMap((s) => [
+                        s.values,
+                        s.band ?? [],
+                      ]),
+                      w,
+                      pad,
+                      // mirrorPaths draws a lone reading as a column this
+                      // wide; the rule must stop at its edge.
+                      w /
+                        Math.max(1, longest([up, ...(down ? [down] : [])])) /
+                        2,
+                    )
+                  : []
+              }
             />
             {paths.up !== "" && (
               <path
@@ -665,6 +696,68 @@ function MirrorMarks({
           </g>
         );
       })}
+    </>
+  );
+}
+
+/**
+ * A mirrored pair's zero line: one solid rule when there is no gap (the
+ * markup every caller drew before gapRule existed), otherwise solid pieces
+ * over the readings and a dotted rule over each silent stretch.
+ */
+function MidRule({
+  y,
+  w,
+  gaps,
+}: {
+  y: number;
+  w: number;
+  gaps: readonly { x1: number; x2: number }[];
+}) {
+  return (
+    <>
+      {solidSpans(gaps, w).map((s) => (
+        <line
+          key={`mid-${s.x1}`}
+          data-mid
+          x1={s.x1}
+          x2={s.x2}
+          y1={y}
+          y2={y}
+          stroke={ZERO_STROKE}
+          strokeWidth={AXIS_WIDTH}
+          shapeRendering="crispEdges"
+        />
+      ))}
+      <GapRules gaps={gaps} y={y} />
+    </>
+  );
+}
+
+/** The dotted rule over each span a small trend has no reading for. */
+function GapRules({
+  gaps,
+  y,
+}: {
+  gaps: readonly { x1: number; x2: number }[];
+  y: number;
+}) {
+  return (
+    <>
+      {gaps.map((g) => (
+        <line
+          key={`gap-${g.x1}`}
+          data-gap
+          x1={g.x1}
+          x2={g.x2}
+          y1={y}
+          y2={y}
+          stroke={GAP_STROKE}
+          strokeWidth={GAP_WIDTH}
+          strokeDasharray={GAP_DASH}
+          strokeLinecap="round"
+        />
+      ))}
     </>
   );
 }
@@ -874,6 +967,7 @@ function LineMarks({
   highlight,
   floor,
   filled,
+  gapRule = false,
 }: {
   series: ChartSeries[];
   w: number;
@@ -883,13 +977,30 @@ function LineMarks({
   highlight?: string;
   floor: number;
   filled: boolean;
+  gapRule?: boolean;
 }) {
   // One weight for the whole panel, read off the series count rather than
   // per series: every fill on this chart shares the baseline, so what makes
   // an overlap dark is how many of them there are.
   const fillOpacity = areaFillOpacity(series.length);
+  // ONE rule for the chart, silent only where every series (and every
+  // envelope) is: a per-series rule would mark a stretch empty under another
+  // series' reading. On the baseline the areas close to, raised half a
+  // stroke so the dots are not clipped on a strip drawn with pad 0.
+  //
+  // The baseline is the axis floor, which on a fitted axis is the window's
+  // lowest reading rather than zero. That is acceptable because the rule is
+  // dotted and unfilled: it never reads as a line sitting at that level.
+  const gaps = gapRule
+    ? gapSpans(
+        series.flatMap((s) => [s.values, s.band ?? []]),
+        w,
+        pad,
+      )
+    : [];
   return (
     <>
+      <GapRules gaps={gaps} y={h - Math.max(pad, GAP_WIDTH / 2)} />
       {series.map((s) => {
         const { paths, points } = linePath(s.values, w, h, floor, max, pad);
         const areas = filled ? areaPath(paths, w, h, pad) : [];

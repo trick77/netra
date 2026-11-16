@@ -143,6 +143,7 @@ export function UpDownSparkline({
       pad={pad}
       mark="mirror"
       label={label}
+      gapRule
     />
   );
 }
