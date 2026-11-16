@@ -20,11 +20,7 @@ import {
   SPARK_STRIP_HEIGHT,
   SPARK_WIDTH,
 } from "../../ui/charts/size";
-import {
-  DOWN_COLOR,
-  UP_COLOR,
-  UpDownSparkline,
-} from "../../ui/charts/UpDownSparkline";
+import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
 import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting, type HostStatus } from "../../lib/host";
@@ -35,6 +31,8 @@ import {
   MAX_PER_CORE,
   cpuBands,
   fetchHostFamily,
+  TRAFFIC_IN,
+  TRAFFIC_OUT,
   trafficDetailSeries,
   trafficSeries,
 } from "./hostTrends";
@@ -747,8 +745,8 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         className="inline"
         unit="B/s"
         series={[
-          { name: "in", color: UP_COLOR, values: row.rx },
-          { name: "out", color: DOWN_COLOR, values: row.tx },
+          { name: "in", color: TRAFFIC_IN, values: row.rx },
+          { name: "out", color: TRAFFIC_OUT, values: row.tx },
         ]}
         mirrored
         // What the DIALOG draws on open, before any refetch: the mean as the
@@ -762,23 +760,19 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         ranges={RAIL_RANGES}
         fetchSeries={fetchSeries}
       >
-        {/* --in-1/--out-1, the sparkline's own defaults and the hues the
-            enlarged chart names its bands in. The cell was briefly two steps
-            of grey, to stop it being the one saturated mark in a row of
-            neutral silhouettes; the three beside it carry severity colour
-            again, so the odd one out now is the cell with no severity to
-            carry. Hue is what separates in from out here -- a rate has no
-            ceiling, so there is no threshold for it to mean instead, and
-            mirrored around a midline two greys fuse into one shape.
-
-            Those two hues ARE the status green and amber now (index.css owns
-            the argument). Nothing about this cell means severity: the green
-            is not "ok" and the amber is not "warning", they are inbound and
-            outbound bytes. The rail, the dot and the word all sit left of
-            here and are the only marks on the row that carry state. */}
+        {/* --traffic-in/--traffic-out, two greys, and the enlarged chart
+            names its bands in the same pair. The cell drew the status green
+            and amber for a while, which was survivable only while the three
+            cells beside it carried severity colour too; with healthy
+            readings neutral it was the one saturated mark on a quiet row,
+            and its permanent amber competed with the amber that means
+            "warning". In and out are told apart by side of the midline and
+            by lightness, and the rates beside the chart name them. */}
         <UpDownSparkline
           up={row.rx}
           down={row.tx}
+          upColor={TRAFFIC_IN}
+          downColor={TRAFFIC_OUT}
           // The peak envelope, which the row has carried since trafficSeries
           // started computing it and this cell alone dropped on the floor.
           //
