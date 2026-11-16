@@ -494,15 +494,14 @@ describe("containerColumns", () => {
 
   // The one filled colour a container row can honestly carry, and the one
   // question a memory sparkline cannot answer: how close to being OOM-killed.
-  it("bars memory against the container's own limit", () => {
-    const { container } = renderRows(
-      [makeRow({ mem: [900], mem_limit_bytes: 1000, cpu: [1] })],
-      { cpuMax: 1, memMax: 1000 },
-    );
-    // The fleet row's segmented bar, not this list's old continuous Meter.
-    const bar = container.querySelector(".segbar");
-    expect(bar).not.toBeNull();
-    expect(bar!.getAttribute("aria-valuenow")).toBe("90");
+  it("reads memory against the container's own limit", () => {
+    renderRows([makeRow({ mem: [900], mem_limit_bytes: 1000, cpu: [1] })], {
+      cpuMax: 1,
+      memMax: 1000,
+    });
+    // The fleet row's own figure, judged by the same 70/95.
+    const fig = screen.getByLabelText(/^Memory now, .* 90 %$/);
+    expect(fig.className).toBe("fig st-warn");
     expect(screen.getByText("of 1 kB")).toBeInTheDocument();
   });
 
@@ -510,8 +509,8 @@ describe("containerColumns", () => {
   // real fleet is nearly all of them -- used to draw a silhouette with no bar
   // and no figure at all. Measured against the host it is holding 20 % of the
   // machine, and the caption says which denominator that is.
-  it("bars an unlimited container against the host's memory", () => {
-    const { container } = renderRows(
+  it("reads an unlimited container against the host's memory", () => {
+    renderRows(
       [
         makeRow({
           mem: [2_000_000_000],
@@ -522,9 +521,7 @@ describe("containerColumns", () => {
       ],
       { cpuMax: 1, memMax: 1e10 },
     );
-    const bar = container.querySelector(".segbar");
-    expect(bar).not.toBeNull();
-    expect(bar!.getAttribute("aria-valuenow")).toBe("20");
+    expect(screen.getByLabelText(/^Memory now, .* 20 %$/)).toBeInTheDocument();
     expect(screen.getByText(/host$/)).toBeInTheDocument();
   });
 
@@ -535,7 +532,7 @@ describe("containerColumns", () => {
       [makeRow({ mem: [900], mem_limit_bytes: null, cpu: [1] })],
       { cpuMax: 1, memMax: 1000 },
     );
-    expect(container.querySelector(".segbar")).toBeNull();
+    expect(container.querySelector(".fig[aria-label^='Memory']")).toBeNull();
   });
 
   // cpu_pct is percent of ONE core, so ordering on it ranked a container using
@@ -669,7 +666,7 @@ describe("containerGroupReading", () => {
 });
 
 describe("containerGroupCells", () => {
-  it("puts the group's bars in the CPU and Memory columns", () => {
+  it("puts the group's figures in the CPU and Memory columns", () => {
     const cells = containerGroupCells([
       makeRow({
         cpu: [40],
@@ -686,11 +683,9 @@ describe("containerGroupCells", () => {
       </>,
     );
 
-    const bars = container.querySelectorAll(".segbar");
-    expect(bars).toHaveLength(2);
+    const figs = [...container.querySelectorAll(".fig")];
     // 40 % of one core over two of them, and 1024 of 4096.
-    expect(bars[0]!.getAttribute("aria-valuenow")).toBe("20");
-    expect(bars[1]!.getAttribute("aria-valuenow")).toBe("25");
+    expect(figs.map((f) => f.textContent)).toEqual(["20%", "25%"]);
     // The bare denominator: a heading is always a share of one machine, so
     // there is nothing to tell it apart from.
     expect(screen.getByText("of 4 KiB")).toBeInTheDocument();
@@ -912,7 +907,9 @@ describe("a host that cannot collect containers at all", () => {
     )!;
     const { container } = render(<>{cpu.cell(makeRow({ cpu: [1, 2, 34] }))}</>);
 
-    expect(container.querySelector(".metric-read .v")?.textContent).toBe("34%");
+    // No host thread count on this fixture: the raw figure, no severity.
+    expect(container.querySelector(".treading .fig")?.textContent).toBe("34%");
+    expect(container.querySelector(".treading .fig")?.className).toBe("fig");
   });
 
   // The meter says how close to the limit; it never said what the limit IS,
@@ -931,7 +928,7 @@ describe("a host that cannot collect containers at all", () => {
     // A bar that says how close to the limit without saying what the limit IS
     // reads identically for two containers with a tenfold difference in
     // headroom.
-    expect(container.querySelector(".metric-now-wrap .u")?.textContent).toBe(
+    expect(container.querySelector(".treading > .u")?.textContent).toBe(
       "of 2 GB",
     );
   });

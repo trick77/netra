@@ -348,14 +348,3 @@ export const GAP_WIDTH = 1.25;
  */
 export const ZERO_STROKE = "var(--axis)";
 export const ZERO_WIDTH = 1;
-
-// A saturation cell is as wide as the sparkline it draws, from the same
-// constant the chart uses, so the now-bar under a chart is exactly the chart's
-// width. Inline rather than a CSS literal: the stylesheet has copied
-// SPARK_WIDTH before and been left behind when it moved (see the note above
-// .tablewrap svg.spark in index.css).
-//
-// Here rather than in hostColumns because the CONTAINER list draws the same
-// cell now. Two copies of 175 in two files is exactly the drift the note this
-// comment points at describes happening once already.
-export const METRIC_CELL_STYLE = { width: SPARK_WIDTH };

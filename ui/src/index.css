@@ -1290,7 +1290,12 @@ tbody tr:hover .host-cell-name {
      which sets its own width below. */
   min-width: 3.6em;
 }
-.treading .u {
+/* Direct children only: the enlarged chart (Enlargeable renders ChartDetail
+   inside the trend, not in a portal) carries a .u of its own in its header,
+   and a descendant rule would restyle the dialog's unit. */
+.treading > .u,
+.treading-head > .u,
+.group-reading > .u {
   grid-column: 1 / -1;
   display: flex;
   gap: 5px;
@@ -1328,9 +1333,19 @@ tbody tr:hover .host-cell-name {
   text-transform: uppercase;
   color: var(--muted);
 }
-.treading-head .u {
+.treading-head > .u {
   margin-left: auto;
   min-width: 0;
+}
+/* A container group's heading: the figure and its unit on one line, no
+   trend (there is no series to sum). */
+.group-reading {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.group-reading .fig {
+  font-size: var(--text-ui);
 }
 .treading.tr-card .treading-trend {
   min-width: 0;
@@ -1402,74 +1417,6 @@ tbody tr:hover .host-cell-name {
   align-items: center;
   gap: var(--space-3);
 }
-/* The container list's CPU and Memory: the sparkline on top where there is
-   one, and under it the now-line -- a ten-cell bar for the current value
-   with the figure beside it (see ui/NowReading.tsx). The width is set inline
-   from SPARK_WIDTH, never here. */
-.metric-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-}
-.metric-now-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  width: 100%;
-}
-.metric-now {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-}
-/* The figure's type is .metric-read's, shared by selector below rather than
-   copied, so a fleet row and a container row print the same kind of number.
-   What is this cell's own: a fixed width, right-aligned, so the figures form
-   a column down the page beside bars of one width. */
-.metric-now .v {
-  width: 44px;
-  flex: none;
-  text-align: right;
-  white-space: nowrap;
-  line-height: 1.2;
-}
-/* The figure takes the bar's severity, because they are one reading. Text
-   steps, never the mark's hue -- see the --st-*-text note in the palette.
-   ok has no rule: it keeps the figure's own ink (.metric-now .v), since
-   colour on a reading means "look here". */
-.metric-now .v.st-warn {
-  color: var(--st-warn-text);
-}
-.metric-now .v.st-crit {
-  color: var(--st-crit-text);
-}
-/* The unit line under the bar. Scoped to .metric-now-wrap and NOT to the
-   cell: the enlarged chart (Enlargeable renders ChartDetail as a sibling
-   inside the cell, not in a portal) carries a .u of its own in its header,
-   and a cell-wide rule restyled the CPU dialog's unit to micro grey.
-
-   A flex row so the disk cell's two halves can share it: the mount gives way
-   and ellipsises, the bytes-left figure never does -- it is the fact the
-   percentage cannot say on its own, so a long mount must not truncate it
-   away. Plain text ("of 8 cores") is one flex item and lays out as before. */
-.metric-now-wrap .u {
-  display: flex;
-  gap: 5px;
-  min-width: 0;
-  max-width: 100%;
-  white-space: nowrap;
-  line-height: 1.25;
-}
-.metric-now-wrap .dmount {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.metric-now-wrap .dfree {
-  flex: none;
-}
 /* The ten-cell bar. Unlit cells are the track colour the Meter uses, lit
    ones take the severity token the Meter fills with, so the disk meter on
    the host page and this bar in the fleet row say the same thing in the same
@@ -1532,57 +1479,6 @@ tbody tr:hover .host-cell-name {
 .segbar.s4 i.on {
   background: var(--s4);
 }
-.metric-read {
-  display: flex;
-  flex-direction: column;
-  /* Fixed and right-aligned, so the figures form a column: with the block
-     sized to its text, "8 %" and "100 %" started at different x and the eye
-     had to find each number instead of reading down them. 78px holds
-     "100 %" and "216.3 kB/s" without wrapping. */
-  width: 78px;
-  text-align: right;
-  align-items: flex-end;
-  /* flex:none for the same reason .traffic-rates has it: a reading that gave
-     way would wrap a percentage mid-number. */
-  flex: none;
-  line-height: 1.35;
-}
-/* Shared with the fleet's now-line (.metric-now, above): one ruleset for
-   the figure, its unit and the line under it, so the two lists cannot drift
-   apart in type. */
-.metric-read .v,
-.metric-now .v {
-  font-size: var(--text-ui);
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-/* The unit rides the figure a step smaller -- "34 %", not "34%". At the same
-   size the percent sign reads as a digit, which is exactly what a column of
-   tabular figures does not need. */
-.metric-read .v small,
-.metric-now .v small {
-  font-size: var(--text-micro);
-  color: var(--muted);
-  margin-left: 2px;
-}
-/* In the fleet's now-line the percent sign takes the figure's severity with
-   it. Grey there split one reading in two: an amber "76" beside a grey "%"
-   read as a number that had half changed its mind, and the sign is part of
-   what the figure says, not a label beside it. Size still steps down, so it
-   stays a unit and not another digit. */
-.metric-now .v small {
-  color: inherit;
-}
-/* The unit line -- "of 8 cores", "of 62.8 GiB". --muted-2, the same step the
-   location under a hostname takes: it says what the figure above it is
-   measured against and is never itself the reading. */
-.metric-read .u,
-.metric-now-wrap .u {
-  font-size: var(--text-micro);
-  color: var(--muted-2);
-  font-variant-numeric: tabular-nums;
-}
 /* No min-width:0 on the chart, deliberately. svg.spark carries
    `max-width:100%; height:auto`, so a horizontal squeeze costs HEIGHT as well
    as width -- and height is the one thing moving the rates out of the way was
@@ -1638,8 +1534,7 @@ tbody tr:hover .host-cell-name {
      45px it no longer does -- left at flex-start the rates hang off the top
      of the mark they annotate. */
   justify-content: center;
-  /* A fixed block, like .metric-read in the container list, so a column of
-     rates starts at one x. Left-aligned, not right: each
+  /* A fixed block, so a column of rates starts at one x. Left-aligned, not right: each
      line opens with its direction, and those two words are what a reader
      scans down, not the digits.
 
@@ -1693,7 +1588,7 @@ tbody tr:hover .host-cell-name {
    is the same word on every row and the figure is what changes.
 
    Set to the unit line's type -- --text-micro at --muted-2, the same pair
-   .metric-now-wrap .u uses for "of 8 cores" -- because that is the same job.
+   a reading's .u uses for "of 8 cores" -- because that is the same job.
    Both name what the figure beside them is measured against and neither is
    ever the reading. Inheriting .traffic-rates' --text-label drew these words
    a step larger than every other label in the row, so the one part of the
@@ -3412,8 +3307,8 @@ details.sysfold > .body {
    the first track and the figure at the far right of whatever the row
    happened to be wide -- fine while the bar stretched to fill that track, and
    half a page of empty space once every bar in the app became the fleet's
-   fixed ten cells. Bar and figure are one reading and now sit together, the
-   way the fleet row has always drawn them (.metric-now). The figures still
+   fixed ten cells. Bar and figure are one reading and now sit together. The
+   figures still
    form a column down a card because the bar in front of them is one width. */
 .mrow {
   padding: 9px 0;
@@ -3434,9 +3329,8 @@ details.sysfold > .body {
 }
 /* A reading drawn under the chart it qualifies, inside the panel: the
    container memory meter under the memory chart. Scoped rather than given its
-   own Meter prop, for the same reason .disk-cell and .fs-list below are --
-   Meter is shared by the fleet's disk cell and the host's filesystem list, and
-   what changes here is placement, not the component.
+   own Meter prop, for the same reason .fs-list below is -- Meter is shared
+   across pages, and what changes here is placement, not the component.
 
    The label is hidden because the panel title already carries it. What used
    to be here as well -- a value column sized to its text -- is gone with the
@@ -3453,16 +3347,6 @@ details.sysfold > .body {
 }
 .smp .foot .lab {
   display: none;
-}
-/* The fleet's disk cell is a plain .metric-cell -- one line for the mount it
-   names over the now-bar, the figure and the unit line, see the .metric-cell
-   rules -- so nearly all of what used to be here (its own column, Meter's row
-   collapsed to a bare bar, a 132px top line) is gone with the Meter. What
-   stays is the one thing about it that differs: the mount on the unit line is
-   a name a reader scans for, so it sits a step above the "3.2 GB left" beside
-   it. */
-.disk-cell .dmount {
-  color: var(--ink-2);
 }
 /* The host page's filesystem list. Every mount carries a bar, not just the
    fullest one: a card that lists six filesystems as text makes a reader
@@ -4797,8 +4681,8 @@ tbody:first-of-type .grouprow th {
    and memory as spans floating after its name, so a heading's figures and the
    readings underneath it sat in different places and could not be compared by
    eye -- which is the whole thing a grouped table is for. The heading is a row
-   of real cells now (Table's `cells`), carrying .metric-cell in the CPU and
-   Memory columns over the same denominators as the rows beneath. */
+   of real cells now (Table's `cells`), carrying the group's figure in the
+   CPU and Memory columns over the same denominators as the rows beneath. */
 .grouprow .proj {
   color: var(--ink);
   font-weight: 500;
@@ -4846,8 +4730,8 @@ tbody:first-of-type .grouprow th {
    rest of the app. The image under the name is NOT in this set: it is a
    .host-cell-site, the fleet's location line, and takes that line's size so
    the two lists print their second line alike. */
-.ctr-list .metric-now-wrap .u,
-.ctr-list .metric-read .u,
+.ctr-list .treading > .u,
+.ctr-list .group-reading > .u,
 .ctr-list .age {
   font-size: 13px;
 }
@@ -4887,12 +4771,8 @@ tbody:first-of-type .grouprow th {
   }
 }
 
-/* .mem-cell, .climit and .ccell are gone. The container list's CPU and memory
-   cells are .metric-cell now -- the same chart, segmented bar, figure and
-   denominator line the fleet's host row draws -- so the three shapes this list
-   kept for itself have nothing left rendering them. See the note above
-   .metric-cell, and NowReading, whose docstring named this list as the one
-   surface still drawing the older form.
+/* The container list's CPU and memory cells are the fleet host row's own
+   reading (ui/TrendReading): one figure, one trend, the denominator line.
 
    Docker's restart counter, as a mark beside a container's name. Only ever
    drawn above zero: a literal 0 on four hundred healthy rows is noise wearing

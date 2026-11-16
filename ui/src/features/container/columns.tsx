@@ -45,7 +45,7 @@
 //   - NET RX/TX and DISK I/O have no denominator. A rate has no ceiling to
 //     fill a bar against, so it cannot join the two saturation columns below,
 //     and that is the same reason the fleet host row draws traffic as a pair
-//     of rates rather than a metric-cell. They are one array literal away in
+//     of rates rather than a percentage. They are one array literal away in
 //     hostTrends.ts and the container detail page already charts all four.
 //
 // The Status column is not that column. It says nothing Docker told us -- it
@@ -67,13 +67,17 @@
 import type { ReactNode } from "react";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
-import { Reading } from "../../ui/Reading";
 import { When } from "../../ui/When";
 import { severityFromPercent, trendColor } from "../../ui/Meter";
-import { NowReading } from "../../ui/NowReading";
-import { METRIC_CELL_STYLE } from "../../ui/charts/size";
+import { Figure, TrendReading } from "../../ui/TrendReading";
 import type { Column } from "../../ui/Table";
-import { ABSENT, absolute, binaryBytes, bytes } from "../../lib/format";
+import {
+  ABSENT,
+  absolute,
+  binaryBytes,
+  bytes,
+  ofCores,
+} from "../../lib/format";
 import type { Container } from "../../lib/api";
 import { rangeMs, type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
@@ -524,34 +528,28 @@ export function containerGroupCells(
 ): Record<string, ReactNode> {
   const { cpuPct, memPct, threads, memTotal } = containerGroupReading(rows);
 
-  // The same block a row draws, minus the silhouette: there is no series to
-  // sum, and a heading is a reading of now rather than a history. Everything
-  // else is identical -- the same ten cells, the same 70/95, the same
-  // denominator -- which is the entire point of putting it in the column.
+  // The figure a row prints, minus the trend: there is no series to sum, and
+  // a heading is a reading of now rather than a history. Everything else is
+  // identical -- the same figure, the same 70/95, the same denominator --
+  // which is the entire point of putting it in the column.
   return {
     cpu:
-      cpuPct === null ? null : (
-        <div className="metric-cell" style={METRIC_CELL_STYLE}>
-          <NowReading
-            pct={cpuPct}
-            label="CPU for this group"
-            under={`of ${threads} core${threads === 1 ? "" : "s"}`}
-          />
-        </div>
+      cpuPct === null || threads === null ? null : (
+        <span className="group-reading">
+          <Figure pct={cpuPct} label="CPU for this group" />
+          <span className="u">{ofCores(threads)}</span>
+        </span>
       ),
     memory:
       memPct === null || memTotal === null ? null : (
-        <div className="metric-cell" style={METRIC_CELL_STYLE}>
-          <NowReading
-            pct={memPct}
-            label="Memory for this group"
-            // The bare form, with no ` host` suffix: a heading is always a
-            // share of one machine, so there is nothing to tell it apart
-            // from. A row says "of 62.6 GiB host" only because the row beside
-            // it might be saying "of 4.0 GB" about a limit.
-            under={`of ${binaryBytes(memTotal)}`}
-          />
-        </div>
+        <span className="group-reading">
+          <Figure pct={memPct} label="Memory for this group" />
+          {/* The bare form, with no ` host` suffix: a heading is always a
+              share of one machine, so there is nothing to tell it apart
+              from. A row says "of 62.6 GiB host" only because the row
+              beside it might be saying "of 4.0 GB" about a limit. */}
+          <span className="u">{`of ${binaryBytes(memTotal)}`}</span>
+        </span>
       ),
   };
 }
@@ -725,18 +723,16 @@ function nameOf(row: ContainerRow): string {
 }
 
 /**
- * The memory cell: the trend, then the bar and the figure it ends on.
+ * The memory cell: the figure it ends on, and the trend.
  *
- * The fleet host row's own composition -- metric-cell, NowReading, SegmentBar
- * -- rather than a Meter of this list's own. Those were two shapes for one
- * job, and NowReading's docstring named this list as the surface still drawing
- * the older one.
+ * The fleet host row's own reading (TrendReading) rather than a shape of
+ * this list's own, so a host and its containers read alike.
  *
- * The bar judges 70/95 like every other reading in the app, the share-of-host
- * case included: NowReading leaves severity unset everywhere, deliberately,
- * because a bar answers "what does this number say". The row's RAIL is what
- * stays limit-only (see containerSeverity) -- holding 64 % of a box you were
- * given warns in the bar without striping the row.
+ * The figure judges 70/95 like every other reading in the app, the
+ * share-of-host case included, because a figure answers "what does this
+ * number say". The row's RAIL is what stays limit-only (see
+ * containerSeverity) -- holding 64 % of a box you were given warns in the
+ * figure without striping the row.
  */
 function MemoryCell({
   row,
@@ -763,34 +759,34 @@ function MemoryCell({
       ? row.mem_limit_bytes
       : null;
 
+  const known = pct !== null && under !== null;
   return (
-    <div className="metric-cell" style={METRIC_CELL_STYLE}>
-      {/* The chart is the button that enlarges it -- only the chart, not the
-          bar beside it: the bar answers "how close to being killed" at a
-          glance and has nothing bigger to show. */}
-      <ContainerChart
-        row={row}
-        metric="mem"
-        values={row.mem}
-        window={row.window ?? null}
-        // Against its OWN limit when it has one -- that is what "how close to
-        // being killed" means -- and against the list's largest container when
-        // it does not, so the unlimited ones stay comparable with each other.
-        // NOT the host total: scaling every unlimited container against the
-        // machine would flatten all of them into the floor of the chart.
-        max={ownLimit ?? memMax}
-        range={range}
-        ranges={ranges}
-        color={trendColor(pct)}
-      />
-      {pct !== null && under !== null && (
-        <NowReading
-          pct={pct}
-          label={`Memory now, ${nameOf(row)}`}
-          under={under}
+    <TrendReading
+      figure={
+        known ? <Figure pct={pct} label={`Memory now, ${nameOf(row)}`} /> : null
+      }
+      under={known ? under : undefined}
+      trend={(width, height) => (
+        <ContainerChart
+          row={row}
+          metric="mem"
+          values={row.mem!}
+          window={row.window ?? null}
+          // Against its OWN limit when it has one -- that is what "how close
+          // to being killed" means -- and against the list's largest
+          // container when it does not, so the unlimited ones stay comparable
+          // with each other. NOT the host total: scaling every unlimited
+          // container against the machine would flatten all of them into the
+          // floor of the chart.
+          max={ownLimit ?? memMax}
+          range={range}
+          ranges={ranges}
+          color={trendColor(pct)}
+          width={width}
+          height={height}
         />
       )}
-    </div>
+    />
   );
 }
 
@@ -803,10 +799,9 @@ function MemoryCell({
  * comparable across a mixed fleet, and it is exactly what the fleet host row
  * does with cpu_total.
  *
- * With NO denominator the figure still prints but the bar does not. A
- * SegmentBar clamps at ten lit cells, so it would report a container at 300 %
- * as merely saturated -- an assertion nobody measured -- while the raw
- * percentage remains a true thing to say.
+ * With NO denominator the raw figure still prints, without a severity: a
+ * container at 300 % of one core has no 70/95 to be judged against, while
+ * the raw percentage remains a true thing to say.
  */
 function CpuCell({
   row,
@@ -828,27 +823,32 @@ function CpuCell({
   const pct = busy !== null && threads !== null ? busy / threads : null;
 
   return (
-    <div className="metric-cell" style={METRIC_CELL_STYLE}>
-      <ContainerChart
-        row={row}
-        metric="cpu"
-        values={row.cpu}
-        window={row.window ?? null}
-        max={cpuMax}
-        range={range}
-        ranges={ranges}
-        color={trendColor(pct)}
-      />
-      {pct !== null ? (
-        <NowReading
-          pct={pct}
-          label={`CPU now, ${nameOf(row)}`}
-          under={`of ${threads} core${threads === 1 ? "" : "s"}`}
+    <TrendReading
+      figure={
+        pct !== null ? (
+          <Figure pct={pct} label={`CPU now, ${nameOf(row)}`} />
+        ) : busy !== null ? (
+          // No denominator: the raw percent of one core is still true, but
+          // it has no 70/95 to be judged by, so it carries no severity.
+          <Figure pct={busy} label={`CPU now, ${nameOf(row)}`} unjudged />
+        ) : null
+      }
+      under={pct !== null && threads !== null ? ofCores(threads) : undefined}
+      trend={(width, height) => (
+        <ContainerChart
+          row={row}
+          metric="cpu"
+          values={row.cpu!}
+          window={row.window ?? null}
+          max={cpuMax}
+          range={range}
+          ranges={ranges}
+          color={trendColor(pct)}
+          width={width}
+          height={height}
         />
-      ) : (
-        busy !== null && <Reading value={String(Math.round(busy))} unit="%" />
       )}
-    </div>
+    />
   );
 }
 

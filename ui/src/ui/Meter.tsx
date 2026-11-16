@@ -130,7 +130,8 @@ export function severityFromPercent(
  * The app's own spelling of a severity as a class: st-ok, st-warn,
  * st-crit (see the status pair in index.css). One map, beside
  * the function that decides the severity, so a bar and the figure printed
- * next to it -- SegmentBar and NowReading -- cannot spell it differently.
+ * next to it -- SegmentBar and the reading's Figure -- cannot spell it
+ * differently.
  */
 export const SEVERITY_CLASS: Record<FillSeverity, string> = {
   ok: "st-ok",
@@ -196,8 +197,8 @@ function Row({
   // 1fr/92px grid, which made sense while the bar stretched to fill the 1fr;
   // with the bar at one fixed width everywhere (see .segbar), that grid put
   // the Overview's Disk panel bar at the left edge and its percentage most of
-  // a page away. The fleet row has always drawn the two together
-  // (.metric-now) for the reason that they are one reading. The figures still
+  // a page away. The fleet row draws a figure beside its trend for the
+  // reason that they are one reading. The figures still
   // line up down the card, because every bar in the app is now the same
   // width.
   return (

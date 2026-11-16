@@ -63,6 +63,9 @@ export interface ContainerChartProps {
    * colour.
    */
   color?: string;
+  /** The trend's size, from the TrendReading it is drawn in. */
+  width?: number;
+  height?: number;
 }
 
 export function ContainerChart({
@@ -74,6 +77,8 @@ export function ContainerChart({
   window: answered = null,
   ranges,
   color,
+  width,
+  height,
 }: ContainerChartProps) {
   const spec = SPEC[metric];
   // What a reader calls it, for the accessible name: twenty rows of
@@ -128,6 +133,8 @@ export function ContainerChart({
         min={0}
         max={max}
         color={color ?? spec.color}
+        width={width}
+        height={height}
         label={`${spec.title} trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
