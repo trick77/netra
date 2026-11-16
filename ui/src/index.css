@@ -1274,15 +1274,13 @@ tbody tr:hover .host-cell-name {
   row-gap: 2px;
 }
 /* The one cell a table hands its spare width to: the trend takes the rest
-   of the column. minmax(0, ...) so the trend's own measured width never
-   feeds back into the column's min-content and grows the table. */
-.treading.tr-cell.tr-fluid {
-  grid-template-columns: auto minmax(0, 1fr);
-}
+   of the column. Its track is minmax(READING_SPARK_WIDTH, 1fr), set inline
+   by TrendReading, so the trend's own measured width never feeds back into
+   the column's min-content, and a column narrower than the fixed trend
+   makes the table scroll instead of clipping the newest data. */
 .treading.tr-cell.tr-fluid .treading-trend {
   display: block;
   min-width: 0;
-  overflow: hidden;
 }
 .treading.tr-cell .treading-fig {
   /* Fixed, so the trends in a column start at one x whatever the figure
@@ -1305,6 +1303,16 @@ tbody tr:hover .host-cell-name {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   line-height: 1.25;
+}
+/* In a table cell the line is as wide as the figure and trend above it and
+   no wider: width 0 takes it out of the column's min-content, min-width
+   100% fills the cell. Without it a long mount path (an overlay2 merge
+   dir) set the Filesystem column's width and the .dmount ellipsis never
+   applied. */
+.treading.tr-cell > .u {
+  width: 0;
+  min-width: 100%;
+  overflow: hidden;
 }
 .treading .dmount {
   min-width: 0;
@@ -1334,8 +1342,13 @@ tbody tr:hover .host-cell-name {
   color: var(--muted);
 }
 .treading-head > .u {
-  margin-left: auto;
   min-width: 0;
+}
+/* Everything after the label goes right, so the figure sits at the card's
+   right edge in every band, whether or not that band has a measured-against
+   line (Traffic has none, an offline CPU loses its). */
+.treading-head > .k {
+  margin-right: auto;
 }
 /* A container group's heading: the figure and its unit on one line, no
    trend (there is no series to sum). */
@@ -1360,13 +1373,17 @@ tbody tr:hover .host-cell-name {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.treading.tr-card .fig {
-  font-size: 17px;
-}
 .fig small {
   font-size: var(--text-micro);
   color: var(--muted-2);
   margin-left: 2px;
+}
+/* A severity's unit rides with its figure: a red "96" beside a grey "%"
+   reads as two things rather than one reading. Same rule as a host tile's
+   (.tile[class*="sev-"] .v .u). */
+.fig.st-warn small,
+.fig.st-crit small {
+  color: inherit;
 }
 /* Two classes, so it beats the generic single-class .st-ok text rule that
    badges use to say ok in green. */
@@ -1404,19 +1421,6 @@ tbody tr:hover .host-cell-name {
   width: auto;
 }
 
-/* Traffic cell — the up/down sparkline with both rates BESIDE it, not under
-   it. Stacked, the two lines of type made this the tallest cell in the fleet
-   row and so set the height of every row on the page; beside the chart they
-   cost width, which the row has, instead of height, which it does not. Both
-   rates render in identical type on purpose: netra cannot know whether a
-   host is meant to push or pull more, so weighting one would assert a
-   direction that is not true. */
-.traffic-cell {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-3);
-}
 /* The ten-cell bar. Unlit cells are the track colour the Meter uses, lit
    ones take the severity token the Meter fills with, so the disk meter on
    the host page and this bar in the fleet row say the same thing in the same
@@ -1479,27 +1483,10 @@ tbody tr:hover .host-cell-name {
 .segbar.s4 i.on {
   background: var(--s4);
 }
-/* No min-width:0 on the chart, deliberately. svg.spark carries
-   `max-width:100%; height:auto`, so a horizontal squeeze costs HEIGHT as well
-   as width -- and height is the one thing moving the rates out of the way was
-   meant to buy. Every sparkline in a fleet row gives way together under that
-   rule.
-
-   In the fleet table it never comes to that: `.tablewrap svg.spark` takes the
-   max-width off, so the cells hold their width and the BOX scrolls.
-   Measured against the simulated fleet, traffic, CPU and memory all rendered
-   at their full 150px at 1440px, and still at 1100px, where the wrap is 987
-   wide inside 823 and scrolls (measured while a fourth, filesystem, was still
-   in the row and all three charts were 150x45; CPU and memory are now a
-   150x26 strip over a now-line, which changes the heights and not the
-   argument). What this rule protects is
-   therefore the OTHER placements of the cell, and the shape of the failure it
-   protects them from: .traffic-rates never shrinks, so ~110px of the cell is
-   spoken for before the chart gets any, and min-width:0 would hand the whole
-   squeeze to the chart -- which pays for it in height. Letting this cell WRAP
-   (what .card does below, where the chart is the only item that can give)
-   would make traffic the largest chart in the row and put the row height
-   straight back. */
+/* The traffic reading's figure: both rates, stacked. Both render in
+   identical type on purpose: netra cannot know whether a host is meant to
+   push or pull more, so weighting one would assert a direction that is not
+   true. */
 .traffic-rates {
   display: flex;
   /* Stacked, so the pair is two short lines against the chart rather than one
@@ -1559,21 +1546,6 @@ tbody tr:hover .host-cell-name {
      step louder than the disk figure they sit next to, which made two
      equally important columns look ranked. */
   color: var(--muted);
-}
-/* The host page's Overview Traffic card is the one place this cell is neither
-   a tile nor inside a scrolling table: it is a column of .grid2, so it simply
-   gets narrower with the window and the chart is the only item that can give.
-   Measured with the real tokens: at a 350px card the 260x64 sparkline draws
-   192x47, and at 390px viewport 15x4 -- a hairline, because .traffic-rates
-   never shrinks. Wrapping is the fix that keeps the intent: while the rates
-   fit beside the chart nothing changes, and when they no longer do they drop
-   underneath a FULL-SIZE chart instead of squeezing it. Scoped to .card so the
-   fleet table keeps the shared shrink-together behaviour argued for above. */
-.card .traffic-cell {
-  flex-wrap: wrap;
-  /* Beside the chart the gap is horizontal (--space-3); once wrapped it is the
-     stacked cell's 2px, not 12px of dead space under the mark. */
-  row-gap: 2px;
 }
 .rate {
   font-variant-numeric: tabular-nums;
@@ -1651,12 +1623,6 @@ tbody tr:hover .host-cell-name {
 .rail-critical td:first-child {
   box-shadow: inset 3px 0 0 var(--st-crit);
 }
-
-/* A container row's CPU cell: the chart, and the reading it ends on beside
-   it. Same shape and same reasoning as .traffic-cell on the fleet row -- the
-   number costs width, which the row has, rather than height, which it does
-   not, and it stays --muted because the sparkline is the subject and this
-   annotates it. */
 
 /* A shell command the reader is meant to copy. .ai-cmd above is the inline
    peer of this, scoped to the drawer; both take their face and ground from
@@ -3719,26 +3685,31 @@ a.tile:focus-visible {
   position: relative;
   z-index: 1;
 }
+/* The label and the figure in the type a fleet card's reading uses
+   (.treading-head .k, .fig), so a host's tile one click away from its card
+   reads as the same reading. */
 .tile .k {
   display: block;
   font-size: var(--text-micro);
   line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 .tile .v {
   display: block;
-  margin-top: 2px;
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.05;
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
 .tile .v .u {
   font-size: var(--text-micro);
   font-weight: 400;
-  color: var(--ink-2);
-  margin-left: 3px;
+  color: var(--muted-2);
+  margin-left: 2px;
 }
 /* The unit rides with its figure. `.u` sets its own colour, and a colour set
    directly on an element beats one inherited from the parent however specific
@@ -4172,14 +4143,13 @@ svg.spark {
   height: auto;
 }
 /* Except inside a scrolling table, where shrinking is the wrong answer to a
-   narrow viewport. A fleet row's other cells do not give -- .traffic-rates is
-   flex:none, the host name and the disk meter have their own minimums -- so
-   the charts are the only thing that can, and they absorb the entire squeeze:
-   at a 390px viewport a CPU sparkline rendered 38x7 back when the cell was
-   170x32, which is not a chart. .tablewrap already carries overflow-x:auto
-   for exactly this, so the
-   row keeps its width and the BOX scrolls instead. The page still never
-   scrolls sideways, which is all the rule above was protecting. */
+   narrow viewport. A row's figures and names do not give, so the charts
+   would absorb the entire squeeze -- at a 390px viewport a CPU sparkline once
+   rendered 38x7, which is not a chart. .tablewrap carries overflow-x:auto for
+   exactly this, so the row keeps its width and the BOX scrolls instead (the
+   fluid Traffic trend has a READING_SPARK_WIDTH floor for the same reason).
+   The page still never scrolls sideways, which is all the rule above was
+   protecting. */
 .tablewrap svg.spark {
   max-width: none;
 }
@@ -4930,9 +4900,8 @@ tbody:first-of-type .grouprow th {
 }
 
 /* The Storage tab's drive table, Temp column: a sparkline and its reading on
-   one line. The same shape as .traffic-cell, which is the fleet list's
-   sparkline-plus-number cell, down to the gap -- this is that cell, in
-   another table. Right-aligned as a whole because the column is a number
+   one line, the fleet list's sparkline-plus-number shape in another table.
+   Right-aligned as a whole because the column is a number
    column, and a ragged right edge is what makes four temperatures hard to
    compare. */
 .temp-cell {
@@ -4943,7 +4912,7 @@ tbody:first-of-type .grouprow th {
   gap: var(--space-3);
 }
 .temp-cell .val {
-  /* --text-label, like .uptime-cell, .usage-cell .val and .traffic-cell .rate:
+  /* --text-label, like .uptime-cell and .usage-cell .val:
      the same job, a quiet secondary reading inside a table cell. --muted for
      the same reason those carry it (.sensor-tile .lab, .mrow .val, which is
      where .usage-cell gets its own): at the table body's own ink

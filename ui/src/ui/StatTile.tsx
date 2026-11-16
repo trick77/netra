@@ -80,11 +80,12 @@ export const NEUTRAL_TREND_COLOR = "var(--ink-2)";
 const FALLBACK_WIDTH = 150;
 /** The strip the sparkline gets along the bottom.
  *
- * Not SPARK_HEIGHT (45), and not the 38 it started at either: the label, the
- * figure and the sub-line stack to ~62px inside a 100px tile, and a 38px
- * strip put the trend line straight through "24 cores". 32 clears it. The
- * text is also lifted above the svg in index.css, so a longer sub-line on
- * some future host wraps over the chart rather than under it. */
+ * Not SPARK_HEIGHT (45), and not the fleet card's 36 either: the label, the
+ * figure and the sub-line stack to ~56px, a tile can be as short as 96px
+ * (.tiles' grid-auto-rows), and a taller strip put the trend line straight
+ * through "24 cores". 32 clears it. The text is also lifted above the svg in
+ * index.css, so a longer sub-line on some future host wraps over the chart
+ * rather than under it. */
 const SPARK_STRIP = 32;
 
 export function StatTile({
