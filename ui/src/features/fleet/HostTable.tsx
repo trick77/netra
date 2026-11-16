@@ -2,7 +2,8 @@ import { Table, type TableProps } from "../../ui/Table";
 import { FleetEmptyState } from "./fleetEmptyState";
 import {
   hostColumns,
-  needsAttention,
+  byAttention,
+  marksOf,
   type FindingsOf,
   type HostRow,
   type Range,
@@ -83,18 +84,19 @@ export function HostTable({
 
   // Hosts with something wrong first, under their own heading, so a critical
   // host never sits between two healthy ones looking like them. Exactly the
-  // hosts with a mark beside the name (needsAttention reads hostMark). A
+  // hosts with a mark beside the name (markOf reads hostMark), critical
+  // before warning in the same order the card view uses (byAttention). A
   // fleet with nothing wrong gets no headings at all: "Healthy 12" over the
   // whole list says nothing the chips have not. Sorting a column sorts
   // inside each group.
-  const flagged = (row: HostRow) =>
-    needsAttention(row, severity, sporadic, now);
+  const markFor = marksOf(rows, severity, sporadic, now);
+  const flagged = (row: HostRow) => markFor(row) !== null;
   const grouped = rows.some(flagged);
 
   return (
     <Table
       columns={hostColumns(range, severity, sporadic, now, findings)}
-      rows={rows}
+      rows={grouped ? byAttention(rows, markFor) : rows}
       rowKey={(row) => row.id}
       groupBy={
         grouped

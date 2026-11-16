@@ -59,9 +59,11 @@ export function TrendReading({
   label?: string;
 }) {
   const { ref, width } = useMeasuredWidth<HTMLDivElement>(CARD_FALLBACK_WIDTH);
+  // Classes are tr-card / tr-cell, never card / cell: .card is the app's
+  // panel component and would box every reading in its own frame.
   if (layout === "card") {
     return (
-      <div className="treading card">
+      <div className="treading tr-card">
         <div className="treading-head">
           {label !== undefined && <span className="k">{label}</span>}
           {under !== undefined && <span className="u">{under}</span>}
@@ -74,7 +76,20 @@ export function TrendReading({
     );
   }
   return (
-    <div className={fluid ? "treading cell fluid" : "treading cell"}>
+    <div
+      className={fluid ? "treading tr-cell tr-fluid" : "treading tr-cell"}
+      // A fluid trend's track never goes under the fixed width: narrower
+      // than that, the column holds and the table scrolls (.tablewrap)
+      // rather than cutting off the newest data at the right edge. Inline,
+      // so the floor is READING_SPARK_WIDTH itself and not a CSS copy of it.
+      style={
+        fluid
+          ? {
+              gridTemplateColumns: `auto minmax(${READING_SPARK_WIDTH}px, 1fr)`,
+            }
+          : undefined
+      }
+    >
       <span className="treading-fig">{figure}</span>
       <span className="treading-trend" ref={fluid ? ref : undefined}>
         {trend(
@@ -91,15 +106,29 @@ export function TrendReading({
  * A percentage as a reading's figure: rounded, the unit a step smaller, and
  * in its severity's text ink when it has one. ok is plain ink -- colour on a
  * reading means "look here".
+ *
+ * `unjudged` for a percentage with no ceiling to judge it by (a container's
+ * raw percent of one core, which can read 300): printed the same way, with
+ * no severity at all rather than an invented one.
  */
-export function Figure({ pct, label }: { pct: number; label?: string }) {
-  const severity = severityFromPercent(pct);
+export function Figure({
+  pct,
+  label,
+  unjudged = false,
+}: {
+  pct: number;
+  label?: string;
+  unjudged?: boolean;
+}) {
+  const className = unjudged
+    ? "fig"
+    : `fig ${SEVERITY_CLASS[severityFromPercent(pct)]}`;
   return (
     // role="img" with the name, when there is one: aria-label on a bare span
     // is ignored by screen readers, and the figure replaced a meter that
     // announced "CPU now, 40" -- without a role it read a bare "40%".
     <span
-      className={`fig ${SEVERITY_CLASS[severity]}`}
+      className={className}
       role={label === undefined ? undefined : "img"}
       aria-label={
         label === undefined ? undefined : `${label} ${Math.round(pct)} %`

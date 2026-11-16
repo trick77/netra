@@ -153,9 +153,8 @@ describe("FleetPage entity tabs", () => {
   it("swaps the list and the filter's placeholder when the entity changes", () => {
     const hosts = renderPage();
 
-    expect(
-      screen.getByRole("columnheader", { name: "Host" }),
-    ).toBeInTheDocument();
+    // Hosts open as cards.
+    expect(screen.getByRole("article", { name: "web-01" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
 
     hosts.unmount();
@@ -328,16 +327,47 @@ describe("FleetPage entity tabs", () => {
 });
 
 describe("FleetPage toolbar", () => {
-  // The card grid and its toggle are gone: the fleet is one rendering of one
-  // window, so the toolbar carries the tabs, the filter and the attention
-  // band and nothing that reshapes the page.
-  it("offers neither a density toggle nor a range picker", () => {
-    renderPage();
+  // One switch between the two views of the same cells, and still no range
+  // picker: the window is fixed (FLEET_RANGE).
+  it("switches between cards and the table, and remembers the choice", async () => {
+    const user = userEvent.setup();
+    const first = renderPage();
 
-    expect(screen.queryByRole("button", { name: "Cards" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Table" })).toBeNull();
     expect(screen.queryByRole("button", { name: "24h" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cards" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByRole("table")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Table" }));
     expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(window.localStorage.getItem("netra.fleet.view")).toBe("table");
+
+    // A fresh page in the same browser opens on the table.
+    first.unmount();
+    renderPage();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+  });
+
+  // A card grid has no headers to click, so its order is a control. It is
+  // the table's own sortValue under each option.
+  it("orders the cards by the picked reading, and only offers it for cards", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      rows: [
+        makeRow({ id: 1, hostname: "web-01", reporting: [10, 20] }),
+        makeRow({ id: 2, hostname: "db-01", reporting: [10, 90] }),
+      ],
+    });
+
+    const names = () =>
+      screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"));
+    await user.selectOptions(screen.getByLabelText("Sort hosts"), "name");
+    expect(names()).toEqual(["db-01", "web-01"]);
+
+    await user.click(screen.getByRole("button", { name: "Table" }));
+    expect(screen.queryByLabelText("Sort hosts")).toBeNull();
   });
 
   it("filters the list by what the tab is showing", async () => {
@@ -971,7 +1001,30 @@ describe("FleetPage data fetching", () => {
   // them, and the mark says which of them to look at. It is the pill beside
   // the hostname now rather than a rail down the row's edge -- one mark, and
   // the one that says a word instead of only a hue.
+  it("tints a troubled card, leads with it, and leaves a healthy one plain", () => {
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01" }),
+        ]}
+        conditionRows={[fullDisk(2, "db-01")]}
+        catalogue={CATALOGUE}
+        now={NOW}
+      />,
+    );
+
+    const cards = screen.getAllByRole("article");
+    expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual([
+      "db-01",
+      "web-01",
+    ]);
+    expect(cards[0]!.className).toBe("hcard critical");
+    expect(cards[1]!.className).toBe("hcard");
+  });
+
   it("marks a troubled row and leaves a healthy one unmarked", () => {
+    window.localStorage.setItem("netra.fleet.view", "table");
     const { container } = render(
       <FleetPage
         rows={[

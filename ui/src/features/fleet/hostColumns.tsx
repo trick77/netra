@@ -25,7 +25,13 @@ import {
   type ReadingLayout,
 } from "../../ui/TrendReading";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
-import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
+import {
+  binaryBytes,
+  byterate,
+  bytes,
+  ofCores,
+  percent,
+} from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting, type HostStatus } from "../../lib/host";
 import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
@@ -313,29 +319,63 @@ function hostMark(
 }
 
 /**
- * Whether a host belongs in the list's "Needs attention" group: exactly the
- * hosts that carry a severity mark, read through the same hostMark, so the
- * group and the mark beside the name cannot disagree about one host.
+ * Each host's mark, worked out once per render for a whole list: hostStatus
+ * parses a date and severity/sporadic look the host up, and both views read
+ * the mark several times per host (grouping, ordering, the card tint).
+ * Returns the lookup both views read through.
  */
-export function needsAttention(
+export function marksOf(
+  rows: readonly HostRow[],
+  worst?: (row: HostRow) => "warning" | "critical" | null,
+  sporadic?: (row: HostRow) => boolean,
+  now?: Date,
+): (row: HostRow) => MarkKind | null {
+  const marks = new Map(
+    rows.map((row) => [row.id, markOf(row, worst, sporadic, now)]),
+  );
+  return (row) => marks.get(row.id) ?? null;
+}
+
+const MARK_RANK: Record<MarkKind, number> = { critical: 0, warning: 1 };
+
+/**
+ * The fleet's attention order, for both views: critical hosts, then
+ * warning, then the rest, each in the order it arrived (a stable sort).
+ * The table's "Needs attention" group and the card view's Status order are
+ * this one function, so the two cannot rank the same hosts differently.
+ */
+export function byAttention(
+  rows: readonly HostRow[],
+  mark: (row: HostRow) => MarkKind | null,
+): HostRow[] {
+  const rank = (row: HostRow) => {
+    const m = mark(row);
+    return m === null ? 2 : MARK_RANK[m];
+  };
+  return [...rows].sort((a, b) => rank(a) - rank(b));
+}
+
+/** The kind of mark beside a host's name, or null for none -- what a host
+ * card tints itself by, read through the same hostMark as the mark. */
+export function markOf(
   row: HostRow,
   worst?: (row: HostRow) => "warning" | "critical" | null,
   sporadic?: (row: HostRow) => boolean,
   now?: Date,
-): boolean {
+): MarkKind | null {
   return (
     hostMark(
       hostStatus(row, now),
       worst?.(row) ?? null,
       sporadic?.(row) ?? false,
-    ) !== null
+    )?.kind ?? null
   );
 }
 
 /** A host's findings, worst first (conditions.ts's HostGroup order). */
 export type FindingsOf = (row: HostRow) => readonly Condition[];
 
-function HostCell({
+export function HostCell({
   row,
   worst,
   sporadic,
@@ -478,12 +518,7 @@ function HostCell({
             )}
           </>
         )}
-        <Findings
-          row={row}
-          findings={findings?.(row) ?? []}
-          offline={status.severity === "critical"}
-          now={now}
-        />
+        <Findings row={row} findings={findings?.(row) ?? []} now={now} />
       </div>
     </div>
   );
@@ -499,32 +534,23 @@ function HostCell({
 function Findings({
   row,
   findings,
-  offline,
   now,
 }: {
   row: HostRow;
   findings: readonly Condition[];
-  /** The row judges a host offline on its own clock (hostStatus), minutes
-   * before the hub raises its "silent" condition. Without a line for that
-   * stretch the name would carry a critical mark with nothing under it. */
-  offline: boolean;
   now?: Date;
 }) {
-  const lines =
-    offline && !findings.some((f) => f.kind === "silent")
-      ? [stoppedReporting(row), ...findings]
-      : findings;
-  if (lines.length === 0) return null;
+  if (findings.length === 0) return null;
   const at = now ?? new Date();
   return (
     <ul className="host-findings">
-      {lines.map((finding) => (
+      {findings.map((finding) => (
         <li key={finding.kind}>
           <a href={`/hosts/${row.id}/${finding.tab ?? "overview"}`}>
             <AttentionLine
               row={{
                 severity: finding.severity,
-                what: finding.label,
+                what: findingName(row, finding),
                 since: finding.since,
                 sinceAtLeast: finding.sinceAtLeast,
               }}
@@ -540,21 +566,15 @@ function Findings({
   );
 }
 
-// The row's own "stopped reporting", for the minutes before the hub says it:
-// the same words the hub's catalogue uses for the kind, dated from the last
-// scrape the hub received.
-function stoppedReporting(row: HostRow): Condition {
-  return {
-    hostId: String(row.id),
-    hostname: row.hostname,
-    kind: "silent",
-    severity: "critical",
-    label: row.last_seen === null ? "Has never reported" : "Stopped reporting",
-    what: row.last_seen === null ? "Has never reported" : "Stopped reporting",
-    since: row.last_seen,
-    evidence: { type: "reporting" },
-    tab: null,
-  };
+// The finding's name, as the catalogue gives it -- except a host that has
+// never reported, whose "silent" condition the catalogue would call
+// "Stopped reporting": a host that never started has not stopped, and
+// fleetConditions keeps that distinction in the sentence it writes.
+function findingName(row: HostRow, finding: Condition): string {
+  if (finding.kind === "silent" && row.last_seen === null) {
+    return "Has never reported";
+  }
+  return finding.label;
 }
 
 // The silhouette is scaled to 100, never to its own peak. Without a ceiling
@@ -577,9 +597,7 @@ export interface ReadingProps {
 const none = () => null;
 
 function coreCount(threads: number | null): string | undefined {
-  return threads === null
-    ? undefined
-    : `of ${threads} core${threads === 1 ? "" : "s"}`;
+  return threads === null ? undefined : ofCores(threads);
 }
 
 // One line and a light fill. The row used to draw the per-core stack here --
@@ -1050,9 +1068,12 @@ export function DiskCell({ row, range, layout = "cell" }: ReadingProps) {
 
   // One silhouette for the mount named underneath, filled, like every other
   // sparkline in the app: on a 0-100 axis the shaded mass IS how full the
-  // mount is. No series at all draws no chart rather than an empty box.
+  // mount is. A series with no reading at all -- none in the window, or a
+  // host off all day, where the gauge still supplies the figure -- draws no
+  // chart rather than an enlargeable box of gaps.
+  const hasReading = values.some((v) => v !== null);
   const trend = (width: number, height: number) =>
-    values.length === 0 ? null : (
+    !hasReading ? null : (
       <Enlargeable
         title={`Filesystem · ${mount} · ${row.hostname}`}
         label={`Enlarge filesystem usage for ${mount} on ${row.hostname}`}
@@ -1150,7 +1171,7 @@ export function DiskCell({ row, range, layout = "cell" }: ReadingProps) {
  * against a different millisecond than the one its Last seen was measured
  * from; identical in a browser, not in a test.
  */
-function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
+export function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
   return <When iso={row.last_seen} now={now} never />;
 }
 

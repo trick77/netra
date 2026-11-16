@@ -23,7 +23,7 @@ describe("TrendReading", () => {
     );
 
     expect(sizes.at(-1)).toEqual([READING_SPARK_WIDTH, READING_SPARK_HEIGHT]);
-    expect(container.querySelector(".treading.cell")).toBeInTheDocument();
+    expect(container.querySelector(".treading.tr-cell")).toBeInTheDocument();
     // A cell has its column header; the label is for a card.
     expect(container.textContent).not.toContain("CPU");
     expect(container.textContent).toContain("of 8 cores");

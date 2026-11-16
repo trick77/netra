@@ -1265,7 +1265,7 @@ tbody tr:hover .host-cell-name {
 /* ── A reading: figure, trend, what it is measured against ───────────
    ui/TrendReading.tsx. One mark per quantity -- the figure carries the
    value and its severity, the trend the history -- in two layouts. */
-.treading.cell {
+.treading.tr-cell {
   display: grid;
   grid-template-columns: auto auto;
   justify-content: start;
@@ -1276,15 +1276,15 @@ tbody tr:hover .host-cell-name {
 /* The one cell a table hands its spare width to: the trend takes the rest
    of the column. minmax(0, ...) so the trend's own measured width never
    feeds back into the column's min-content and grows the table. */
-.treading.cell.fluid {
+.treading.tr-cell.tr-fluid {
   grid-template-columns: auto minmax(0, 1fr);
 }
-.treading.cell.fluid .treading-trend {
+.treading.tr-cell.tr-fluid .treading-trend {
   display: block;
   min-width: 0;
   overflow: hidden;
 }
-.treading.cell .treading-fig {
+.treading.tr-cell .treading-fig {
   /* Fixed, so the trends in a column start at one x whatever the figure
      says ("8 %" and "100 %"). Wide enough for the rates in the traffic cell,
      which sets its own width below. */
@@ -1310,7 +1310,7 @@ tbody tr:hover .host-cell-name {
 .treading .dfree {
   flex: none;
 }
-.treading.card {
+.treading.tr-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1332,7 +1332,7 @@ tbody tr:hover .host-cell-name {
   margin-left: auto;
   min-width: 0;
 }
-.treading.card .treading-trend {
+.treading.tr-card .treading-trend {
   min-width: 0;
 }
 /* The figure. A step larger than the row's type: it is the reading, and
@@ -1345,7 +1345,7 @@ tbody tr:hover .host-cell-name {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.treading.card .fig {
+.treading.tr-card .fig {
   font-size: 17px;
 }
 .fig small {
@@ -1380,10 +1380,10 @@ tbody tr:hover .host-cell-name {
 .rate .sw.out {
   background: var(--traffic-out);
 }
-.treading.cell .traffic-rates {
+.treading.tr-cell .traffic-rates {
   width: 104px;
 }
-.treading.card .traffic-rates {
+.treading.tr-card .traffic-rates {
   flex-direction: row;
   gap: var(--space-4);
   width: auto;
@@ -2794,6 +2794,71 @@ tbody tr:hover .host-cell-name {
    above the first. The frame is the line. */
 .fleet .toolbar {
   margin-bottom: var(--space-4);
+}
+/* The card view's order, a labelled select beside the view switch. */
+.sortpick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-label);
+  color: var(--muted);
+}
+.viewpick {
+  margin-right: var(--space-2);
+}
+
+/* ── Host cards (HostCards.tsx), the fleet's default view ────────────
+   One card per host, filling the page's width without holes: as many
+   columns as fit at 22rem or more. Each card is the table's own cells in
+   their card layout, so the two views say the same thing. */
+.hcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: var(--space-4);
+}
+.hcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+  background: var(--surface);
+}
+/* A card that needs attention is tinted at its head, in its mark's hue, so
+   it stands out of the grid at a glance. The mark beside the name and the
+   findings under it still say what and how bad; the tint only says "here". */
+.hcard.critical {
+  border-color: color-mix(in srgb, var(--st-crit) 45%, var(--border));
+  background: linear-gradient(
+    color-mix(in srgb, var(--st-crit) 9%, var(--surface)),
+    var(--surface) 7rem
+  );
+}
+.hcard.warning {
+  border-color: color-mix(in srgb, var(--st-warn) 35%, var(--border));
+}
+.hcard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.hcard-head .fleet-host {
+  min-width: 0;
+}
+.hcard-seen {
+  flex: none;
+  font-size: var(--text-micro);
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Each reading is a band of the card, ruled off from the one above. */
+.hcard .treading.tr-card {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
 }
 /* The filter and the key that focuses it, in one box. Relative so the hint
    can sit inside the field's right edge instead of beside it, which would

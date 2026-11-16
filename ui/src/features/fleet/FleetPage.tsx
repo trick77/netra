@@ -10,7 +10,7 @@ import {
   type Host,
 } from "../../lib/api";
 import { ABSENT, byterate } from "../../lib/format";
-import { Input } from "../../ui/Control";
+import { Input, Select } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatFigure, StatRail } from "../../ui/StatRail";
 import { AttentionCounts } from "./AttentionCounts";
@@ -42,6 +42,8 @@ import {
   type ContainerStateKind,
 } from "../container/state";
 import { HostTable } from "./HostTable";
+import { CARD_SORTS, HostCards, type CardSort } from "./HostCards";
+import { FLEET_VIEW_KEY, readPref, writePref } from "../../lib/prefs";
 import { hostLocation, type HostRow } from "./hostColumns";
 import { isReporting } from "../../lib/host";
 import { buildRows } from "./hostTrends";
@@ -49,6 +51,13 @@ import { FLEET_RANGE } from "./ranges";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
+
+/** How the hosts are drawn: one card each (the default), or the table. */
+export type FleetView = "cards" | "table";
+
+function readView(): FleetView {
+  return readPref(FLEET_VIEW_KEY) === "table" ? "table" : "cards";
+}
 
 /**
  * What `?attn=` can carry, over both entities.
@@ -227,6 +236,14 @@ export function FleetPage({
     : localAttention;
   const setAttention = onAttentionChange ?? setLocalAttention;
   const [filter, setFilter] = useState("");
+  // Cards by default; the table one click away, remembered per browser.
+  const [view, setViewState] = useState<FleetView>(readView);
+  const setView = (next: FleetView) => {
+    setViewState(next);
+    writePref(FLEET_VIEW_KEY, next);
+  };
+  // Not remembered: an order is a question asked of the list right now.
+  const [cardSort, setCardSort] = useState<CardSort>("status");
   // The one window every row is drawn over. Not a preference and not in the
   // URL: see FLEET_RANGE.
   const range = FLEET_RANGE;
@@ -500,10 +517,10 @@ export function FleetPage({
             containerKind,
         );
 
-  // The mark on the row itself, in place of the ordering that used to lift a
-  // troubled host to the top: the row says which hosts to look at without
-  // moving any of them. Only the severities that mean something is wrong --
-  // a mark on every row would say nothing.
+  // The mark beside the name, from the severities that mean something is
+  // wrong -- a mark on every row would say nothing. The same mark decides
+  // the order: both views put marked hosts first (byAttention in
+  // hostColumns), under "Needs attention" in the table.
   //
   // It was a rail down the leading edge and a pill beside the hostname for
   // one commit, which is one fact drawn twice in one row. The pill won: a
@@ -531,11 +548,10 @@ export function FleetPage({
     return null;
   };
 
-  // The rows keep the order the API returned them in -- hostname order -- and
-  // a troubled host is not lifted above a healthy one. Finding a machine you
-  // came looking for beats being shown the worst one first, and the severity
-  // is already legible in the row itself. The Table's own column sort still
-  // takes over the moment a reader clicks a header.
+  // Within each group, and among the healthy, hosts keep the order the API
+  // returned them in -- hostname order -- so a machine you came looking for
+  // is where you expect it. A column click (table) or the Sort control
+  // (cards) takes over from there.
 
   return (
     // A named wrapper rather than a fragment: what is scoped to .fleet is the
@@ -750,6 +766,37 @@ export function FleetPage({
           />
         ) : null}
         <div className="spacer" />
+        {entity === "hosts" && hostRows.length > 0 ? (
+          <>
+            {/* A card grid has no headers to click, so its order is a
+                control; the table keeps sorting by its columns. */}
+            {view === "cards" ? (
+              <label className="sortpick">
+                <span>Sort</span>
+                <Select
+                  value={cardSort}
+                  aria-label="Sort hosts"
+                  onChange={(e) => setCardSort(e.target.value as CardSort)}
+                >
+                  {CARD_SORTS.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            ) : null}
+            <Segmented
+              className="viewpick"
+              options={[
+                { value: "cards", label: "Cards" },
+                { value: "table", label: "Table" },
+              ]}
+              value={view}
+              onChange={(next) => setView(next as FleetView)}
+            />
+          </>
+        ) : null}
         <div className="filterbox">
           <Input
             ref={filterRef}
@@ -835,7 +882,18 @@ export function FleetPage({
         </p>
       ) : null}
 
-      {entity === "hosts" ? (
+      {entity === "hosts" && view === "cards" ? (
+        <HostCards
+          rows={attentionHosts}
+          range={range}
+          severity={rowSeverity}
+          sporadic={rowSporadic}
+          findings={rowFindings}
+          now={now}
+          filtered={hostRows.length > 0}
+          sort={cardSort}
+        />
+      ) : entity === "hosts" ? (
         <HostTable
           rows={attentionHosts}
           range={range}

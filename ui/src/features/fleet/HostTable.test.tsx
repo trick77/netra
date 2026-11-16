@@ -122,7 +122,29 @@ describe("HostTable", () => {
 
     const first = container.querySelector("tbody .host-cell-name");
     expect(first?.textContent).toBe("nas");
-    expect(container.textContent).toContain("Stopped reporting");
+  });
+
+  // Critical before warning inside the group, the order the card view uses.
+  it("ranks critical above warning inside the attention group", () => {
+    const { container } = render(
+      <HostTable
+        rows={[
+          makeRow({ id: 1, hostname: "warn" }),
+          makeRow({ id: 2, hostname: "crit" }),
+          makeRow({ id: 3, hostname: "ok" }),
+        ]}
+        range="24h"
+        severity={(row) =>
+          row.id === 1 ? "warning" : row.id === 2 ? "critical" : null
+        }
+      />,
+    );
+
+    expect(
+      [...container.querySelectorAll(".host-cell-name")].map(
+        (a) => a.textContent,
+      ),
+    ).toEqual(["crit", "warn", "ok"]);
   });
 
   it("renders the empty state instead of a headerless table when there are no hosts", () => {

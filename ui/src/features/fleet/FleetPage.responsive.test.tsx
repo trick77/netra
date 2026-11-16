@@ -52,21 +52,30 @@ afterEach(() => {
 });
 
 describe("FleetPage at any viewport", () => {
-  // The card grid is gone, and with it the width-dependent branch: the fleet
-  // is the table everywhere. Narrow screens scroll it sideways, which is a
-  // deliberate trade for one rendering of the list rather than two that have
-  // to be kept saying the same thing.
-  it("renders the table below the mobile breakpoint", () => {
+  // The view is the reader's choice and never the viewport's: cards by
+  // default at every width (a card is one column on a phone), the table
+  // when this browser asked for it. No width-dependent branch, so there is
+  // no second rendering that only some screens see.
+  it("renders cards below the mobile breakpoint", () => {
     stubViewport(true);
 
     render(<FleetPage rows={[row()]} />);
 
-    expect(screen.getByRole("table")).toBeInTheDocument();
-    expect(document.querySelectorAll(".hcard")).toHaveLength(0);
+    expect(document.querySelectorAll(".hcard")).toHaveLength(1);
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
-  it("renders the table on a wide viewport", () => {
+  it("renders cards on a wide viewport", () => {
     stubViewport(false);
+
+    render(<FleetPage rows={[row()]} />);
+
+    expect(document.querySelectorAll(".hcard")).toHaveLength(1);
+  });
+
+  it("renders the table on any viewport once the reader chose it", () => {
+    stubViewport(true);
+    localStorage.setItem("netra.fleet.view", "table");
 
     render(<FleetPage rows={[row()]} />);
 
@@ -80,7 +89,7 @@ describe("FleetPage at any viewport", () => {
 
     render(<FleetPage rows={[row()]} />);
 
-    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(document.querySelectorAll(".hcard")).toHaveLength(1);
   });
 
   // The window is fixed, so there is no control to change it -- see
@@ -93,7 +102,6 @@ describe("FleetPage at any viewport", () => {
 
     expect(screen.queryByRole("button", { name: /^24h$/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^6h$/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /cards/i })).toBeNull();
   });
 });
 

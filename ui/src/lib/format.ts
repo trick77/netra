@@ -165,6 +165,15 @@ export function cardinal(n: number | null): string {
 }
 
 /**
+ * What a CPU percentage of a host is measured against: "of 8 cores",
+ * "of 1 core". One spelling for the fleet's host cells and the container
+ * list, so a host and its containers read alike.
+ */
+export function ofCores(threads: number): string {
+  return `of ${threads} core${threads === 1 ? "" : "s"}`;
+}
+
+/**
  * Network throughput, in bits per second. Kept as a distinct function from
  * `bytes` on purpose -- storage is bytes, network is bits, and collapsing
  * the two into one "size" formatter is the classic silent monitoring-UI

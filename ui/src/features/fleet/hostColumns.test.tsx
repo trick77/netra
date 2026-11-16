@@ -367,6 +367,30 @@ describe("hostColumns", () => {
       expect(lines[1]!.querySelector(".dot")?.className).toContain("st-warn");
     });
 
+    // The catalogue names the silent kind "Stopped reporting"; a host that
+    // never started has not stopped.
+    it("names a never-reported host's silent finding for what it is", () => {
+      const col = hostColumns("1h", undefined, undefined, undefined, () => [
+        {
+          hostId: "1",
+          hostname: "web-01",
+          kind: "silent",
+          severity: "critical",
+          label: "Stopped reporting",
+          what: "Has never reported",
+          since: null,
+          evidence: { type: "reporting" },
+          tab: null,
+        },
+      ]).find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>{col.cell(makeRow({ last_seen: null }))}</>,
+      );
+      expect(container.querySelector(".host-findings")?.textContent).toBe(
+        "Has never reported",
+      );
+    });
+
     it("prints no findings list for a healthy host", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
       const { container } = render(

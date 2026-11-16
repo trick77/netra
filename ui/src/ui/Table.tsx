@@ -568,7 +568,9 @@ function dimAbsent(cell: ReactNode): ReactNode {
 }
 
 /** `rows` in the order `sort` asks for, or untouched when nothing is sorted. */
-function sortRows<T>(
+/** Exported so a view without column headers (the fleet's host cards) orders
+ * by the very rule a column click does, rather than a copy of it. */
+export function sortRows<T>(
   rows: readonly T[],
   columns: readonly Column<T>[],
   sort: SortState | null,
