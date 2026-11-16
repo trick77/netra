@@ -30,13 +30,6 @@ export const SPARK_WIDTH = 175;
  * splitting what was left between rx and tx.
  */
 export const SPARK_HEIGHT = 45;
-/** The height of a sparkline that sits OVER a now-bar (ui/NowReading) in a
- * fleet cell rather than beside a reading. The bar, its figure and its unit
- * line take about 37px under it, so the cell measures ~63px and the fleet
- * row is taller than the 45px traffic chart beside it; that is the row's
- * height now, and the traffic cell centres in it. 26 is the least a
- * silhouette stays readable at over SPARK_WIDTH. */
-export const SPARK_STRIP_HEIGHT = 26;
 
 /**
  * The width of the chart inside an enlarged view.
@@ -48,6 +41,22 @@ export const SPARK_STRIP_HEIGHT = 26;
  * component that draws it is what keeps the fold and the plot agreeing.
  */
 export const DETAIL_WIDTH = 1000;
+
+/**
+ * A trend beside its figure in a list cell (ui/TrendReading).
+ *
+ * Deliberately under SPARK_WIDTH, which this file argues is a floor. That
+ * floor was set for a cell whose trend WAS the cell, with a bar and a figure
+ * stacked under it; here the figure stands beside the trend and carries the
+ * value, so the trend is history only. 112 keeps a four-reading row inside a
+ * 1280px window without a sideways scroll -- the trade the operator chose
+ * over the finer silhouette 175 draws. The enlarged chart is where detail
+ * lives.
+ */
+export const READING_SPARK_WIDTH = 112;
+export const READING_SPARK_HEIGHT = 30;
+/** The trend under a host card's reading, drawn at the card's own width. */
+export const READING_CARD_HEIGHT = 36;
 
 /**
  * How a reference rule is drawn -- the dashed line marking a ceiling, such
@@ -350,11 +359,3 @@ export const ZERO_WIDTH = 1;
 // cell now. Two copies of 175 in two files is exactly the drift the note this
 // comment points at describes happening once already.
 export const METRIC_CELL_STYLE = { width: SPARK_WIDTH };
-
-// The gap .metric-cell puts between its chart and its now-line, in index.css.
-// Named for the cells that cannot draw a chart -- a mount with no bucket
-// carrying both used and free, a container with no series, and every
-// hand-built row in the tests -- which reserve the chart's height plus this gap
-// above their own bar so every bar in a row still forms one line. Without it a
-// chartless cell sits centred and its bar lands 16px above the others.
-export const METRIC_CELL_GAP = 3;

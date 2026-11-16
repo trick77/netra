@@ -106,8 +106,8 @@ describe("overviewTiles system group", () => {
     expect(find(system, "CPU")?.value).toBe("37%");
   });
 
-  // The fleet's CPU cell hands its percentage to NowReading with no severity
-  // of its own, so NowReading judges it with severityFromPercent against
+  // The fleet's CPU cell prints its percentage as a Figure, which judges it
+  // with severityFromPercent against
   // DEFAULT_THRESHOLDS -- 99 % is red in the row a reader arrived from. The
   // tile reads the same number by the same rule; leaving it plain was the
   // disagreement between the two pages, not the thing preventing one.

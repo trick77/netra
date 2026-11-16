@@ -3,23 +3,25 @@
 // "what a host row looks like", so a column added here is a column the fleet
 // shows; there is no second place one could go missing from.
 //
-// `width`/`align` (Table-only, see ui/Table.tsx) are deliberately never
-// set below: this file has no opinion on layout, only on content.
+// `width` is set for one reason: a table at 100% hands its spare width out
+// across every column, and on a wide page that opened gaps between each
+// figure and the next -- the main reason the list looked loose. The reading
+// columns shrink to their content (CONTENT), the host column gets a fixed
+// width, and Traffic takes what is left: its trend is the one that grows to
+// fill it (TrendReading's `fluid`), so the spare width becomes chart.
 import type { Column } from "../../ui/Table";
 import { SeverityMark, type MarkKind } from "../../ui/SeverityMark";
 import { When } from "../../ui/When";
-import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { Sparkline } from "../../ui/charts/Sparkline";
 import { trendColor } from "../../ui/Meter";
+import { DETAIL_WIDTH } from "../../ui/charts/size";
 import {
-  DETAIL_WIDTH,
-  METRIC_CELL_GAP,
-  METRIC_CELL_STYLE,
-  SPARK_STRIP_HEIGHT,
-  SPARK_WIDTH,
-} from "../../ui/charts/size";
+  Figure,
+  TrendReading,
+  type ReadingLayout,
+} from "../../ui/TrendReading";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
 import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
 import type { Host } from "../../lib/api";
@@ -458,10 +460,20 @@ function HostCell({
 
 const CPU_PERCENT_MAX = 100;
 
-const DISK_CELL_STYLE = {
-  width: SPARK_WIDTH,
-  paddingTop: SPARK_STRIP_HEIGHT + METRIC_CELL_GAP,
-};
+/** Where a reading is drawn: a table cell, or a host card. */
+export interface ReadingProps {
+  row: HostRow;
+  range: Range;
+  layout?: ReadingLayout;
+}
+
+const none = () => null;
+
+function coreCount(threads: number | null): string | undefined {
+  return threads === null
+    ? undefined
+    : `of ${threads} core${threads === 1 ? "" : "s"}`;
+}
 
 // One line and a light fill. The row used to draw the per-core stack here --
 // up to 32 bands in four cycling blues, a hairline between each, inside 45px.
@@ -473,7 +485,7 @@ const DISK_CELL_STYLE = {
 //
 // The colour is the cell's own severity, not --cpu-1; see trendColor().
 
-function CpuCell({ row, range }: { row: HostRow; range: Range }) {
+export function CpuCell({ row, range, layout = "cell" }: ReadingProps) {
   // The right-hand edge of the silhouette the cell draws, which is also what
   // this column sorts on: the number the cell prints, the shape beside it and
   // the order the column puts its rows in cannot disagree. cpu_total is
@@ -514,7 +526,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
     return { series: cpu.bands, window: (cpu.from ?? host).window };
   };
 
-  const chart = (
+  const trend = (width: number, height: number) => (
     <Enlargeable
       title={`CPU · ${row.hostname}`}
       label={`Enlarge CPU for ${row.hostname}`}
@@ -537,29 +549,21 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
         min={0}
         max={CPU_PERCENT_MAX}
         color={trendColor(busy)}
-        // Shorter than the traffic chart beside it: the now-bar and its unit
-        // line sit underneath and take the rest of the row's height.
-        height={SPARK_STRIP_HEIGHT}
+        width={width}
+        height={height}
         label={`CPU trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
   );
 
   return (
-    <div className="metric-cell" style={METRIC_CELL_STYLE}>
-      {chart}
-      {busy !== null && (
-        <NowReading
-          pct={busy}
-          label="CPU now"
-          under={
-            row.threads === null
-              ? undefined
-              : `of ${row.threads} core${row.threads === 1 ? "" : "s"}`
-          }
-        />
-      )}
-    </div>
+    <TrendReading
+      layout={layout}
+      label="CPU"
+      figure={busy === null ? null : <Figure pct={busy} label="CPU now" />}
+      under={busy === null ? undefined : coreCount(row.threads)}
+      trend={trend}
+    />
   );
 }
 
@@ -595,7 +599,7 @@ const MEM_HEADROOM = 1.08;
 // on, with the bands named -- "which part of memory is growing" is the
 // question someone opens it to ask.
 
-function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
+export function MemoryCell({ row, range, layout = "cell" }: ReadingProps) {
   if (row.mem_total === null) {
     // No known ceiling means no scale to draw the stack against. Drawing one
     // anyway (e.g. falling back to the bands' own auto-scale) would silently
@@ -607,8 +611,11 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     // that there is nothing to say. It also read as data on a row whose other
     // cells are charts: a column of em dashes down a silent host looked like
     // a reading of zero. The host cell already carries the "stopped
-    // reporting" badge that explains the empty row.
-    return null;
+    // reporting" badge that explains the empty row. A card keeps the label,
+    // so its four readings stay in the same places on every card.
+    return layout === "card" ? (
+      <TrendReading layout="card" label="Memory" figure={null} trend={none} />
+    ) : null;
   }
   const total = row.mem_total;
   // mem_used, NOT the height of the stack beside it. The stack partitions
@@ -631,7 +638,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     return { series: memoryBands(host), window: host.window };
   };
 
-  const chart = (
+  const trend = (width: number, height: number) => (
     <Enlargeable
       title={`Memory · ${row.hostname}`}
       label={`Enlarge Memory for ${row.hostname}`}
@@ -659,7 +666,8 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         min={0}
         max={total * MEM_HEADROOM}
         color={trendColor(used === null ? null : (used / total) * 100)}
-        height={SPARK_STRIP_HEIGHT}
+        width={width}
+        height={height}
         // No legend, like every other cell in this row. A previous review
         // argued the five memory bands carry identity a legend should name and
         // turned it back on here; that is not the call. These are sparklines
@@ -671,19 +679,20 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   );
 
   return (
-    <div className="metric-cell" style={METRIC_CELL_STYLE}>
-      {chart}
-      {used !== null && (
-        <NowReading
-          pct={(used / total) * 100}
-          label="Memory now"
-          // binaryBytes, like the enlarged chart's own axis: a stack read
-          // against a binary ceiling and labelled decimally underneath makes
-          // one quantity look like two.
-          under={`of ${binaryBytes(total)}`}
-        />
-      )}
-    </div>
+    <TrendReading
+      layout={layout}
+      label="Memory"
+      figure={
+        used === null ? null : (
+          <Figure pct={(used / total) * 100} label="Memory now" />
+        )
+      }
+      // binaryBytes, like the enlarged chart's own axis: a stack read
+      // against a binary ceiling and labelled decimally underneath makes
+      // one quantity look like two.
+      under={used === null ? undefined : `of ${binaryBytes(total)}`}
+      trend={trend}
+    />
   );
 }
 
@@ -712,7 +721,12 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
 // direction that isn't true. The arrow alone is not an accessible
 // distinguisher, so each rate carries its own aria-label naming the
 // direction in words.
-function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
+export function TrafficCell({
+  row,
+  range,
+  layout = "cell",
+  fluid = false,
+}: ReadingProps & { fluid?: boolean }) {
   const live = isReporting(row);
   const rx = live ? row.net_rx_bytes : null;
   const tx = live ? row.net_tx_bytes : null;
@@ -734,33 +748,32 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
     };
   };
 
-  return (
-    <div className="traffic-cell">
-      <Enlargeable
-        // "in" and "out", not rx and tx: the direction is the point of this
-        // chart, and "rx" is the kernel's word for it rather than the
-        // reader's. The wire and the schema keep rx/tx.
-        title={`Traffic · ${row.hostname}`}
-        label={`Enlarge Traffic for ${row.hostname}`}
-        className="inline"
-        unit="B/s"
-        series={[
-          { name: "in", color: TRAFFIC_IN, values: row.rx },
-          { name: "out", color: TRAFFIC_OUT, values: row.tx },
-        ]}
-        mirrored
-        // What the DIALOG draws on open, before any refetch: the mean as the
-        // line with the peak as the envelope. Without it the dialog shows the
-        // cell's peak series and its stats table prints peak numbers under
-        // Min and Mean headers until somebody touches the range picker.
-        detailSeries={trafficDetailSeries(row)}
-        fmt={bytes}
-        window={row.window}
-        range={range}
-        ranges={RAIL_RANGES}
-        fetchSeries={fetchSeries}
-      >
-        {/* --traffic-in/--traffic-out, two greys, and the enlarged chart
+  const trend = (width: number, height: number) => (
+    <Enlargeable
+      // "in" and "out", not rx and tx: the direction is the point of this
+      // chart, and "rx" is the kernel's word for it rather than the
+      // reader's. The wire and the schema keep rx/tx.
+      title={`Traffic · ${row.hostname}`}
+      label={`Enlarge Traffic for ${row.hostname}`}
+      className="inline"
+      unit="B/s"
+      series={[
+        { name: "in", color: TRAFFIC_IN, values: row.rx },
+        { name: "out", color: TRAFFIC_OUT, values: row.tx },
+      ]}
+      mirrored
+      // What the DIALOG draws on open, before any refetch: the mean as the
+      // line with the peak as the envelope. Without it the dialog shows the
+      // cell's peak series and its stats table prints peak numbers under
+      // Min and Mean headers until somebody touches the range picker.
+      detailSeries={trafficDetailSeries(row)}
+      fmt={bytes}
+      window={row.window}
+      range={range}
+      ranges={RAIL_RANGES}
+      fetchSeries={fetchSeries}
+    >
+      {/* --traffic-in/--traffic-out, two greys, and the enlarged chart
             names its bands in the same pair. The cell drew the status green
             and amber for a while, which was survivable only while the three
             cells beside it carried severity colour too; with healthy
@@ -768,35 +781,54 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
             and its permanent amber competed with the amber that means
             "warning". In and out are told apart by side of the midline and
             by lightness, and the rates beside the chart name them. */}
-        <UpDownSparkline
-          up={row.rx}
-          down={row.tx}
-          upColor={TRAFFIC_IN}
-          downColor={TRAFFIC_OUT}
-          // The peak envelope, which the row has carried since trafficSeries
-          // started computing it and this cell alone dropped on the floor.
-          //
-          // The cell is fixed at 24h, which resolves to the 5m tier, so every
-          // point it draws is a five-minute average: a saturation that lasted
-          // three minutes reached the mean at a fifth of its height and the
-          // pixel fold halved it again. It was invisible here and visible on
-          // the 1h chart, which is the one range that reads raw -- reported as
-          // "the sparkline never shows it". The dialog this cell opens into
-          // already drew the envelope, so the cell was also disagreeing with
-          // its own enlarged view.
-          upBand={row.rxPeak}
-          downBand={row.txPeak}
-          // No weight override: a mirror fills solid at this density and
-          // that is the mark. It drew as a line over a light fill for a
-          // while, to read as one of a row of silhouettes, and what that
-          // cost is the reading -- a translucent wash where rrdtool, and
-          // every traffic graph an operator has already read, draws a filled
-          // area. The cell is allowed to be the one mass in the row: it is
-          // the one column whose two halves are a comparison rather than a
-          // level against a threshold.
-          label={`Traffic trend, ${rangeLabel(range)}`}
-        />
-      </Enlargeable>
+      <UpDownSparkline
+        up={row.rx}
+        down={row.tx}
+        upColor={TRAFFIC_IN}
+        downColor={TRAFFIC_OUT}
+        // The peak envelope, which the row has carried since trafficSeries
+        // started computing it and this cell alone dropped on the floor.
+        //
+        // The cell is fixed at 24h, which resolves to the 5m tier, so every
+        // point it draws is a five-minute average: a saturation that lasted
+        // three minutes reached the mean at a fifth of its height and the
+        // pixel fold halved it again. It was invisible here and visible on
+        // the 1h chart, which is the one range that reads raw -- reported as
+        // "the sparkline never shows it". The dialog this cell opens into
+        // already drew the envelope, so the cell was also disagreeing with
+        // its own enlarged view.
+        upBand={row.rxPeak}
+        downBand={row.txPeak}
+        // No weight override: a mirror fills solid at this density and
+        // that is the mark. It drew as a line over a light fill for a
+        // while, to read as one of a row of silhouettes, and what that
+        // cost is the reading -- a translucent wash where rrdtool, and
+        // every traffic graph an operator has already read, draws a filled
+        // area. The cell is allowed to be the one mass in the row: it is
+        // the one column whose two halves are a comparison rather than a
+        // level against a threshold.
+        width={width}
+        height={height}
+        label={`Traffic trend, ${rangeLabel(range)}`}
+      />
+    </Enlargeable>
+  );
+
+  return (
+    <TrendReading
+      layout={layout}
+      fluid={fluid}
+      label="Traffic"
+      figure={rx === null && tx === null ? null : <Rates rx={rx} tx={tx} />}
+      trend={trend}
+    />
+  );
+}
+
+/** The two rates, each with the swatch of the half of the chart it names. */
+function Rates({ rx, tx }: { rx: number | null; tx: number | null }) {
+  return (
+    <>
       {/* byterate, never bitrate: rx_bytes/tx_bytes are BYTES per second
           (internal/agent/collector/network.go divides a byte delta by the
           elapsed seconds), and bitrate() drew every rate on this page 8x
@@ -814,19 +846,21 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
           arrows was the one place a reader had to translate. The aria-labels
           keep saying inbound and outbound, which is what a screen reader
           needs and what an arrow never said to one anyway. */}
-      <div className="traffic-rates">
+      <span className="traffic-rates">
         {rx === null ? null : (
           <span className="rate" aria-label={`inbound ${byterate(rx)}`}>
+            <b className="sw in" aria-hidden="true" />
             <i aria-hidden="true">in</i> {byterate(rx)}
           </span>
         )}
         {tx === null ? null : (
           <span className="rate" aria-label={`outbound ${byterate(tx)}`}>
+            <b className="sw out" aria-hidden="true" />
             <i aria-hidden="true">out</i> {byterate(tx)}
           </span>
         )}
-      </div>
-    </div>
+      </span>
+    </>
   );
 }
 
@@ -845,54 +879,15 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // someone opened to read rather than a mark scanned down a column.
 const DISK_COLOR = "var(--s6)";
 
-// The narrowest window the disk line is ever drawn against, in percentage
-// points.
-//
-// The axis is fitted rather than pinned to 0-100 -- that is the whole point
-// of the line, since five points of growth over a day is 1.3px inside a 26px
-// strip -- but a fitted axis with nothing to fit magnifies whatever is left:
-// a mount that did not move all day would draw its own rounding as a
-// mountain range. Below two points the extent is widened to two, so a flat
-// disk draws flat.
-const DISK_MIN_SPAN = 2;
+// The cell's axis is fixed at 0-100, like CPU's. It used to be fitted to
+// the window (diskAxis), so five points of growth over a day filled the
+// strip; but the cell drew a segment bar for "how full" then. With the bar
+// gone the trend's height is the only mark that says how full the mount is,
+// and a fitted axis draws a 30% disk and a 95% one at the same height. Slow
+// growth is what the enlarged chart is for: it free-scales and has an axis.
+const DISK_PERCENT_MAX = 100;
 
-/**
- * The floor and ceiling for one mount's Use% line: its own extent, widened to
- * DISK_MIN_SPAN and slid back inside 0-100 if that pushed it out.
- *
- * null when the series has no reading at all -- the caller then draws no
- * chart rather than an empty box, the same answer every other cell here gives
- * for a reading it does not have.
- */
-export function diskAxis(
-  values: readonly (number | null)[],
-): { min: number; max: number } | null {
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (const v of values) {
-    if (v === null) continue;
-    if (v < lo) lo = v;
-    if (v > hi) hi = v;
-  }
-  if (lo === Infinity) return null;
-  const grow = Math.max(0, (DISK_MIN_SPAN - (hi - lo)) / 2);
-  let min = lo - grow;
-  let max = hi + grow;
-  // Slid, not clipped: a root at 0.4% and one at 99.8% both keep the full
-  // span, which is what makes their lines the same steepness for the same
-  // growth. Only a disk whose own extent is already wider than the window
-  // can lose any of it, and that one never needed the floor.
-  if (min < 0) {
-    max = Math.min(100, max - min);
-    min = 0;
-  } else if (max > 100) {
-    min = Math.max(0, min - (max - 100));
-    max = 100;
-  }
-  return { min, max };
-}
-
-function DiskCell({ row, range }: { row: HostRow; range: Range }) {
+export function DiskCell({ row, range, layout = "cell" }: ReadingProps) {
   if (row.fullest === null) {
     // A host that has reported no filesystems has no fullest one. Drawing a
     // meter anyway would put an empty green bar where "never collected"
@@ -908,11 +903,17 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
     // machine is off, so there was a true reading to show and the row showed
     // nothing. fullestFilesystem reads the hub's stored gauge now and the case
     // no longer reaches here.
-    return null;
+    return layout === "card" ? (
+      <TrendReading
+        layout="card"
+        label="Filesystem"
+        figure={null}
+        trend={none}
+      />
+    ) : null;
   }
   const { mount, pct, free, series } = row.fullest;
   const values = series ?? [];
-  const axis = diskAxis(values);
 
   // The same ONE mount at another range, never the whole host's filesystems:
   // enlarging has to show more of the shape that was clicked, not a different
@@ -941,18 +942,10 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
   };
 
   // One silhouette for the mount named underneath, filled, like every other
-  // sparkline in the app.
-  //
-  // It was briefly a bare line, on the argument Sparkline's `fill` docstring
-  // used to make: filesystem usage sits between 40% and 95%, so shading under
-  // it floods the box. That is true of an axis anchored at ZERO and this axis
-  // is not -- diskAxis fits it to the window, and areaPath closes the fill at
-  // the bottom of the BOX (geometry.ts), so the shaded mass tracks where the
-  // line sits inside its own window exactly as CPU's and Memory's do. An
-  // unfilled line here was the one sparkline in the app drawn differently
-  // from the rest, for a reason that had stopped applying.
-  const chart =
-    axis === null ? null : (
+  // sparkline in the app: on a 0-100 axis the shaded mass IS how full the
+  // mount is. No series at all draws no chart rather than an empty box.
+  const trend = (width: number, height: number) =>
+    values.length === 0 ? null : (
       <Enlargeable
         title={`Filesystem · ${mount} · ${row.hostname}`}
         label={`Enlarge filesystem usage for ${mount} on ${row.hostname}`}
@@ -965,13 +958,10 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
         // is the half fitted() cannot fix (it raises a ceiling, never lowers
         // a floor).
         //
-        // So the dialog free-scales, and it does NOT carry DISK_MIN_SPAN:
-        // the two are not the same rule and should not be. The span floor
-        // exists because a 26px strip has no axis -- a flat mount magnified
-        // to full height there is read as movement and there is nothing on
-        // screen to say otherwise. The dialog has a labelled axis: a mount
+        // So the dialog free-scales: it has a labelled axis, so a mount
         // between 41.9 and 42.1 draws its wobble large and says 41.9 and 42.1
-        // beside it, which is the truth at a zoom the reader asked for.
+        // beside it, which is the truth at a zoom the reader asked for -- and
+        // the slow growth the cell's fixed axis flattens.
         autoScale
         // Filled, because the cell it opens from is: markFor() reads an
         // absent `filled` as "line", so without this the dialog and its rail
@@ -989,50 +979,42 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
       >
         <Sparkline
           values={values}
-          min={axis.min}
-          max={axis.max}
+          min={0}
+          max={DISK_PERCENT_MAX}
           color={trendColor(pct)}
-          height={SPARK_STRIP_HEIGHT}
+          width={width}
+          height={height}
           label={`Filesystem trend for ${mount}, ${rangeLabel(range)}`}
         />
       </Enlargeable>
     );
 
-  // The same now-bar the CPU and Memory cells draw under their sparklines,
-  // and now under one of its own. Drawing it with the shared NowReading
-  // rather than Meter is what makes the three saturation columns read alike
-  // -- the same ten cells, the same figure in the same severity colour, the
-  // same quiet line underneath. The mount and what is left go on that line:
-  // the mount is which disk the reading is about, and bytes left is what the
-  // percentage cannot say on its own (90% of a 6.7 TB array is 674 GB free,
-  // 90% of a 4 GB root is not). Null free is "not known" -- the assembler
-  // leaves it unset when the host reported no size -- and prints nothing
-  // rather than a dash.
+  // The mount and what is left go on the line under the figure: the mount is
+  // which disk the reading is about, and bytes left is what the percentage
+  // cannot say on its own (90% of a 6.7 TB array is 674 GB free, 90% of a
+  // 4 GB root is not). Null free is "not known" -- the assembler leaves it
+  // unset when the host reported no size -- and prints nothing rather than a
+  // dash.
+  //
+  // The figure takes the plain 70/95, the rule every reading in this table
+  // is drawn by. What decides whether the mount is worth acting on is
+  // hostConditions(), which judges it on the compound rule (full AND little
+  // left) and keeps a big volume with headroom out of the attention counts.
   return (
-    <div
-      className="metric-cell disk-cell"
-      style={axis === null ? DISK_CELL_STYLE : METRIC_CELL_STYLE}
-    >
-      {chart}
-      <NowReading
-        pct={pct}
-        label={`Filesystem ${mount}`}
-        // No severity passed: NowReading's own 70/95, the rule every
-        // reading in this table is drawn by. The bytes underneath say how
-        // much room is left; the bar says how full the mount is. What decides
-        // whether it is worth acting on is hostConditions(), which still
-        // judges the same mount on the compound rule and keeps a big volume
-        // with headroom out of the attention counts.
-        under={
-          <>
-            <span className="dmount">{mount}</span>
-            {free == null ? null : (
-              <span className="dfree">{bytes(free)} left</span>
-            )}
-          </>
-        }
-      />
-    </div>
+    <TrendReading
+      layout={layout}
+      label="Filesystem"
+      figure={<Figure pct={pct} label={`Filesystem ${mount}`} />}
+      under={
+        <>
+          <span className="dmount">{mount}</span>
+          {free == null ? null : (
+            <span className="dfree">{bytes(free)} left</span>
+          )}
+        </>
+      }
+      trend={trend}
+    />
   );
 }
 
@@ -1077,6 +1059,13 @@ function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
 // (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
 // about one machine can act on it.
 
+// A column as narrow as its content: the classic table idiom, a 1% width the
+// auto layout can only satisfy by giving the column its min-content width.
+const CONTENT = "1%";
+// The host column holds a name and two location lines that must not wrap
+// word by word, so it gets a width rather than its min-content.
+const HOST_WIDTH = "15rem";
+
 export function hostColumns(
   range: Range,
   /** See HostCell's own `worst`. Passed straight through: which severity a
@@ -1092,6 +1081,7 @@ export function hostColumns(
     {
       key: "host",
       header: "Host",
+      width: HOST_WIDTH,
       cell: (row) => (
         <HostCell row={row} worst={worst} sporadic={sporadic} now={now} />
       ),
@@ -1100,6 +1090,7 @@ export function hostColumns(
     {
       key: "cpu",
       header: "CPU",
+      width: CONTENT,
       cell: (row) => <CpuCell row={row} range={range} />,
       // Where the silhouette ends -- the figure the cell prints, read
       // through the same guard the cell reads it through, so a host whose
@@ -1115,6 +1106,7 @@ export function hostColumns(
     {
       key: "memory",
       header: "Memory",
+      width: CONTENT,
       cell: (row) => <MemoryCell row={row} range={range} />,
       // The FRACTION the cell prints, off the same gauge: mem_used over
       // mem_total. Ordering on the stack's own height ranked the fleet by how
@@ -1140,6 +1132,7 @@ export function hostColumns(
       // cell opens is titled "Filesystem usage", which is also what Observium
       // calls it. Singular: the cell reports the ONE mount worth acting on.
       header: "Filesystem",
+      width: CONTENT,
       cell: (row) => <DiskCell row={row} range={range} />,
       // The percentage of the mount the cell NAMES -- sorting on anything the
       // row does not show would order the list by a number nobody can see.
@@ -1160,7 +1153,7 @@ export function hostColumns(
     {
       key: "traffic",
       header: "Traffic",
-      cell: (row) => <TrafficCell row={row} range={range} />,
+      cell: (row) => <TrafficCell row={row} range={range} fluid />,
       // The two rates the cell PRINTS, added: the cell shows in and out as a
       // pair and the fleet question is which host is moving the most, not
       // which direction it moved it in. Read through the same isReporting
@@ -1186,6 +1179,7 @@ export function hostColumns(
     {
       key: "seen",
       header: "Last seen",
+      width: CONTENT,
       cell: (row) => <LastSeenCell row={row} now={now} />,
       // The INSTANT, the way the container list's Last seen column sorts the
       // same field. It sorted the raw ISO string for one commit, on the claim

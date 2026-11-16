@@ -385,9 +385,9 @@ function systemTiles(
   const tiles: Tile[] = [];
 
   // CPU carries the same threshold the fleet row already reads it by. The
-  // fleet's CPU cell hands its percentage to NowReading with no severity of
-  // its own, and NowReading falls through to severityFromPercent against
-  // DEFAULT_THRESHOLDS -- so 96% is red in the row a reader arrived from,
+  // fleet's CPU cell prints its percentage as a Figure, which judges it by
+  // severityFromPercent against DEFAULT_THRESHOLDS -- so 96% is red in the
+  // row a reader arrived from,
   // and leaving the tile plain was the disagreement, not the fix for one.
   // Nothing new is being judged here either: this is the rule memory and
   // swap below already use, and the one every meter and sparkline in the

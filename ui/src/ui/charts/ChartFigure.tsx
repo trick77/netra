@@ -43,9 +43,11 @@ export interface ChartFigureProps {
    * through. On a chart pinned to a declared floor it is not -- filesystem
    * usage between 40 % and 95 % against a fixed 0-100 draws four hosts as
    * four solid blocks differing only along their top edge. That is an
-   * argument about the FLOOR, not about the quantity: the fleet's disk cell
-   * fills happily because diskAxis fits its axis to the window, and it is a
-   * declared 0-100 that would make the same series unreadable.
+   * argument about the FLOOR, not about the quantity: a large chart is read
+   * for how the series moved, and a declared 0-100 makes that unreadable.
+   * (The fleet's small filesystem cell pins 0-100 on purpose: there the
+   * question is how full, and the trend's height is the only mark answering
+   * it.)
    *
    * Says nothing about how MANY series may be filled: areaFillOpacity() in
    * size.ts thins each area by the count sharing the baseline, so a panel of

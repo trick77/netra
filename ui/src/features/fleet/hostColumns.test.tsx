@@ -7,8 +7,11 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { areaPath, linePath } from "../../ui/charts/geometry";
-import { SPARK_STRIP_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
-import { diskAxis, hostColumns, type HostRow } from "./hostColumns";
+import {
+  READING_SPARK_HEIGHT,
+  READING_SPARK_WIDTH,
+} from "../../ui/charts/size";
+import { hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT, absolute } from "../../lib/format";
 import { SEVERITY_COLOR, STALE_TREND_COLOR } from "../../ui/Meter";
 
@@ -55,40 +58,6 @@ function siteLines(container: HTMLElement): string[] {
     (el) => el.textContent ?? "",
   );
 }
-
-// The Disk line is the one sparkline in this row scaled to its own window
-// rather than to a fixed 0-100: five points of growth over a day is 1.3px
-// inside a 26px strip, and growth is the whole reason the line is there. The
-// bar under it keeps saying how full the mount actually is.
-describe("diskAxis", () => {
-  it("fits the axis to the window's own extent", () => {
-    expect(diskAxis([66, 68, 71])).toEqual({ min: 66, max: 71 });
-  });
-
-  // Without a floor on the span, a mount that did not move all day draws its
-  // own rounding as a mountain range.
-  it("widens a near-flat mount to the minimum span", () => {
-    expect(diskAxis([41.9, 42, 42.1])).toEqual({ min: 41, max: 43 });
-  });
-
-  it("widens a mount that did not move at all", () => {
-    expect(diskAxis([50, 50, 50])).toEqual({ min: 49, max: 51 });
-  });
-
-  // Slid back inside the axis rather than clipped, so the same growth draws
-  // the same steepness on a near-empty disk as on a near-full one.
-  it("slides the widened span back inside 0-100 at either end", () => {
-    expect(diskAxis([0.2, 0.4])).toEqual({ min: 0, max: 2 });
-    expect(diskAxis([99.6, 99.8])).toEqual({ min: 98, max: 100 });
-  });
-
-  // Gaps are not readings, and a mount that reported nothing has no line.
-  it("ignores gaps, and answers null when there is no reading at all", () => {
-    expect(diskAxis([null, 60, null, 70])).toEqual({ min: 60, max: 70 });
-    expect(diskAxis([null, null])).toBeNull();
-    expect(diskAxis([])).toBeNull();
-  });
-});
 
 describe("hostColumns", () => {
   // Uptime is gone: it is a fact about a host rather than a reading to scan
@@ -286,35 +255,50 @@ describe("hostColumns", () => {
       );
 
       expect(container.querySelector(".dmount")?.textContent).toBe("/var/log");
-      expect(
-        container.querySelector(".disk-cell .metric-now .v")?.textContent,
-      ).toBe("91%");
+      expect(container.querySelector(".fig")?.textContent).toBe("91%");
       expect(container.querySelector(".dfree")?.textContent).toBe(
         "3.1 GB left",
       );
     });
 
-    // The bar's fill and the figure beside it are the same reading, so they
-    // take the same severity -- a red bar over an ink number said one thing
-    // twice and only half of it the second time.
+    // The trend's fill and the figure beside it are the same reading, so
+    // they take the same severity.
     it("colours the percentage with the fill's own severity", () => {
       const disk = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const crit = render(
         <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 96 } }))}</>,
       );
-      expect(
-        crit.container.querySelector(".disk-cell .metric-now .v.st-crit"),
-      ).toBeInTheDocument();
+      expect(crit.container.querySelector(".fig.st-crit")).toBeInTheDocument();
       crit.unmount();
 
       const calm = render(
         <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 21 } }))}</>,
       );
       // Ok is a severity like any other and carries its class; the class
-      // draws it neutral (see --ok-fill).
+      // draws it in plain ink (see .fig.st-ok).
+      expect(calm.container.querySelector(".fig")?.className).toBe("fig st-ok");
+    });
+
+    // Fixed 0-100, like CPU: with the bar gone the trend's height is the
+    // only mark that says how full the mount is, so a fitted axis would draw
+    // a 30% disk and a 95% one alike.
+    it("draws the trend against 0-100, not the window's own extent", () => {
+      const disk = hostColumns("1h").find((c) => c.header === "Filesystem")!;
+      const series = [66, 68, 71];
+      const { container } = render(
+        <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 71, series } }))}</>,
+      );
+      const expected = linePath(
+        series,
+        READING_SPARK_WIDTH,
+        READING_SPARK_HEIGHT,
+        0,
+        100,
+        2,
+      ).paths;
       expect(
-        calm.container.querySelector(".disk-cell .metric-now .v")?.className,
-      ).toBe("v st-ok");
+        container.querySelector("path[data-line]")?.getAttribute("d"),
+      ).toBe(expected[0]);
     });
 
     // free is optional on the row -- the assembler leaves it unset when the
@@ -615,19 +599,15 @@ describe("hostColumns", () => {
 
     // A mount with no bucket carrying both used and free has no line to
     // draw. Drawing an empty box would put a chart where "not measured"
-    // belongs -- the same argument the cell makes about an empty green bar --
-    // so the bar stands alone and keeps its reserved strip, which is what
-    // holds the three bars in a row on one line.
-    it("draws the bar alone, still aligned, when there is no series", () => {
+    // belongs, so the figure and the mount stand alone.
+    it("draws the figure alone when there is no series", () => {
       const diskCol = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const { container } = render(
         <>{diskCol.cell(makeRow({ fullest: { mount: "/", pct: 40 } }))}</>,
       );
 
       expect(container.querySelector("svg.spark")).toBeNull();
-      expect(
-        (container.querySelector(".disk-cell") as HTMLElement).style.paddingTop,
-      ).not.toBe("");
+      expect(container.querySelector(".fig")?.textContent).toBe("40%");
       expect(screen.getByText("/")).toBeInTheDocument();
     });
 
@@ -730,8 +710,8 @@ describe("hostColumns", () => {
       const line = container.querySelector("path[data-line]")!;
       const expected = linePath(
         row.reporting,
-        SPARK_WIDTH,
-        SPARK_STRIP_HEIGHT,
+        READING_SPARK_WIDTH,
+        READING_SPARK_HEIGHT,
         0,
         100,
         2,
@@ -821,7 +801,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-now")).toBeNull();
+      expect(container.querySelector(".fig")).toBeNull();
       // And not a dash standing in for it either.
       expect(container.textContent).not.toContain("\u2014");
     });
@@ -855,8 +835,8 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-now .v")).toBeInTheDocument();
-      expect(container.querySelector(".metric-cell .u")).toBeNull();
+      expect(container.querySelector(".fig")).toBeInTheDocument();
+      expect(container.querySelector(".treading .u")).toBeNull();
     });
   });
 
@@ -871,7 +851,7 @@ describe("hostColumns", () => {
         <>{diskCol.cell(makeRow({ fullest: null }))}</>,
       );
 
-      expect(container.querySelector(".segbar")).not.toBeInTheDocument();
+      expect(container.querySelector(".fig")).not.toBeInTheDocument();
       expect(container.textContent).toBe("");
     });
 
@@ -882,7 +862,7 @@ describe("hostColumns", () => {
     // fullness does not change while a machine is off, so the reading stays
     // too. It comes from the hub's stored gauge now, which no window can
     // empty.
-    it("keeps the bar, the figure and the line on a host that is switched off", () => {
+    it("keeps the figure and the line on a host that is switched off", () => {
       const diskCol = hostColumns("24h").find(
         (c) => c.header === "Filesystem",
       )!;
@@ -908,10 +888,7 @@ describe("hostColumns", () => {
       // Full weight, exactly as a live host draws it: the figure is still
       // true, and the row's status chip and its "stopped reporting" condition
       // are what say how long ago it was measured.
-      expect(container.querySelector(".segbar")).toBeInTheDocument();
-      expect(container.querySelector(".metric-now .v")?.textContent).toBe(
-        "87%",
-      );
+      expect(container.querySelector(".fig")?.textContent).toBe("87%");
       expect(container.textContent).toContain("/srv/pool");
       expect(container.querySelector("svg.spark")).toBeInTheDocument();
     });
@@ -939,7 +916,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".segbar")).toBeInTheDocument();
+      expect(container.querySelector(".fig")?.textContent).toBe("87%");
       expect(container.querySelector("svg.spark")).not.toBeInTheDocument();
     });
   });
@@ -1125,8 +1102,8 @@ describe("hostColumns", () => {
         row.memUsed!,
         // The shared sparkline size, not literals: every list chart reads it
         // from one pair of constants so a row's cells stay the same shape.
-        SPARK_WIDTH,
-        SPARK_STRIP_HEIGHT,
+        READING_SPARK_WIDTH,
+        READING_SPARK_HEIGHT,
         // From zero to mem_total plus the headroom that keeps a full host off
         // the border. Free is the gap between the line and the top.
         0,
@@ -1136,7 +1113,7 @@ describe("hostColumns", () => {
       expect(line.getAttribute("d")).toBe(expected[0]);
       const area = container.querySelector("path[data-area]")!;
       expect(area.getAttribute("d")).toBe(
-        areaPath(expected, SPARK_WIDTH, SPARK_STRIP_HEIGHT, 2)[0],
+        areaPath(expected, READING_SPARK_WIDTH, READING_SPARK_HEIGHT, 2)[0],
       );
       // The stale ink, not a severity: this fixture stopped reporting, so
       // mem_used has no current value to judge. A reporting host draws the
@@ -1178,9 +1155,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-now .v")?.textContent).toBe(
-        "25%",
-      );
+      expect(container.querySelector(".fig")?.textContent).toBe("25%");
       // binaryBytes, like the enlarged chart's axis: 16 GB is 14.9 GiB.
       expect(container.textContent).toContain("of 14.9 GiB");
     });
@@ -1207,9 +1182,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-now .v")?.textContent).toBe(
-        "30%",
-      );
+      expect(container.querySelector(".fig")?.textContent).toBe("30%");
     });
 
     it("prints no reading for a host that stopped reporting", () => {
@@ -1225,7 +1198,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-now")).toBeNull();
+      expect(container.querySelector(".fig")).toBeNull();
     });
   });
 

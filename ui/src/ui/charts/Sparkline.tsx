@@ -38,11 +38,10 @@ export interface SparklineProps {
    *
    * The case for turning it off is narrower than this docstring once claimed.
    * It named filesystem usage -- 40% to 95%, so shading floods the cell --
-   * but that is a fact about a ZERO-anchored axis, not about the quantity: on
-   * an axis fitted to the window (see diskAxis in the fleet's hostColumns)
-   * the fill closes at the bottom of the box and tracks the line as any other
-   * silhouette does. Off is for a chart that is genuinely about the line's
-   * path rather than its level, and there is currently no such caller.
+   * but on a fixed 0-100 axis that flood IS the reading: the fleet's
+   * filesystem cell draws it that way because the shaded mass is how full
+   * the mount is. Off is for a chart that is genuinely about the line's path
+   * rather than its level, and there is currently no such caller.
    */
   fill?: boolean;
 }
