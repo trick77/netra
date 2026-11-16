@@ -93,11 +93,16 @@
      the top, content is the full window at every width and those thresholds
      came down by the rail's width. */
   --bar-h: 52px;
-  /* The measure for running text. The page is full-bleed, so prose that used
-     to be bounded by the old 1180px page width is now bounded by nothing.
+  /* The measure for running text. The page is --page-max wide, far wider
+     than a line of prose should run, so prose is bounded per block instead.
      .note is the one prose class the app has and caps itself here; a block of
      sentences added later should reach for this rather than a literal. */
   --measure: 68ch;
+  /* The page's content width, every page. Not the old 1180px cap, which
+     squeezed six chart-plus-figure columns; wide enough for the fleet table
+     and four host cards in a row, narrow enough that an 1800px window does
+     not open gaps between a table's columns. */
+  --page-max: 1600px;
 
   /* status palette — FIXED, never themed, never reused as a series colour
      (spec §3.5). */
@@ -541,6 +546,17 @@
    of form controls. Unconditional, because so is the palette above. */
 :root {
   color-scheme: dark;
+  /* The page's side gutter, and the inline padding of both the bar and the
+     page under it: at least --gutter, and once the window is wider than
+     --page-max, whatever centres the content. Unregistered, so the 100% is
+     resolved where it is used -- against the full-width grid column, for
+     both. One formula, so the wordmark and the heading cannot drift apart. */
+  --gutter: var(--space-5);
+  --page-gutter: max(var(--gutter), calc((100% - var(--page-max)) / 2));
+  /* Reserve the scrollbar's column whether or not the page scrolls: the
+     content is centred, and a scrollbar appearing between a short page and
+     a long one would otherwise shift both by half its width. */
+  scrollbar-gutter: stable;
 }
 body {
   margin: 0;
@@ -1915,9 +1931,9 @@ tbody tr:hover .host-cell-name {
 }
 
 /* ── Primitives: buttons, controls, cards, badges, tables, charts ─── */
-/* One bar over one column. This was a fixed rail track beside the content;
-   the page carries no width of its own either way -- a fleet table is as wide
-   as the fleet needs, and the old 1180px cap was what forced six columns of
+/* One bar over one column. This was a fixed rail track beside the content.
+   The page's width is --page-max now (see .app > main), wider than the old
+   1180px cap, which was what forced six columns of
    chart-plus-figure to squeeze. What the cap USED to do for prose is now done
    per block by --measure. */
 .app {
@@ -1944,7 +1960,11 @@ tbody tr:hover .host-cell-name {
   align-items: center;
   gap: var(--space-4);
   height: var(--bar-h);
-  padding: 0 var(--space-5);
+  padding-block: 0;
+  /* The bar's background runs edge to edge; its contents sit on the page's
+     own edges (--page-gutter, the same as .app > main), so the wordmark
+     lines up with the heading under it at any window width. */
+  padding-inline: var(--page-gutter);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   /* Sticky rather than fixed: fixed would take the bar out of the grid and
@@ -2335,7 +2355,12 @@ tbody tr:hover .host-cell-name {
    this file exists to prevent. Without it the rail slides off-screen left. */
 .app > main {
   min-width: 0;
-  padding: var(--space-5) var(--space-5) 80px;
+  padding-block: var(--space-5) 80px;
+  /* One width for every page, centred, so moving from the fleet to a host
+     or to Events does not shift where the page starts, and an 1800px window
+     does not stretch a fleet table into gaps between its columns. The bar
+     above uses the same gutter (--page-gutter on :root). */
+  padding-inline: var(--page-gutter);
 }
 
 /* ── The page head ────────────────────────────────────────────────────
@@ -4158,9 +4183,13 @@ svg.spark {
     width: 18px;
     height: 18px;
   }
+  /* One narrower gutter for the bar AND the page, so the wordmark stays
+     over the heading here too. */
+  :root {
+    --gutter: var(--space-3);
+  }
   .topbar {
     gap: var(--space-2);
-    padding: 0 var(--space-3);
   }
   /* Except the last one, which is a few px from the window edge: centred on
      it, half the bubble hangs off the right of the viewport. An invisible
@@ -4187,7 +4216,7 @@ svg.spark {
     padding: 0;
   }
   .app > main {
-    padding: var(--space-4) var(--space-5) 64px;
+    padding-block: var(--space-4) 64px;
   }
 }
 
@@ -4214,7 +4243,7 @@ svg.spark {
   .topbar {
     height: auto;
     flex-wrap: wrap;
-    padding: var(--space-2) var(--space-3);
+    padding-block: var(--space-2);
     row-gap: var(--space-2);
   }
   /* Ordered, not just wrapped: source order puts the nav between the spacer
@@ -4273,8 +4302,9 @@ svg.spark {
    beside the content: content was viewport - 56 of rail - 48 of main's
    padding, so it crossed the ~860px these rules were written to rescue at a
    964px window, and the threshold was set there to match. The bar is across
-   the top now and takes no width of its own, so content is viewport - 48 at
-   every size and the number comes back down by the rail's own 56. */
+   the top now and takes no width of its own, so content is viewport - 48
+   below --page-max (and capped above it) and the number comes back down by
+   the rail's own 56. */
 @media (max-width: 908px) {
   /* The figure rail wraps on its own -- it is a flex row, not the grid the
      stat tiles were, so there is no column count to reset here. It gets the
@@ -4326,7 +4356,7 @@ svg.spark {
    everything else that has to give at this width. */
 @media (max-width: 640px) {
   .app > main {
-    padding: var(--space-3) var(--space-3) 64px;
+    padding-block: var(--space-3) 64px;
   }
   /* One figure per row at this width, rather than two-and-one -- and with
      each on its own row the middot has nothing to separate: it would open
