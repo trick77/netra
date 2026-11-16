@@ -11,7 +11,8 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     id: 1,
     hostname: "web-01",
     window: null,
-    last_seen: "2026-08-10T13:59:30Z",
+    // Reporting now, so a fixture host is healthy unless a test says not.
+    last_seen: new Date().toISOString(),
     cpu_total: 42,
     mem_used: 4_000_000_000,
     mem_total: 16_000_000_000,
@@ -67,6 +68,61 @@ describe("HostTable", () => {
     // Reordering must move the DOM node with it: the node that held web-01
     // is now the second data row, not the first.
     expect(screen.getAllByRole("row")[2]).toBe(first);
+  });
+
+  // A host with a mark goes first, under its own heading, and a fleet with
+  // nothing wrong gets no headings at all.
+  it("groups hosts that need attention ahead of healthy ones", () => {
+    const { container, rerender } = render(
+      <HostTable
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01" }),
+        ]}
+        range="24h"
+        severity={(row) => (row.id === 2 ? "critical" : null)}
+      />,
+    );
+
+    const heads = [...container.querySelectorAll(".grouprow")].map(
+      (r) => r.textContent,
+    );
+    expect(heads).toEqual(["Needs attention1", "Healthy1"]);
+    const names = [...container.querySelectorAll(".host-cell-name")].map(
+      (a) => a.textContent,
+    );
+    expect(names).toEqual(["db-01", "web-01"]);
+
+    rerender(
+      <HostTable
+        rows={[makeRow({ id: 1 }), makeRow({ id: 2, hostname: "db-01" })]}
+        range="24h"
+        severity={() => null}
+      />,
+    );
+    expect(container.querySelector(".grouprow")).toBeNull();
+  });
+
+  // The group follows the mark, not only the conditions: a host the row
+  // judges offline is in "Needs attention" before the hub has said so.
+  it("puts a host that stopped reporting in the attention group", () => {
+    const { container } = render(
+      <HostTable
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({
+            id: 2,
+            hostname: "nas",
+            last_seen: "2020-01-01T00:00:00Z",
+          }),
+        ]}
+        range="24h"
+      />,
+    );
+
+    const first = container.querySelector("tbody .host-cell-name");
+    expect(first?.textContent).toBe("nas");
+    expect(container.textContent).toContain("Stopped reporting");
   });
 
   it("renders the empty state instead of a headerless table when there are no hosts", () => {

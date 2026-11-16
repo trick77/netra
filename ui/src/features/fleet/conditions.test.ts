@@ -293,6 +293,40 @@ describe("fleetConditions", () => {
   it("says nothing about a healthy host", () => {
     expect(fleetConditions([], [HOST], CATALOGUE, NOW)).toEqual([]);
   });
+
+  // The row judges a host offline on its own clock minutes before the hub
+  // raises silent. The finding comes from here, so the chips, the Critical
+  // count and the line under the name agree from that first minute.
+  it("says a host the page judges offline is silent before the hub does", () => {
+    const quiet = {
+      id: 4,
+      hostname: "nas",
+      last_seen: "2026-08-12T10:00:00Z",
+      received_at: "2026-08-12T10:00:05Z",
+    };
+    const conditions = fleetConditions([], [quiet], CATALOGUE, NOW);
+    expect(conditions).toHaveLength(1);
+    expect(conditions[0]!.kind).toBe("silent");
+    expect(conditions[0]!.severity).toBe("critical");
+    // No onset: the hub's own row will carry one, and a page-side guess
+    // would jump when it arrives.
+    expect(conditions[0]!.since).toBeNull();
+  });
+
+  it("does not repeat silent once the hub has raised it", () => {
+    const quiet = {
+      id: 4,
+      hostname: "nas",
+      last_seen: "2026-08-12T10:00:00Z",
+    };
+    const conditions = fleetConditions(
+      [row({ host_id: 4, hostname: "nas", kind: "silent" })],
+      [quiet],
+      CATALOGUE,
+      NOW,
+    );
+    expect(conditions.filter((c) => c.kind === "silent")).toHaveLength(1);
+  });
 });
 
 describe("failedUnitsShown", () => {

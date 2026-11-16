@@ -1,6 +1,19 @@
 import { Table, type TableProps } from "../../ui/Table";
 import { FleetEmptyState } from "./fleetEmptyState";
-import { hostColumns, type HostRow, type Range } from "./hostColumns";
+import {
+  hostColumns,
+  needsAttention,
+  type FindingsOf,
+  type HostRow,
+  type Range,
+} from "./hostColumns";
+
+const ATTENTION = "attention";
+const HEALTHY = "healthy";
+
+function groupName(key: string): string {
+  return key === ATTENTION ? "Needs attention" : "Healthy";
+}
 
 export interface HostTableProps {
   rows: readonly HostRow[];
@@ -39,6 +52,8 @@ export interface HostTableProps {
   /** True when this list is empty because something is filtering it rather
    * than because the hub has no hosts -- see FleetEmptyState. */
   filtered?: boolean;
+  /** Each host's findings, printed under its name. */
+  findings?: FindingsOf;
 }
 
 /**
@@ -58,6 +73,7 @@ export function HostTable({
   sporadic,
   now,
   filtered = false,
+  findings,
 }: HostTableProps) {
   if (rows.length === 0) {
     // An empty <table> renders as a bare header rail, which reads as a
@@ -65,11 +81,38 @@ export function HostTable({
     return <FleetEmptyState filtered={filtered} />;
   }
 
+  // Hosts with something wrong first, under their own heading, so a critical
+  // host never sits between two healthy ones looking like them. Exactly the
+  // hosts with a mark beside the name (needsAttention reads hostMark). A
+  // fleet with nothing wrong gets no headings at all: "Healthy 12" over the
+  // whole list says nothing the chips have not. Sorting a column sorts
+  // inside each group.
+  const flagged = (row: HostRow) =>
+    needsAttention(row, severity, sporadic, now);
+  const grouped = rows.some(flagged);
+
   return (
     <Table
-      columns={hostColumns(range, severity, sporadic, now)}
+      columns={hostColumns(range, severity, sporadic, now, findings)}
       rows={rows}
       rowKey={(row) => row.id}
+      groupBy={
+        grouped
+          ? {
+              key: (row) => (flagged(row) ? ATTENTION : HEALTHY),
+              order: (key) => (key === ATTENTION ? 0 : 1),
+              label: (key, members) => (
+                <>
+                  <span>{groupName(key)}</span>
+                  <span className="groupcount">{members.length}</span>
+                </>
+              ),
+              labelText: (key, members) =>
+                `${groupName(key)}, ${members.length}`,
+              collapsible: false,
+            }
+          : undefined
+      }
     />
   );
 }

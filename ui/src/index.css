@@ -1011,11 +1011,53 @@ a:where(:hover) {
 .attn-row:last-child {
   border-bottom: 0;
 }
-.attn-row .what {
+/* A host's findings under its name in the fleet list (hostColumns'
+   Findings): the attention band's own line, set at the location line's
+   size, one per finding, each a link to the tab that shows it. */
+.host-findings {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-micro);
+  line-height: 1.3;
+}
+.host-findings a {
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  min-width: 0;
+}
+.host-findings a:hover .what {
+  color: var(--ink);
+}
+.host-findings .attn-line {
+  gap: 6px;
+}
+.host-findings .attn-line .what,
+.host-findings .attn-line .since {
+  font-size: var(--text-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* One finding: dot, sentence, age (AttentionLine). The band's rows and the
+   fleet host cell's findings are this same line. */
+.attn-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+.attn-line .what {
   color: var(--ink-2);
   flex: 1;
+  min-width: 0;
 }
-.attn-row .since {
+.attn-line .since {
   color: var(--muted);
   font-size: var(--text-label);
   font-variant-numeric: tabular-nums;

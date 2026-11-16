@@ -517,6 +517,12 @@ export function FleetPage({
     byHost.get(String(row.id))?.conditions.some((c) => c.kind === "sporadic") ??
     false;
 
+  // The same HostGroup the chips and rowSeverity read, worst first, so a
+  // host's findings under its name and the counts above the list are one
+  // answer.
+  const rowFindings = (row: HostRow): readonly Condition[] =>
+    byHost.get(String(row.id))?.conditions ?? [];
+
   const rowSeverity = (row: HostRow): "warning" | "critical" | null => {
     const worst = byHost.get(String(row.id))?.worst.severity;
     if (worst === "critical" || worst === "warning") {
@@ -835,6 +841,7 @@ export function FleetPage({
           range={range}
           severity={rowSeverity}
           sporadic={rowSporadic}
+          findings={rowFindings}
           now={now}
           filtered={hostRows.length > 0}
         />

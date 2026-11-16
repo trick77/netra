@@ -33,6 +33,7 @@ import type { ConditionKindInfo, ConditionRow } from "../../lib/api";
 import type { Severity } from "../../ui/Badge";
 import type { HostTab } from "../host/HostPage";
 import { percent, relative } from "../../lib/format";
+import { hostStatus } from "../../lib/host";
 
 /**
  * Every kind of thing netra says about a host.
@@ -841,6 +842,8 @@ export interface ConditionHost {
   id: number;
   hostname: string;
   last_seen: string | null;
+  /** The hub's clock for the last scrape; hostStatus judges by this. */
+  received_at?: string | null;
 }
 
 /**
@@ -893,6 +896,33 @@ export function fleetConditions(
       });
     }
     const rows = byHost.get(host.id);
+    // A host the page already judges offline (hostStatus, the row's own
+    // clock) before the hub has raised its silent condition. The row shows
+    // a critical mark from that moment, so the chips, the Critical count and
+    // the finding under the name have to say so too -- one place, here,
+    // rather than a line the host cell makes up that no count can see.
+    //
+    // No onset, like the never-reported case: the hub dates its own silent
+    // row from when it raised it, and a page-side guess (the last scrape)
+    // would make the same finding's age jump on the poll that hands over to
+    // the hub's row. The Last seen column already says how long ago.
+    if (
+      host.last_seen !== null &&
+      hostStatus(host, now).severity === "critical" &&
+      !(rows ?? []).some((r) => r.kind === "silent")
+    ) {
+      out.push({
+        hostId: String(host.id),
+        hostname: host.hostname,
+        kind: "silent",
+        severity: "critical",
+        label: kindLabel(catalogue, "silent"),
+        what: "Stopped reporting",
+        since: null,
+        evidence: { type: "reporting" },
+        tab: null,
+      });
+    }
     if (rows !== undefined) {
       out.push(...hostConditions(rows, catalogue, now));
     }

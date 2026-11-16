@@ -315,6 +315,66 @@ describe("hostColumns", () => {
   });
 
   describe("host cell", () => {
+    // What is wrong with the host, under its name: the finding's name and
+    // age, the full sentence as a tooltip, and a link to the tab showing it.
+    it("prints each finding under the name, linked to its tab", () => {
+      const col = hostColumns(
+        "1h",
+        () => "critical",
+        undefined,
+        new Date("2026-08-10T14:00:00Z"),
+        () => [
+          {
+            hostId: "1",
+            hostname: "web-01",
+            kind: "drive",
+            severity: "critical",
+            label: "Drive errors",
+            what: "sdc — 15 pending sectors",
+            since: null,
+            evidence: null,
+            tab: "storage",
+          },
+          {
+            hostId: "1",
+            hostname: "web-01",
+            kind: "disk",
+            severity: "warning",
+            label: "Filesystem nearly full",
+            what: "/var is 91% full",
+            since: "2026-08-10T13:00:00Z",
+            evidence: null,
+            tab: "storage",
+          },
+        ],
+      ).find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>{col.cell(makeRow({ last_seen: "2026-08-10T13:59:50Z" }))}</>,
+      );
+
+      const lines = [...container.querySelectorAll(".host-findings li")];
+      expect(lines.map((l) => l.textContent)).toEqual([
+        "Drive errors",
+        "Filesystem nearly full · since 1 h ago",
+      ]);
+      expect(lines[0]!.querySelector("a")?.getAttribute("href")).toBe(
+        "/hosts/1/storage",
+      );
+      expect(lines[0]!.querySelector(".attn-line")?.getAttribute("title")).toBe(
+        "sdc — 15 pending sectors",
+      );
+      expect(lines[0]!.querySelector(".dot")?.className).toContain("st-crit");
+      expect(lines[1]!.querySelector(".dot")?.className).toContain("st-warn");
+    });
+
+    it("prints no findings list for a healthy host", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>{col.cell(makeRow({ last_seen: new Date().toISOString() }))}</>,
+      );
+      expect(container.querySelector(".host-findings")).toBeNull();
+    });
+
     // The name is plain ink on every row and the status hue on the rows that
     // have stopped answering -- accent on all of them marked nothing, since
     // every row has a name. Critical only: a sporadic host IS answering, and

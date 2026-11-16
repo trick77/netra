@@ -11,6 +11,8 @@
 // fill it (TrendReading's `fluid`), so the spare width becomes chart.
 import type { Column } from "../../ui/Table";
 import { SeverityMark, type MarkKind } from "../../ui/SeverityMark";
+import { AttentionLine } from "../../ui/AttentionBand";
+import type { Condition } from "./conditions";
 import { When } from "../../ui/When";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
@@ -310,13 +312,44 @@ function hostMark(
   return null;
 }
 
+/**
+ * Whether a host belongs in the list's "Needs attention" group: exactly the
+ * hosts that carry a severity mark, read through the same hostMark, so the
+ * group and the mark beside the name cannot disagree about one host.
+ */
+export function needsAttention(
+  row: HostRow,
+  worst?: (row: HostRow) => "warning" | "critical" | null,
+  sporadic?: (row: HostRow) => boolean,
+  now?: Date,
+): boolean {
+  return (
+    hostMark(
+      hostStatus(row, now),
+      worst?.(row) ?? null,
+      sporadic?.(row) ?? false,
+    ) !== null
+  );
+}
+
+/** A host's findings, worst first (conditions.ts's HostGroup order). */
+export type FindingsOf = (row: HostRow) => readonly Condition[];
+
 function HostCell({
   row,
   worst,
   sporadic,
+  findings,
   now,
 }: {
   row: HostRow;
+  /**
+   * What is wrong with this host, printed under the name as one line each:
+   * the finding's name and how long it has been true, linked to the host tab
+   * that shows it. The chips above the list count findings across the fleet;
+   * this says which host each one is on, which the chips never did.
+   */
+  findings?: FindingsOf;
   /** The instant the page is reading itself at. undefined is the wall clock,
    * which is what a browser wants and what every caller that derives no
    * conditions of its own gets. */
@@ -445,9 +478,83 @@ function HostCell({
             )}
           </>
         )}
+        <Findings
+          row={row}
+          findings={findings?.(row) ?? []}
+          offline={status.severity === "critical"}
+          now={now}
+        />
       </div>
     </div>
   );
+}
+
+/**
+ * The host's findings under its name: one AttentionLine each -- the same
+ * line the host page's attention band draws -- naming the finding rather
+ * than the band's whole sentence (a hostname column has no room for "sdc --
+ * 15 pending sectors"); the sentence is the line's tooltip and one click
+ * away on the tab the link opens.
+ */
+function Findings({
+  row,
+  findings,
+  offline,
+  now,
+}: {
+  row: HostRow;
+  findings: readonly Condition[];
+  /** The row judges a host offline on its own clock (hostStatus), minutes
+   * before the hub raises its "silent" condition. Without a line for that
+   * stretch the name would carry a critical mark with nothing under it. */
+  offline: boolean;
+  now?: Date;
+}) {
+  const lines =
+    offline && !findings.some((f) => f.kind === "silent")
+      ? [stoppedReporting(row), ...findings]
+      : findings;
+  if (lines.length === 0) return null;
+  const at = now ?? new Date();
+  return (
+    <ul className="host-findings">
+      {lines.map((finding) => (
+        <li key={finding.kind}>
+          <a href={`/hosts/${row.id}/${finding.tab ?? "overview"}`}>
+            <AttentionLine
+              row={{
+                severity: finding.severity,
+                what: finding.label,
+                since: finding.since,
+                sinceAtLeast: finding.sinceAtLeast,
+              }}
+              now={at}
+              title={
+                typeof finding.what === "string" ? finding.what : undefined
+              }
+            />
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// The row's own "stopped reporting", for the minutes before the hub says it:
+// the same words the hub's catalogue uses for the kind, dated from the last
+// scrape the hub received.
+function stoppedReporting(row: HostRow): Condition {
+  return {
+    hostId: String(row.id),
+    hostname: row.hostname,
+    kind: "silent",
+    severity: "critical",
+    label: row.last_seen === null ? "Has never reported" : "Stopped reporting",
+    what: row.last_seen === null ? "Has never reported" : "Stopped reporting",
+    since: row.last_seen,
+    evidence: { type: "reporting" },
+    tab: null,
+  };
 }
 
 // The silhouette is scaled to 100, never to its own peak. Without a ceiling
@@ -1076,6 +1183,8 @@ export function hostColumns(
   sporadic?: (row: HostRow) => boolean,
   /** See HostCell's own `now` -- the clock `worst` was derived against. */
   now?: Date,
+  /** See HostCell's own `findings`. */
+  findings?: FindingsOf,
 ): Column<HostRow>[] {
   return [
     {
@@ -1083,7 +1192,13 @@ export function hostColumns(
       header: "Host",
       width: HOST_WIDTH,
       cell: (row) => (
-        <HostCell row={row} worst={worst} sporadic={sporadic} now={now} />
+        <HostCell
+          row={row}
+          worst={worst}
+          sporadic={sporadic}
+          findings={findings}
+          now={now}
+        />
       ),
       sortValue: (row) => row.hostname,
     },

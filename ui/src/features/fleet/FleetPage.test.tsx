@@ -900,10 +900,12 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: /Failed units/ })).toHaveAttribute(
-      "href",
-      "/containers?attn=failed-units",
-    );
+    // The chip, not the finding line under the hostname (which links to the
+    // host's own tab).
+    const chips = screen.getByRole("list", { name: "What is wrong, by kind" });
+    expect(
+      within(chips).getByRole("link", { name: /Failed units/ }),
+    ).toHaveAttribute("href", "/containers?attn=failed-units");
   });
 
   // A host with nothing wrong is never in an attention view, whichever way
@@ -982,7 +984,12 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    const rows = container.querySelectorAll("tbody tr");
+    // The troubled host leads, under "Needs attention"; the healthy one
+    // follows under "Healthy".
+    const rows = [
+      ...container.querySelectorAll("tbody tr:not(.grouprow)"),
+    ].reverse();
+    expect(rows[1].querySelector(".host-cell-name")?.textContent).toBe("db-01");
     // No rail on either row any more -- the mark is the whole of it, so a
     // troubled row is no longer stated twice.
     expect(rows[0].className).toBe("");

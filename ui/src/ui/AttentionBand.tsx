@@ -78,6 +78,47 @@ export function sinceClause(row: AttentionRow, now: Date): string {
   return ` · since ${age}`;
 }
 
+/**
+ * One finding as a line: the severity dot, what is wrong, and since when.
+ *
+ * The one drawing of a finding in the app. The band below lists them under a
+ * heading; the fleet's host cell prints the same lines under the hostname, so
+ * a finding reads the same wherever it is met and the two cannot drift into
+ * two vocabularies.
+ */
+export function AttentionLine({
+  row,
+  now,
+  title,
+}: {
+  row: AttentionRow;
+  now: Date;
+  /** The full sentence, when the line itself prints a shorter one. */
+  title?: string;
+}) {
+  const since = sinceClause(row, now);
+  return (
+    <span className="attn-line" title={title}>
+      <span
+        className={`dot ${SEVERITY_CLASS[lineSeverity(row.severity)]}`}
+        aria-hidden="true"
+      />
+      <span className="what">
+        {row.what}
+        {/* How long it has been true. Quiet, because the sentence is what to
+            act on and the age is context for it. */}
+        {since === "" ? null : <span className="since">{since}</span>}
+      </span>
+    </span>
+  );
+}
+
+// A finding drawn here is never "ok"; anything that is not critical takes
+// the warning dot rather than none.
+function lineSeverity(severity: Severity): FillSeverity {
+  return severity === "critical" ? "critical" : "warning";
+}
+
 export interface AttentionBandProps {
   rows: readonly AttentionRow[];
   /** The clock the onset clauses are measured against, so a test can pin it. */
@@ -137,24 +178,9 @@ export function AttentionBand({
             <ul className="attn-list">
               {shown.map((row, index) => (
                 <li className="attn-row" key={index}>
-                  <span
-                    className={`dot ${SEVERITY_CLASS[severity]}`}
-                    aria-hidden="true"
-                  />
-                  <span className="what">
-                    {row.what}
-                    {/* How long it has been true. Quiet, because the sentence
-                        is what to act on and the age is context for it.
-
-                        `since`, not `muted`: index.css has a rule for the
-                        first and none at all for the second, so this line was
-                        rendering at the sentence's own ink and losing its
-                        tabular figures. The class the stylesheet was written
-                        for had never been emitted by anything. */}
-                    {sinceClause(row, now) === "" ? null : (
-                      <span className="since">{sinceClause(row, now)}</span>
-                    )}
-                  </span>
+                  {/* The same line the fleet's host cell prints a finding
+                      as: dot, sentence, and how long it has been true. */}
+                  <AttentionLine row={row} now={now} />
                 </li>
               ))}
               {hidden > 0 && overflow !== undefined ? (
