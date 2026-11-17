@@ -317,7 +317,9 @@ export const GRID_DASH = "1 2";
 export const GRID_WIDTH = 1;
 
 /**
- * The rule a small trend draws where it has no reading (see gapSpans).
+ * The rule a small trend draws where it has no reading: a line's bridge at
+ * its own level (gapBridges), a mirrored pair's zero line or an empty box's
+ * baseline (gapSpans).
  *
  * Dots, not dashes, so it cannot be mistaken for a REFERENCE rule ("4 3"):
  * a near-zero dash with a round cap draws a dot GAP_WIDTH across, and the

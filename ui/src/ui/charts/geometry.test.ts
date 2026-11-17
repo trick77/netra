@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   areaPath,
   extent,
+  gapBridges,
   gapSpans,
   linePath,
   mirrorPaths,
@@ -11,6 +12,50 @@ import {
 } from "./geometry";
 
 describe("geometry", () => {
+  describe("gapBridges", () => {
+    // Five slots over w=100: x of index i is 25*i. h=20, 0..4: y = 20 - 5v.
+    it("holds the first reading's level back to the left edge", () => {
+      expect(gapBridges([null, null, 2, 3, 4], 100, 20, 0, 4)).toEqual([
+        { x1: 0, y1: 10, x2: 50, y2: 10 },
+      ]);
+    });
+
+    it("joins the readings either side of an interior gap", () => {
+      expect(gapBridges([1, 4, null, null, 2], 100, 20, 0, 4)).toEqual([
+        { x1: 25, y1: 0, x2: 100, y2: 10 },
+      ]);
+    });
+
+    it("holds the last reading's level out to the right edge", () => {
+      expect(gapBridges([1, 2, 3, null, null], 100, 20, 0, 4)).toEqual([
+        { x1: 50, y1: 5, x2: 100, y2: 5 },
+      ]);
+    });
+
+    it("bridges to and from a lone reading", () => {
+      expect(gapBridges([1, null, 2, null, 3], 100, 20, 0, 4)).toEqual([
+        { x1: 0, y1: 15, x2: 50, y2: 10 },
+        { x1: 50, y1: 10, x2: 100, y2: 5 },
+      ]);
+    });
+
+    it("has nothing to continue for an empty or all-null series", () => {
+      expect(gapBridges([], 100, 20, 0, 4)).toEqual([]);
+      expect(gapBridges([null, null], 100, 20, 0, 4)).toEqual([]);
+    });
+
+    it("keeps a bridge on the box edge inside the box by `inset`", () => {
+      // 4 is the ceiling (y=0), 0 the floor (y=20).
+      expect(gapBridges([4, null, 0], 100, 20, 0, 4, 0, 0.6)).toEqual([
+        { x1: 0, y1: 0.6, x2: 100, y2: 19.4 },
+      ]);
+    });
+
+    it("draws nothing for a series without gaps", () => {
+      expect(gapBridges([1, 2, 3], 100, 20, 0, 4)).toEqual([]);
+    });
+  });
+
   describe("gapSpans", () => {
     it("runs an interior gap from the last reading to the next one", () => {
       // x of index i is i/4 * 100 over five slots

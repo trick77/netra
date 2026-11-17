@@ -23,10 +23,19 @@ import { ABSENT } from "../lib/format";
  *    sort control's accessible name and by every test that finds a column by
  *    its title, and a node would be unusable in both.
  */
+/**
+ * A column as narrow as its content: the classic table idiom, a 1% width the
+ * auto layout can only satisfy by giving the column its min-content width.
+ * The reading columns use it in both the fleet and the container list: a
+ * reading puts its trend at the cell's end, so a wider column would open a
+ * gap between the figure and its trend.
+ */
+export const CONTENT_WIDTH = "1%";
+
 export interface Column<T> {
   key: string;
   header: string;
-  /** CSS width (e.g. "120px"). */
+  /** CSS width (e.g. "120px"), or CONTENT_WIDTH. */
   width?: string;
   align?: "left" | "center" | "right";
   cell: (row: T) => ReactNode;

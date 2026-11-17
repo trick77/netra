@@ -3,8 +3,9 @@
 // geometry.ts verbatim -- this component only turns that output into SVG
 // markup and never recomputes or "fixes up" a coordinate itself.
 //
-// A stretch with no reading is a dotted rule on the baseline, not a hole
-// (Chart's gapRule): every small trend in the app draws absence the same way.
+// A stretch with no reading is a dotted bridge at the line's own level, not a
+// hole (Chart's gapRule). The mirrored traffic trend dots its zero line
+// instead: its midline is the level its mass stands on.
 import { extent } from "./geometry";
 import { Chart } from "./Chart";
 import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";

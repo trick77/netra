@@ -236,6 +236,19 @@ describe("hostColumns", () => {
       expect(traffic.sortValue!(row)).toBeNull();
     });
 
+    // The fluid trend starts after the figure: without the empty block a
+    // silent host's chart began left of every other row's.
+    it("holds the rates' block, empty, for a host that is not reporting", () => {
+      const traffic = hostColumns("1h").find((c) => c.header === "Traffic")!;
+      const { container } = render(
+        <>{traffic.cell(makeRow({ last_seen: "2020-01-01T00:00:00Z" }))}</>,
+      );
+      const rates = container.querySelector(".treading-fig .traffic-rates");
+      expect(rates).not.toBeNull();
+      expect(rates!.textContent).toBe("");
+      expect(rates!.getAttribute("aria-hidden")).toBe("true");
+    });
+
     // The percentage cannot say on its own whether a mount is in trouble:
     // 90% of a 6.7 TB array is 674 GB free and 90% of a 4 GB root is not.
     it("prints the mount, how full it is, and what is left", () => {

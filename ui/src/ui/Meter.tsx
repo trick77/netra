@@ -62,7 +62,8 @@ export const SEVERITY_COLOR: Record<FillSeverity, string> = {
  * cell with no current reading looked, so a healthy row and an empty one
  * read alike. They no longer share an ink: ok is --ok-fill, a reading with
  * no current value is STALE_TREND_COLOR a clear step quieter, a stretch with
- * no reading is a dotted rule (Chart's gapRule), and a silent host carries
+ * no reading is a dotted bridge at the line's level (Chart's gapRule), and a
+ * silent host carries
  * its severity mark.
  *
  * The CURRENT severity over the whole shape, not a line that changes hue at

@@ -26,7 +26,7 @@ function draw(ui: React.ReactElement) {
 
 describe("Chart", () => {
   describe("gapRule on a line chart", () => {
-    it("draws one rule, only where every series is silent", () => {
+    it("continues each series at its own level, never on the floor", () => {
       const series: ChartSeries[] = [
         { name: "a", color: "var(--s1)", values: [1, null, null, null, null] },
         { name: "b", color: "var(--s2)", values: [1, 2, 3, null, null] },
@@ -42,10 +42,40 @@ describe("Chart", () => {
           gapRule
         />,
       );
+      const bridge = (name: string) =>
+        [...c.querySelectorAll(`[data-series="${name}"] line[data-gap]`)].map(
+          (g) => ["x1", "y1", "x2", "y2"].map((a) => g.getAttribute(a)),
+        );
+      // y = 20 - 5v on a 0..4 axis
+      expect(bridge("a")).toEqual([["0", "15", "100", "15"]]);
+      expect(bridge("b")).toEqual([["50", "5", "100", "5"]]);
+      // No baseline rule while any series has a reading to continue.
+      expect(c.querySelectorAll("line[data-gap]")).toHaveLength(2);
+    });
+
+    it("rules the baseline when only an envelope has readings", () => {
+      const c = draw(
+        <Chart
+          series={[
+            {
+              name: "a",
+              color: "var(--s1)",
+              values: [null, null, null],
+              band: [1, 2, 3],
+            },
+          ]}
+          width={100}
+          height={20}
+          max={4}
+          min={0}
+          pad={0}
+          gapRule
+        />,
+      );
       const gaps = [...c.querySelectorAll("line[data-gap]")];
       expect(
         gaps.map((g) => [g.getAttribute("x1"), g.getAttribute("x2")]),
-      ).toEqual([["50", "100"]]);
+      ).toEqual([["0", "100"]]);
     });
 
     it("draws no rule without gapRule", () => {

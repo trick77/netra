@@ -16,6 +16,7 @@ import {
   areaPath,
   dotPath,
   extent,
+  gapBridges,
   gapSpans,
   linePath,
   mirrorCeilings,
@@ -163,10 +164,12 @@ export interface ChartProps {
    */
   bandStroke?: number;
   /**
-   * Draw a dotted rule across every stretch with no reading (see gapSpans),
-   * instead of leaving a hole. For the small trends only, and only for the
-   * line, area and mirror marks: a panel's grid and axis already carry a
-   * gap, and a dotted rule there would compete with the dotted grid.
+   * Draw a dotted rule across every stretch with no reading instead of
+   * leaving a hole: a line bridges at its own level (gapBridges), a mirrored
+   * pair's zero line turns dotted (gapSpans). For the small trends only, and
+   * only for the line, area and mirror marks: a panel's grid and axis
+   * already carry a gap, and a dotted rule there would compete with the
+   * dotted grid.
    */
   gapRule?: boolean;
 }
@@ -983,26 +986,27 @@ function LineMarks({
   // per series: every fill on this chart shares the baseline, so what makes
   // an overlap dark is how many of them there are.
   const fillOpacity = areaFillOpacity(series.length);
-  // ONE rule for the chart, silent only where every series (and every
-  // envelope) is: a per-series rule would mark a stretch empty under another
-  // series' reading. On the baseline the areas close to, raised half a
-  // stroke so the dots are not clipped on a strip drawn with pad 0.
-  //
-  // The baseline is the axis floor, which on a fitted axis is the window's
-  // lowest reading rather than zero. That is acceptable because the rule is
-  // dotted and unfilled: it never reads as a line sitting at that level.
-  const gaps = gapRule
-    ? gapSpans(
-        series.flatMap((s) => [s.values, s.band ?? []]),
-        w,
-        pad,
-      )
-    : [];
+  // A series with readings bridges its own gaps at its own level (see
+  // gapBridges). The baseline rule is left for a chart with no LINE reading
+  // anywhere in the window -- an envelope alone included: there is no level
+  // to continue, and a box with no line reads as a rendering fault. Raised
+  // half a stroke so the dots are not clipped on a strip drawn with pad 0.
+  const gaps =
+    gapRule && series.every((s) => s.values.every((v) => v === null))
+      ? gapSpans(
+          series.map((s) => s.values),
+          w,
+          pad,
+        )
+      : [];
   return (
     <>
       <GapRules gaps={gaps} y={h - Math.max(pad, GAP_WIDTH / 2)} />
       {series.map((s) => {
         const { paths, points } = linePath(s.values, w, h, floor, max, pad);
+        const bridges = gapRule
+          ? gapBridges(s.values, w, h, floor, max, pad, GAP_WIDTH / 2)
+          : [];
         const areas = filled ? areaPath(paths, w, h, pad) : [];
         // The envelope, where the tier carries a peak column: the bucket's
         // max as a pale area under the mean that is the line. Drawn first so
@@ -1038,6 +1042,22 @@ function LineMarks({
                 fill={s.color}
                 fillOpacity={fillOpacity}
                 stroke="none"
+              />
+            ))}
+            {/* Behind the line, so its round cap covers the bridge's first
+                dot where the two meet. */}
+            {bridges.map((b) => (
+              <line
+                key={`gap-${b.x1}`}
+                data-gap
+                x1={b.x1}
+                y1={b.y1}
+                x2={b.x2}
+                y2={b.y2}
+                stroke={GAP_STROKE}
+                strokeWidth={GAP_WIDTH}
+                strokeDasharray={GAP_DASH}
+                strokeLinecap="round"
               />
             ))}
             {paths.map((d, i) => (
