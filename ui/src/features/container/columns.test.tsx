@@ -559,6 +559,15 @@ describe("containerColumns", () => {
       memory.sortValue!(makeRow({ mem: [10, 900], mem_limit_bytes: null })),
     ).toBe(900);
   });
+
+  // A reading puts its trend at the cell's end, so a column wider than its
+  // content opens a gap between the figure and its trend.
+  it("keeps the reading columns as narrow as their content", () => {
+    const cols = containerColumns({ cpuMax: 1, memMax: 1000 });
+    for (const key of ["cpu", "memory"]) {
+      expect(cols.find((c) => c.key === key)!.width).toBe("1%");
+    }
+  });
 });
 // What a collapsed group header prints. One definition for both lists -- the
 // host page's, grouped by compose project, and the fleet's, grouped by stack --

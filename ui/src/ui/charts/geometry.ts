@@ -80,6 +80,28 @@ function splitRuns(n: number, isGap: (i: number) => boolean): number[][] {
 }
 
 /**
+ * The gaps between `runs`, each as the reading index either side of it:
+ * `a` the last reading before, `b` the first after, null at a box edge.
+ * gapSpans and gapBridges both walk gaps this way, so a leading, interior
+ * and trailing gap is found by one rule for both.
+ */
+function gapEdges(
+  runs: readonly number[][],
+  n: number,
+): { a: number | null; b: number | null }[] {
+  if (runs.length === 0) return [];
+  const out: { a: number | null; b: number | null }[] = [];
+  const first = runs[0]![0]!;
+  const last = runs.at(-1)!.at(-1)!;
+  if (first > 0) out.push({ a: null, b: first });
+  for (let r = 1; r < runs.length; r++) {
+    out.push({ a: runs[r - 1]!.at(-1)!, b: runs[r]![0]! });
+  }
+  if (last < n - 1) out.push({ a: last, b: null });
+  return out;
+}
+
+/**
  * The x-ranges a chart has no reading for: every stretch where ALL of
  * `series` are null (or past their end), in the same coordinates `linePath`
  * and `mirrorPaths` place their points at.
@@ -87,8 +109,9 @@ function splitRuns(n: number, isGap: (i: number) => boolean): number[][] {
  * A hole in a small trend reads as a rendering fault -- the line simply
  * stops, and on a row of cells the eye goes to the gaps rather than to the
  * readings. A small trend draws these spans as a dotted rule instead, which
- * says "nothing reported here" without inventing a value: the rule sits on
- * the baseline and is never filled.
+ * says "nothing reported here" without inventing a value: on a mirrored
+ * pair's zero line, or across a line chart with no reading at all. A line
+ * with readings bridges its gaps at its own level instead (gapBridges).
  *
  * An interior gap runs from the last reading before it to the first one
  * after it. A leading or trailing gap runs to the box edge (0 or `w`), not
@@ -115,15 +138,67 @@ export function gapSpans(
   if (runs.length === 0) return [{ x1: 0, x2: edge }];
   const after = (i: number) => round1(scaleX(i, n, w, pad) + reach);
   const before = (i: number) => round1(scaleX(i, n, w, pad) - reach);
-  const spans: { x1: number; x2: number }[] = [];
-  const first = runs[0]![0]!;
-  const last = runs.at(-1)!.at(-1)!;
-  if (first > 0) spans.push({ x1: 0, x2: before(first) });
-  for (let r = 1; r < runs.length; r++) {
-    spans.push({ x1: after(runs[r - 1]!.at(-1)!), x2: before(runs[r]![0]!) });
-  }
-  if (last < n - 1) spans.push({ x1: after(last), x2: edge });
-  return spans.filter((s) => s.x2 > s.x1);
+  return gapEdges(runs, n)
+    .map(({ a, b }) => ({
+      x1: a === null ? 0 : after(a),
+      x2: b === null ? edge : before(b),
+    }))
+    .filter((s) => s.x2 > s.x1);
+}
+
+/**
+ * The dotted bridges a small trend's LINE draws over its own silent
+ * stretches, in `linePath`'s coordinates: an interior gap runs from the last
+ * reading before it to the first one after it, a leading or trailing gap
+ * holds the nearest reading's level out to the box edge.
+ *
+ * At the series' own level, not on the baseline. A rule dropped to the floor
+ * read as the line falling to zero the moment a host stopped answering --
+ * exactly the reading nobody took. The bridge is dotted and never filled,
+ * so it carries the line's position across the gap without claiming a value
+ * inside it.
+ *
+ * An all-null or empty series has no level to continue and gets nothing;
+ * the caller rules the baseline for a chart where every series is silent.
+ *
+ * The gap rule is `linePath`'s own (`=== null`), so a bridge starts and ends
+ * at the x of a line's end or a dot. `inset` keeps the dots inside the box:
+ * on a strip drawn with pad 0 the window's lowest or highest reading sits on
+ * the box edge, where a round dot would be cut in half -- so there, and only
+ * there, the bridge's end sits up to `inset` off the line's.
+ */
+export function gapBridges(
+  vals: readonly (number | null)[],
+  w: number,
+  h: number,
+  min: number,
+  max: number,
+  pad = 0,
+  inset = 0,
+): { x1: number; y1: number; x2: number; y2: number }[] {
+  const n = vals.length;
+  const runs = splitRuns(n, (i) => vals[i] === null);
+  const x = (i: number) => round1(scaleX(i, n, w, pad));
+  const y = (i: number) =>
+    round1(
+      Math.min(
+        h - inset,
+        Math.max(inset, scaleY(vals[i] as number, min, max, h, pad)),
+      ),
+    );
+  return gapEdges(runs, n)
+    .map(({ a, b }) => {
+      // A leading or trailing gap holds the one reading it touches.
+      const from = a ?? b!;
+      const to = b ?? a!;
+      return {
+        x1: a === null ? 0 : x(a),
+        y1: y(from),
+        x2: b === null ? round1(w) : x(b),
+        y2: y(to),
+      };
+    })
+    .filter((s) => s.x2 > s.x1);
 }
 
 /**

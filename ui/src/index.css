@@ -1265,10 +1265,17 @@ tbody tr:hover .host-cell-name {
 /* ── A reading: figure, trend, what it is measured against ───────────
    ui/TrendReading.tsx. One mark per quantity -- the figure carries the
    value and its severity, the trend the history -- in two layouts. */
+/* The trend sits at the cell's END, so the trends in a column start at one
+   x whatever the figure says ("6 %" or "347 %") and the column is only as
+   wide as its widest figure. This used to be a fixed 3.6em figure slot with
+   the trend after it: every "6 %" carried the space of a "100 %", and a set
+   min-width replaces a grid item's automatic minimum, so in a narrow table
+   the slot shrank to 3.6em under the 104px traffic rates and the chart ran
+   into them. */
 .treading.tr-cell {
   display: grid;
   grid-template-columns: auto auto;
-  justify-content: start;
+  justify-content: space-between;
   align-items: end;
   column-gap: var(--space-3);
   row-gap: 2px;
@@ -1281,12 +1288,6 @@ tbody tr:hover .host-cell-name {
 .treading.tr-cell.tr-fluid .treading-trend {
   display: block;
   min-width: 0;
-}
-.treading.tr-cell .treading-fig {
-  /* Fixed, so the trends in a column start at one x whatever the figure
-     says ("8 %" and "100 %"). Wide enough for the rates in the traffic cell,
-     which sets its own width below. */
-  min-width: 3.6em;
 }
 /* Direct children only: the enlarged chart (Enlargeable renders ChartDetail
    inside the trend, not in a portal) carries a .u of its own in its header,
@@ -1424,8 +1425,8 @@ tbody tr:hover .host-cell-name {
 /* The ten-cell bar. Unlit cells are the track colour the Meter uses, lit
    ones take the severity token the Meter fills with, so the disk meter on
    the host page and this bar in the fleet row say the same thing in the same
-   colour at the same value. The bar grows to the cell's width and the
-   figure keeps its fixed column beside it. */
+   colour at the same value. The bar grows to the cell's width beside the
+   figure. */
 .segbar {
   display: flex;
   gap: 2px;

@@ -6,10 +6,10 @@
 // `width` is set for one reason: a table at 100% hands its spare width out
 // across every column, and on a wide page that opened gaps between each
 // figure and the next -- the main reason the list looked loose. The reading
-// columns shrink to their content (CONTENT), the host column gets a fixed
+// columns shrink to their content (CONTENT_WIDTH), the host column gets a fixed
 // width, and Traffic takes what is left: its trend is the one that grows to
 // fill it (TrendReading's `fluid`), so the spare width becomes chart.
-import type { Column } from "../../ui/Table";
+import { CONTENT_WIDTH, type Column } from "../../ui/Table";
 import { SeverityMark, type MarkKind } from "../../ui/SeverityMark";
 import { AttentionLine } from "../../ui/AttentionBand";
 import type { Condition } from "./conditions";
@@ -944,7 +944,16 @@ export function TrafficCell({
       layout={layout}
       fluid={fluid}
       label="Traffic"
-      figure={rx === null && tx === null ? null : <Rates rx={rx} tx={tx} />}
+      // A silent host still holds the rates' block, empty: the fluid trend
+      // starts after the figure, and without it a silent row's chart began
+      // 104px left of every other row's.
+      figure={
+        rx === null && tx === null ? (
+          <span className="traffic-rates" aria-hidden="true" />
+        ) : (
+          <Rates rx={rx} tx={tx} />
+        )
+      }
       trend={trend}
     />
   );
@@ -1187,9 +1196,6 @@ export function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
 // (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
 // about one machine can act on it.
 
-// A column as narrow as its content: the classic table idiom, a 1% width the
-// auto layout can only satisfy by giving the column its min-content width.
-const CONTENT = "1%";
 // The host column holds a name and two location lines that must not wrap
 // word by word, so it gets a width rather than its min-content.
 const HOST_WIDTH = "15rem";
@@ -1226,7 +1232,7 @@ export function hostColumns(
     {
       key: "cpu",
       header: "CPU",
-      width: CONTENT,
+      width: CONTENT_WIDTH,
       cell: (row) => <CpuCell row={row} range={range} />,
       // Where the silhouette ends -- the figure the cell prints, read
       // through the same guard the cell reads it through, so a host whose
@@ -1242,7 +1248,7 @@ export function hostColumns(
     {
       key: "memory",
       header: "Memory",
-      width: CONTENT,
+      width: CONTENT_WIDTH,
       cell: (row) => <MemoryCell row={row} range={range} />,
       // The FRACTION the cell prints, off the same gauge: mem_used over
       // mem_total. Ordering on the stack's own height ranked the fleet by how
@@ -1268,7 +1274,7 @@ export function hostColumns(
       // cell opens is titled "Filesystem usage", which is also what Observium
       // calls it. Singular: the cell reports the ONE mount worth acting on.
       header: "Filesystem",
-      width: CONTENT,
+      width: CONTENT_WIDTH,
       cell: (row) => <DiskCell row={row} range={range} />,
       // The percentage of the mount the cell NAMES -- sorting on anything the
       // row does not show would order the list by a number nobody can see.
@@ -1315,7 +1321,7 @@ export function hostColumns(
     {
       key: "seen",
       header: "Last seen",
-      width: CONTENT,
+      width: CONTENT_WIDTH,
       cell: (row) => <LastSeenCell row={row} now={now} />,
       // The INSTANT, the way the container list's Last seen column sorts the
       // same field. It sorted the raw ISO string for one commit, on the claim

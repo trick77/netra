@@ -70,7 +70,7 @@ import { Button } from "../../ui/Button";
 import { When } from "../../ui/When";
 import { severityFromPercent, trendColor } from "../../ui/Meter";
 import { Figure, TrendReading } from "../../ui/TrendReading";
-import type { Column } from "../../ui/Table";
+import { CONTENT_WIDTH, type Column } from "../../ui/Table";
 import {
   ABSENT,
   absolute,
@@ -1085,6 +1085,9 @@ export function containerColumns({
     columns.push({
       key: "cpu",
       header: "CPU",
+      // See CONTENT_WIDTH: a wider column would open a gap between the
+      // figure and its trend.
+      width: CONTENT_WIDTH,
       // The fleet row's own cell: the silhouette in the reading's severity
       // hue, the segmented bar, the figure, and what it is a share OF.
       cell: (row) => (
@@ -1111,6 +1114,7 @@ export function containerColumns({
     columns.push({
       key: "memory",
       header: "Memory",
+      width: CONTENT_WIDTH,
       cell: (row) => (
         <MemoryCell
           row={row}
