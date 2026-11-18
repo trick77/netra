@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ServerCog } from "lucide-react";
+import { ServerConnection } from "iconoir-react";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import { Input } from "../../ui/Control";
@@ -393,7 +393,7 @@ export function HostAdminPage() {
 
       {hosts !== null && hosts.length === 0 && !creating ? (
         <EmptyState
-          icon={ServerCog}
+          icon={ServerConnection}
           title="No hosts yet"
           body="Create a host to mint its agent token. The token is shown once, together with the command that installs the agent."
           action={

@@ -13,7 +13,7 @@
     "format:check": "prettier --check 'src/**/*.{ts,tsx,css}' '*.ts'"
   },
   "dependencies": {
-    "lucide-react": "^1.70.0",
+    "iconoir-react": "^7.12.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

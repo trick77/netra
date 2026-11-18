@@ -3,7 +3,7 @@
 // list shows first_seen/last_seen only where the schema actually has them
 // -- an empty "last seen" column would be a claim netra cannot back.
 import { useMemo, useState, type ReactNode } from "react";
-import { Inbox } from "lucide-react";
+import { EmptyPage } from "iconoir-react";
 import type {
   Address,
   Container,
@@ -180,7 +180,7 @@ export function Inventory<T>({
       {notice}
       {visible.length === 0 ? (
         <EmptyState
-          icon={Inbox}
+          icon={EmptyPage}
           title={
             rows.length === 0
               ? (emptyTitle ?? "Nothing collected yet")

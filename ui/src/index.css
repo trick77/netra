@@ -2290,14 +2290,17 @@ tbody tr:hover .host-cell-name {
 /* 20px, not the 16px this was while a label carried the meaning. A glyph
    standing alone is the whole target and the whole name, and at 16px in a
    36px box it read as an afterthought in the middle of empty space. The
-   stroke stays at 1.75: lucide draws at 2 for 24px, which is heavy scaled
-   down. A CSS property beats the presentation attribute lucide sets, so this
-   wins without threading a prop through every call site. */
+   stroke is iconoir's own 1.5: the set replaced lucide (run at 1.75 here)
+   for its thin, open look, and thickening it would undo exactly that.
+   Stated rather than inherited so it stays a choice. A CSS property beats
+   the presentation attribute
+   iconoir sets, so this wins without threading a prop through every call
+   site. */
 .nav a svg,
 .nav button svg {
   width: 20px;
   height: 20px;
-  stroke-width: 1.75;
+  stroke-width: 1.5;
   flex: none;
 }
 /* Where you are: the fill, and nothing else. An accent bar under the current
@@ -2880,7 +2883,7 @@ tbody tr:hover .host-cell-name {
    4.5:1 against the body ground; a 14px glyph is measured as a graphic
    (3:1), and the raw hue is the one that reads as the status colour at that
    size -- --st-crit-text on the filled disc reads pink. */
-/* The fleet row's severity mark -- SeverityMark.tsx, a lucide icon rather
+/* The fleet row's severity mark -- SeverityMark.tsx, an iconoir icon rather
    than a path this file draws. Sizing lives here and not on the component
    because these two numbers are the whole of whether the mark reads, and they
    are decided against the type it sits beside.
@@ -2893,15 +2896,16 @@ tbody tr:hover .host-cell-name {
 
    It was 13px once, and 13 was where the FIRST version failed -- but that was
    a hand-drawn polygon, where eight sides across 13px are sub-pixel corner
-   cuts and the octagon drew itself as a circle. These are lucide outlines with
+   cuts and the octagon drew itself as a circle. These are icon-set glyphs with
    an interior mark, which is a different failure mode: what thins out first is
    the exclamation, not the outline.
 
-   Stroke 2.25, up from lucide's own 2. lucide draws for a 24px box, so a
-   stroke of 2 there lands at 1.25px at this size -- and what goes first is the
+   Stroke 2.25, up from iconoir's own 1.5. iconoir draws for a 24px box, so
+   1.5 there lands under 1px at this size -- and what goes first is the
    exclamation, which is what makes the mark read as an alert rather than as
-   a coloured blob.
-   The nav rail runs its own icons at 2 because a glyph standing alone can
+   a coloured blob. Only the outlined warning triangle has a stroke; the
+   critical disc is iconoir's solid variant and is all fill.
+   The nav bar runs its own icons at 1.5 because a glyph standing alone can
    afford to be quiet; this one sits in a table of text and cannot. */
 .smark {
   width: var(--text-ui);
@@ -2922,16 +2926,6 @@ tbody tr:hover .host-cell-name {
 }
 .smark.st-crit {
   color: var(--st-crit);
-}
-/* Critical is a FILLED disc with the exclamation knocked out in the row's
-   own ground: an outlined circle with a mark inside is InfoTip's glyph
-   turned upside down, and a ringed "!" read as a hint. Filled, it also
-   differs from the outlined warning triangle by weight as well as shape. */
-.smark.st-crit circle {
-  fill: currentColor;
-}
-.smark.st-crit line {
-  stroke: var(--surface);
 }
 
 /* table */

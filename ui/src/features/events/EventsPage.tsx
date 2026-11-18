@@ -7,7 +7,7 @@
 // router that puts it there. filtersToQuery/filtersFromQuery below are this
 // page's half of that contract -- the serialization lives with the type it
 // serializes, and nothing here touches history or location.
-import { Inbox } from "lucide-react";
+import { EmptyPage } from "iconoir-react";
 import { Badge } from "../../ui/Badge";
 import { Card } from "../../ui/Card";
 import { EmptyState } from "../../ui/EmptyState";
@@ -412,7 +412,7 @@ export function EventsPage({
       <Card>
         {rows.length === 0 ? (
           <EmptyState
-            icon={Inbox}
+            icon={EmptyPage}
             title="No events"
             body={
               truncated

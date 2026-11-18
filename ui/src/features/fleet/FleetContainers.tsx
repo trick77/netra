@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Boxes } from "lucide-react";
+import { Packages } from "iconoir-react";
 import { EmptyState } from "../../ui/EmptyState";
 import { Table } from "../../ui/Table";
 import {
@@ -121,7 +121,7 @@ export function FleetContainers({
     if (!loaded) {
       return (
         <EmptyState
-          icon={Boxes}
+          icon={Packages}
           title="Containers not read yet"
           body="The containers are still being fetched, one host at a time."
         />
@@ -133,7 +133,7 @@ export function FleetContainers({
     if (filteredToNothing) {
       return (
         <EmptyState
-          icon={Boxes}
+          icon={Packages}
           title="No containers match"
           body="No container on any host matches the filter."
         />
@@ -148,7 +148,7 @@ export function FleetContainers({
     // the only true sentence there is about it.
     return fleetContainersBlocked(hosts ?? []) ? (
       <EmptyState
-        icon={Boxes}
+        icon={Packages}
         title="No containers collected"
         body={notes.join(" ")}
       />
@@ -163,7 +163,7 @@ export function FleetContainers({
           </p>
         ))}
         <EmptyState
-          icon={Boxes}
+          icon={Packages}
           title="No containers"
           body="No host has reported a container."
         />

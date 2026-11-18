@@ -13,19 +13,19 @@
 // exists to prevent, and the triangle beside it was a solid blob. At a
 // glance the pair read as "a red thing" and "a yellow thing".
 //
-// lucide is this app's icon set -- the nav, the palette, the table chevron,
-// InfoTip, Button's spinner -- and it draws these properly, with a mark
-// inside the outline, which is what makes an icon legible small. Drawing our
-// own was the mistake: a second channel is not something to freehand at 13px.
+// iconoir is this app's icon set -- the nav, the palette, the table chevron,
+// InfoTip -- and it draws these properly, with a mark inside the outline,
+// which is what makes an icon legible small. Drawing our own was the
+// mistake: a second channel is not something to freehand at 13px.
 //
-// Both marks carry an exclamation -- TriangleAlert and CircleAlert -- and
+// Both marks carry an exclamation -- WarningTriangle and WarningCircle -- and
 // differ twice over, which survives greyscale: warning is an OUTLINED
 // triangle, critical a FILLED disc with the exclamation knocked out of it
-// (.smark.st-crit in index.css). Filled, because an outlined circle with a
-// mark inside is InfoTip's glyph turned upside down, and a reader who knows
-// that one would take a ringed "!" for a hint. Critical was OctagonX, a
-// cross, which read as "closed" or "dismiss" beside a hostname rather than
-// as "look here".
+// (iconoir's solid variant; the cut-out shows the row's own ground). Filled,
+// because an outlined circle with a mark inside is InfoTip's glyph turned
+// upside down, and a reader who knows that one would take a ringed "!" for a
+// hint. Critical was OctagonX, a cross, which read as "closed" or "dismiss"
+// beside a hostname rather than as "look here".
 //
 // TWO MARKS, not three. Offline is critical, and it draws critical's mark --
 // the same circle, the same hue. It briefly had a bare X of its own, on the
@@ -43,13 +43,14 @@
 // label is the row's own word -- "offline", "never seen", "sporadic" -- so a
 // screen reader gets the specific fact rather than the severity band it falls
 // in, which is more than the mark says by eye.
-import { CircleAlert, TriangleAlert } from "lucide-react";
+import { WarningTriangle } from "iconoir-react";
+import { WarningCircle } from "iconoir-react/solid";
 
 export type MarkKind = "warning" | "critical";
 
 const MARKS = {
-  warning: { Icon: TriangleAlert, cls: "st-warn" },
-  critical: { Icon: CircleAlert, cls: "st-crit" },
+  warning: { Icon: WarningTriangle, cls: "st-warn" },
+  critical: { Icon: WarningCircle, cls: "st-crit" },
 } as const;
 
 export function SeverityMark({
@@ -63,8 +64,8 @@ export function SeverityMark({
 }) {
   const { Icon, cls } = MARKS[kind];
   return (
-    // Size and stroke come from .smark in index.css rather than from lucide's
-    // props: lucide draws at stroke 2 for a 24px box, so every use in this app
+    // Size and stroke come from .smark in index.css rather than from iconoir's
+    // props: iconoir draws at stroke 1.5 for a 24px box, so every use in this app
     // smaller than that has had to re-weight it, and keeping both numbers in
     // the stylesheet puts them next to the type they sit beside.
     <Icon className={`smark ${cls}`} role="img" aria-label={label ?? kind} />
