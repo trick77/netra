@@ -192,8 +192,16 @@ interface PanelSpec {
    * keyed family draws one pass per entry in res.series, and two families'
    * series do not correspond -- disk sda in one response is not disk sda in
    * another's ordering. bandsFor asserts this rather than drawing something
-   * plausible and wrong. */
-  bases: { base: string; label: string; source?: Source }[];
+   * plausible and wrong.
+   *
+   * `divisor` divides the band's line AND its peak envelope, for a column
+   * stored in a finer unit than the panel's axis. Hub latency is the case:
+   * the handshake is stored in microseconds (a LAN hub answers in 200-900us,
+   * which whole milliseconds would truncate to 0) and the round trip in
+   * milliseconds, on one axis labelled ms. Dividing the line alone would
+   * leave the envelope a thousand times too high at every rolled-up tier.
+   * A divisor rather than a factor: 350 / 1000 is 0.35, 350 * 0.001 is not. */
+  bases: { base: string; label: string; source?: Source; divisor?: number }[];
   max?: number;
   /**
    * A fixed floor, for a non-stacked panel whose scale is the reading.
@@ -459,6 +467,14 @@ function count(n: number | null): string {
   return n === null ? ABSENT : String(Math.round(n * 100) / 100);
 }
 
+// Milliseconds below one keep two significant digits rather than two
+// decimals: a handshake to a hub on the same host is a few microseconds, and
+// count() would print it as the 0 the agent stores microseconds to avoid.
+function millis(n: number | null): string {
+  if (n === null || Math.abs(n) >= 1) return count(n);
+  return String(Number(n.toPrecision(2)));
+}
+
 export const SYSTEM: PanelSpec[] = [
   // The fleet row's CPU cell, on a page.
   //
@@ -675,11 +691,11 @@ export const NETWORK: PanelSpec[] = [
     unit: "ms",
     source: "agent",
     bases: [
-      { base: "hub_connect_us", label: "handshake" },
-      { base: "hub_connect_max_us", label: "handshake peak" },
+      { base: "hub_connect_us", label: "handshake", divisor: 1000 },
+      { base: "hub_connect_max_us", label: "handshake peak", divisor: 1000 },
       { base: "post_latency_ms", label: "round trip" },
     ],
-    fmt: count,
+    fmt: millis,
   },
   // The panel above goes blank during the exact event worth seeing.
   //
@@ -1411,7 +1427,10 @@ function bandsFor(
     // side of the midline. Dropping the incomplete pass instead loses one
     // interface's half-reading and keeps the other four honest.
     const pass: Band[] = [];
-    for (const [baseIndex, { base, label, source }] of spec.bases.entries()) {
+    for (const [
+      baseIndex,
+      { base, label, source, divisor },
+    ] of spec.bases.entries()) {
       // A base naming its own source reads from that family's response; every
       // other base is unaffected and reads exactly as it did before.
       let bandRes = res;
@@ -1481,8 +1500,10 @@ function bandsFor(
       // reads the line and calls its centre "Mean", so a peak-valued line
       // reported a peak under that heading. One quantity, one mark, every
       // chart.
-      const gridded = bandRead(base);
-      const band = wantsBand ? bandRead(peakColumn) : undefined;
+      const gridded = inUnit(bandRead(base), divisor);
+      const band = wantsBand
+        ? inUnit(bandRead(peakColumn), divisor)
+        : undefined;
       // After the grid, never before: counterDeltas subtracts NEIGHBOURING
       // buckets, so it has to run on the window's own even spacing. Applied
       // to the raw response -- which omits the buckets a host did not
@@ -1522,6 +1543,21 @@ function bandsFor(
 }
 
 /**
+ * A base's readings in the panel's unit: divided by its `divisor`, if any.
+ *
+ * Every reader of a base value goes through here -- the line, the envelope,
+ * worstOf -- so none of them works in the stored unit by accident. The idle
+ * filter does not need it: zero divided is still zero.
+ */
+function inUnit(
+  values: (number | null)[],
+  divisor: number | undefined,
+): (number | null)[] {
+  if (divisor === undefined) return values;
+  return values.map((v) => (v === null ? null : v / divisor));
+}
+
+/**
  * How bad one pass got, across the spec's own bases, lower being worse.
  *
  * A GAP counts as worse than any reading, not as no reading. A collector that
@@ -1537,8 +1573,9 @@ function bandsFor(
  * panel's not-collected states already say so. The two are told apart by
  * whether anything was read at all.
  *
- * Reads the base column as stored, which is what the ordered panel draws.
- * A `counter` spec draws per-bucket increases instead, so ordering one by
+ * Reads the base column in the panel's unit (its `divisor` applied), which is
+ * what the ordered panel draws: a µs base and a ms base compared as stored
+ * would rank on the microseconds. A `counter` spec draws per-bucket increases instead, so ordering one by
  * this would sort on the running total's first bucket rather than on the
  * deltas on screen; nothing sets both today, and the flag's doc says so.
  *
@@ -1553,9 +1590,9 @@ function worstOf(
   let worst = Infinity;
   let read = false;
   let gapped = false;
-  for (const { base, source } of spec.bases) {
+  for (const { base, source, divisor } of spec.bases) {
     if (source !== undefined && source !== spec.source) continue;
-    for (const v of pass.read(base)) {
+    for (const v of inUnit(pass.read(base), divisor)) {
       if (v === null) {
         gapped = true;
         continue;
