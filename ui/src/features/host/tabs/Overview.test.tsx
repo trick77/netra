@@ -466,6 +466,19 @@ describe("the Events card", () => {
     ).toBeInTheDocument();
   });
 
+  // A notification follows the event it reports; the card keeps its slots
+  // for causes, and the Events tab has the rest.
+  it("leaves notifications to the Events tab", () => {
+    renderOverview({
+      events: [
+        event(1, "critical"),
+        { ...event(2, "info"), type: "notification", subject: null },
+      ],
+    });
+    const card = screen.getByRole("region", { name: "Events" });
+    expect(within(card).getAllByRole("listitem")).toHaveLength(1);
+  });
+
   it("says a quiet window was quiet, and an unread one was not read", () => {
     const { unmount } = renderOverview({ events: [], range: "24h" });
     expect(screen.getByText(/Nothing happened on this host in the last/));

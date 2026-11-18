@@ -33,7 +33,7 @@ import {
   rangeLabel,
   type Range,
 } from "../../../lib/range";
-import { messageOf } from "../../events/message";
+import { messageOf, NOTIFICATION_EVENT_TYPE } from "../../events/message";
 import {
   CpuCell,
   DiskCell,
@@ -434,9 +434,14 @@ function EventsCard({
   hostId: number;
   range?: Range;
 }) {
-  const sorted = [...(events ?? [])].sort(
-    (a, b) => Date.parse(b.ts) - Date.parse(a.ts),
-  );
+  // Notifications are left to the Events tab: each follows the event it
+  // reports, and here they would take half the slots meant for causes.
+  const sorted = (events ?? [])
+    .filter((e) => e.type !== NOTIFICATION_EVENT_TYPE)
+    .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
+  // Whether the hub's page was full, counted before the filter.
+  const full =
+    range !== undefined && (events?.length ?? 0) >= EVENT_LIMITS[range];
   return (
     <Panel label="Events" title="Events">
       {events === null || events === undefined ? (
@@ -461,7 +466,7 @@ function EventsCard({
             <a className="more" href={`/hosts/${hostId}/events`}>
               {/* A full page is the hub's limit, not the window's count:
                   there may be more than it returned. */}
-              {range !== undefined && sorted.length >= EVENT_LIMITS[range]
+              {full
                 ? `Over ${sorted.length - EVENTS_SHOWN} more on the Events tab`
                 : `${sorted.length - EVENTS_SHOWN} more on the Events tab`}
             </a>

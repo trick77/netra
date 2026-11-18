@@ -22,6 +22,23 @@ type fakeStore struct {
 	pruned            int
 	// sinceSeen is the lower bound of the last event read.
 	sinceSeen time.Time
+	// records are the logged messages; recordErr fails the write.
+	records   []record
+	recordErr error
+}
+
+type record struct {
+	hostID   int32
+	severity string
+	n        notify.Notification
+}
+
+func (f *fakeStore) RecordNotification(_ context.Context, hostID int32, _ time.Time, severity string, n notify.Notification) error {
+	if f.recordErr != nil {
+		return f.recordErr
+	}
+	f.records = append(f.records, record{hostID, severity, n})
+	return nil
 }
 
 func (f *fakeStore) PendingConditions(context.Context, time.Time, time.Duration) ([]notify.Condition, error) {
@@ -77,8 +94,8 @@ func (f *fakeSender) Send(title, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
-		var partial *notify.PartialError
-		if !errors.As(f.err, &partial) {
+		var sendErr *notify.SendError
+		if !errors.As(f.err, &sendErr) || !sendErr.Partial {
 			return f.err
 		}
 	}
@@ -183,7 +200,9 @@ func TestFailedSendStaysPending(t *testing.T) {
 func TestPartialFailureCountsAsSent(t *testing.T) {
 	now := t0
 	st := &fakeStore{conds: []notify.Condition{disk(1, 1, notify.Opened)}}
-	snd := &fakeSender{err: &notify.PartialError{Err: errors.New("ntfy down")}}
+	snd := &fakeSender{err: &notify.SendError{
+		Failed: []string{"channel 2 (ntfy)"}, Partial: true, Err: errors.New("ntfy down"),
+	}}
 	n := newNotifier(st, snd, &now)
 
 	if err := n.Once(context.Background()); err != nil {
@@ -191,6 +210,147 @@ func TestPartialFailureCountsAsSent(t *testing.T) {
 	}
 	if len(st.marked) != 1 {
 		t.Errorf("a message one channel delivered was not marked: %+v", st.marked)
+	}
+	if len(st.records) != 1 || st.records[0].severity != "info" ||
+		st.records[0].n.Outcome != notify.Partial ||
+		len(st.records[0].n.Failed) != 1 || st.records[0].n.Failed[0] != "channel 2 (ntfy)" {
+		t.Errorf("records = %+v, want one partial naming the failed channel", st.records)
+	}
+}
+
+func TestMessagesAreLogged(t *testing.T) {
+	now := t0
+	st := &fakeStore{conds: []notify.Condition{disk(1, 1, notify.Opened)}}
+	snd := &fakeSender{}
+	n := newNotifier(st, snd, &now)
+	if err := n.Prime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st.events = []notify.Event{
+		diskError(10, 1, now.Add(-time.Second)),
+		diskError(11, 1, now.Add(-time.Second)),
+	}
+
+	if err := n.Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.records) != 1 {
+		t.Fatalf("records = %+v, want one per message", st.records)
+	}
+	got := st.records[0]
+	want := []notify.Alert{
+		{Kind: "disk", Subject: "/var", What: notify.Opened, Severity: "critical"},
+		{Kind: "disk_error", Subject: "sda", What: notify.Occurred, Severity: "critical"},
+	}
+	if got.hostID != 1 || got.severity != "info" || got.n.Outcome != notify.Delivered ||
+		len(got.n.Failed) != 0 || fmt.Sprint(got.n.Alerts) != fmt.Sprint(want) {
+		t.Errorf("record = %+v, want the condition and the one disk line", got)
+	}
+}
+
+// A message that reaches no channel is retried every tick; the log says so
+// once, and again only after one got through.
+func TestFailuresAreLoggedOncePerOutage(t *testing.T) {
+	now := t0
+	st := &fakeStore{conds: []notify.Condition{disk(1, 1, notify.Opened)}}
+	snd := &fakeSender{err: &notify.SendError{
+		Failed: []string{"channel 1 (smtp)"}, Err: errors.New("smtp down"),
+	}}
+	n := newNotifier(st, snd, &now)
+
+	for range 3 {
+		if err := n.Once(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+	if len(st.records) != 1 || st.records[0].severity != "warning" ||
+		st.records[0].n.Outcome != notify.Failed || st.records[0].n.Failed[0] != "channel 1 (smtp)" {
+		t.Fatalf("records = %+v, want one failure", st.records)
+	}
+
+	snd.err = nil
+	if err := n.Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.records) != 2 || st.records[1].n.Outcome != notify.Delivered {
+		t.Fatalf("records = %+v, want the delivery after the failure", st.records)
+	}
+
+	// A new outage is a new record.
+	snd.err = errors.New("smtp down")
+	st.conds = []notify.Condition{disk(2, 1, notify.Opened)}
+	if err := n.Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.records) != 3 || st.records[2].n.Outcome != notify.Failed || st.records[2].n.Failed != nil {
+		t.Fatalf("records = %+v, want a second failure", st.records)
+	}
+
+	// An alert that joins the undelivered message is recorded; the retry
+	// after it, with nothing new, is not.
+	other := disk(3, 1, notify.Opened)
+	other.Subject = "/srv"
+	st.conds = append(st.conds, other)
+	for range 2 {
+		if err := n.Once(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(st.records) != 4 || len(st.records[3].n.Alerts) != 2 {
+		t.Fatalf("records = %+v, want one more failure carrying both alerts", st.records)
+	}
+
+	// The host has nothing left to send (both muted, say): the outage is
+	// over for it, and the next failure there is recorded again.
+	st.conds = nil
+	if err := n.Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st.conds = []notify.Condition{disk(2, 1, notify.Opened)}
+	if err := n.Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.records) != 5 || st.records[4].n.Outcome != notify.Failed {
+		t.Fatalf("records = %+v, want the failure after the pause recorded", st.records)
+	}
+}
+
+// A message whose record cannot be written still counts as sent.
+func TestRecordFailureDoesNotResend(t *testing.T) {
+	now := t0
+	st := &fakeStore{
+		conds:     []notify.Condition{disk(1, 1, notify.Opened)},
+		recordErr: errors.New("db gone"),
+	}
+	snd := &fakeSender{}
+	n := newNotifier(st, snd, &now)
+	for range 2 {
+		if err := n.Once(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(snd.sent) != 1 || len(st.marked) != 1 {
+		t.Errorf("sent %d, marked %d; want the message once", len(snd.sent), len(st.marked))
+	}
+}
+
+func TestLoggedAlertsAreCapped(t *testing.T) {
+	now := t0
+	var conds []notify.Condition
+	for i := range 60 {
+		c := disk(int32(i+1), 1, notify.Opened)
+		c.Subject = fmt.Sprintf("/mnt/%d", i)
+		conds = append(conds, c)
+	}
+	st := &fakeStore{conds: conds}
+	n := newNotifier(st, &fakeSender{}, &now)
+	if err := n.Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.records) != 1 || len(st.records[0].n.Alerts) != 50 || st.records[0].n.More != 10 {
+		t.Fatalf("logged %d alerts and %d more, want 50 and 10",
+			len(st.records[0].n.Alerts), st.records[0].n.More)
 	}
 }
 
@@ -215,6 +375,9 @@ func TestMutedConditions(t *testing.T) {
 	// The all-clear is dropped for good; the open one waits for the mute.
 	if len(st.marked) != 1 || st.marked[0].ID != 2 {
 		t.Errorf("marked = %+v, want only the muted all-clear", st.marked)
+	}
+	if len(st.records) != 0 {
+		t.Errorf("no message went out, yet logged %+v", st.records)
 	}
 }
 

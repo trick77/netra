@@ -114,7 +114,8 @@ func (s *Store) CriticalEventsSince(ctx context.Context, now, since time.Time) (
 		 WHERE e.severity = 'critical'
 		   AND e.ts > $2
 		   AND e.detail->>'transition' IS NULL
-		 ORDER BY e.ts, e.id`, now, since)
+		   AND e.type <> $3
+		 ORDER BY e.ts, e.id`, now, since, notify.EventType)
 	if err != nil {
 		return nil, fmt.Errorf("query critical events: %w", err)
 	}
@@ -144,6 +145,28 @@ func (s *Store) PruneMutes(ctx context.Context, now time.Time) error {
 	if _, err := s.pool.Exec(ctx,
 		`DELETE FROM alert_mutes WHERE until_ts IS NOT NULL AND until_ts <= $1`, now); err != nil {
 		return fmt.Errorf("prune mutes: %w", err)
+	}
+	return nil
+}
+
+// RecordNotification writes one message to the events log. See notify.Store.
+//
+// No subject: a message is about the host, and the alerts it carried are in
+// the detail. Two messages for one host in the same microsecond cannot
+// happen (one per host per pass), so the natural key's ON CONFLICT never
+// drops one.
+func (s *Store) RecordNotification(ctx context.Context, hostID int32, ts time.Time,
+	severity string, n notify.Notification) error {
+	body, err := json.Marshal(n)
+	if err != nil {
+		return fmt.Errorf("marshal notification: %w", err)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO events (host_id, ts, type, subject, detail, severity)
+		VALUES ($1, $2, $3, NULL, $4::jsonb, $5)
+		ON CONFLICT (host_id, ts, type, subject) DO NOTHING`,
+		hostID, ts, notify.EventType, string(body), severity); err != nil {
+		return fmt.Errorf("record notification: %w", err)
 	}
 	return nil
 }

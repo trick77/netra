@@ -11,7 +11,7 @@
 import { useMemo, type ReactNode } from "react";
 import type { Event, Filesystem, MetricsResponse } from "../../../lib/api";
 import type { TimedEvent } from "../../../ui/charts/cursor";
-import { messageOf } from "../../events/message";
+import { messageOf, NOTIFICATION_EVENT_TYPE } from "../../events/message";
 import type { Range } from "../../../lib/range";
 import { windowNotice } from "../../../lib/metrics";
 import { perCoreBands } from "../../../lib/bands";
@@ -68,6 +68,10 @@ export interface GraphsProps {
 /**
  * The page's events as chart markers: the moment, the severity the hub
  * stated, and the same sentence the event log prints for it.
+ *
+ * Notifications are left out: each one follows the event or transition it
+ * reports by under a minute, so it would draw a second marker beside the
+ * first with nothing new to say about the chart.
  */
 export function timedEvents(
   events: readonly Event[] | null | undefined,
@@ -75,6 +79,7 @@ export function timedEvents(
   if (!events) return [];
   const out: TimedEvent[] = [];
   for (const e of events) {
+    if (e.type === NOTIFICATION_EVENT_TYPE) continue;
     const at = Date.parse(e.ts);
     if (Number.isFinite(at))
       out.push({ at, severity: e.severity, label: messageOf(e) });

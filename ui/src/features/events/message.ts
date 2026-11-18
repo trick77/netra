@@ -65,6 +65,9 @@ export const CONDITION_EVENT_TYPES = [
   "load",
 ] as const;
 
+/** The type of a row recording a notification the hub sent. */
+export const NOTIFICATION_EVENT_TYPE = "notification";
+
 /** The known event types, which is also the order a type filter offers them.
  *
  * Hardcoded, unlike everything else here, because the type dropdown is built
@@ -83,6 +86,9 @@ export const KNOWN_EVENT_TYPES = [
   // (internal/hub/store/containerrestarts.go).
   "container_restart",
   "container_recreate",
+  // A message the hub sent, and the alerts it carried
+  // (internal/hub/notify/log.go).
+  NOTIFICATION_EVENT_TYPE,
   ...CONDITION_EVENT_TYPES,
   ...KERNEL_EVENT_TYPES,
 ] as const;
@@ -552,11 +558,67 @@ export const CONDITION_LABELS: Record<string, string> = {
   load: "Load above normal",
 };
 
+/** How a condition came to be in a message, as the message itself says it. */
+const NOTIFIED_WHAT: Record<string, string> = {
+  opened: "opened",
+  escalated: "worsened",
+  reminder: "still open",
+  cleared: "cleared",
+};
+
+/** Whether a message got through. A partial one reached someone, so it was
+ * a notification; which channels missed it is said separately. */
+const NOTIFIED_OUTCOME: Record<string, string> = {
+  sent: "Notified",
+  partial: "Notified",
+  failed: "Not delivered",
+};
+
+/** A notification record: whether it got through and which alerts it was
+ * about, each named as the log names it elsewhere.
+ *
+ * "Not delivered" is the first of a run of failures; the hub retries every
+ * minute and records the next delivery, so a reader sees where an outage of
+ * the mail server began and ended. */
+function notificationMessage(f: Record<string, unknown>): string {
+  const alerts = Array.isArray(f.alerts) ? f.alerts : [];
+  const named = alerts
+    .filter((a): a is Record<string, unknown> => {
+      return typeof a === "object" && a !== null && !Array.isArray(a);
+    })
+    .map((a) => {
+      const kind = text(a, "kind");
+      const subject = text(a, "subject");
+      const label = CONDITION_LABELS[kind] ?? kind;
+      const what = NOTIFIED_WHAT[text(a, "what")];
+      const name = subject ? `${label} — ${subject}` : label;
+      return what ? `${name} ${what}` : name;
+    });
+  const more = count(f, "more");
+  if (more > 0) named.push(`${more} more`);
+
+  const failed = Array.isArray(f.failed)
+    ? f.failed.filter((c): c is string => typeof c === "string")
+    : [];
+  // An outcome this does not know claims neither delivery nor failure.
+  const head =
+    NOTIFIED_OUTCOME[text(f, "outcome")] ?? "Notification of unknown outcome";
+  // The channels go with the head: after the list they would read as
+  // belonging to its last alert.
+  const withChannels =
+    failed.length > 0 ? `${head}, failed on ${failed.join(", ")}` : head;
+  return named.length > 0
+    ? `${withChannels}: ${named.join("; ")}`
+    : withChannels;
+}
+
 export function messageOf(event: Event): string {
   const f = fields(event);
   const subject = event.subject ?? "";
 
   switch (event.type) {
+    case NOTIFICATION_EVENT_TYPE:
+      return notificationMessage(f);
     case "package":
       return packageMessage(subject, f);
     case "unit":

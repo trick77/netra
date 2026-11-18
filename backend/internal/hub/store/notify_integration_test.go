@@ -1,12 +1,14 @@
 package store_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/notify"
 	"github.com/trick77/netra/internal/hub/store"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 func pending(t *testing.T, s *store.Store, now time.Time, repeat time.Duration) []notify.Condition {
@@ -222,5 +224,75 @@ func TestIntegrationCriticalEventsSince(t *testing.T) {
 	if len(got) != 1 || got[0].Type != "nvme_error" || got[0].Subject != "sda" ||
 		got[0].Hostname != "web1" || got[0].Detail["message"] != "controller reset" {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// A message's record lands in the events log and never reads back as a
+// critical event to notify about, whatever its severity.
+func TestIntegrationRecordNotification(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(ctx, t, s, "web1")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	rec := notify.Notification{
+		Outcome: notify.Partial,
+		Failed:  []string{"channel 2 (ntfy)"},
+		Alerts: []notify.Alert{
+			{Kind: "disk", Subject: "/var", What: notify.Opened, Severity: "critical"},
+		},
+	}
+	if err := s.RecordNotification(ctx, host, now, "warning", rec); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		typ, severity string
+		subject       *string
+		detail        []byte
+	)
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT type, subject, severity, detail FROM events WHERE host_id = $1`, host).
+		Scan(&typ, &subject, &severity, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if typ != notify.EventType || subject != nil || severity != "warning" ||
+		!strings.Contains(string(detail), `"failed": ["channel 2 (ntfy)"]`) ||
+		!strings.Contains(string(detail), `"what": "opened"`) {
+		t.Errorf("row = %s %v %s %s", typ, subject, severity, detail)
+	}
+
+	// Even a record written as critical is not news.
+	if err := s.RecordNotification(ctx, host, now.Add(time.Second), "critical", rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.CriticalEventsSince(ctx, now.Add(time.Minute), now.Add(-notify.Freshness))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a notification record reads back as news: %+v", got)
+	}
+}
+
+// An agent cannot write a row that reads as the hub's record of a message.
+func TestIntegrationAgentCannotForgeNotification(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(ctx, t, s, "web1")
+	sev := "critical"
+	ts := time.Now().UnixMilli()
+	n, err := s.InsertEvents(ctx, host, []*netrav1.Event{
+		{TsMs: ts, Type: notify.EventType, Severity: &sev, DetailJson: `{"outcome":"sent"}`},
+		{TsMs: ts, Type: "nvme_error", Subject: "nvme0", Severity: &sev},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forged int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM events WHERE host_id = $1 AND type = $2`, host, notify.EventType).
+		Scan(&forged); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || forged != 0 {
+		t.Errorf("inserted %d rows, %d of them notifications; want the nvme row alone", n, forged)
 	}
 }

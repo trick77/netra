@@ -308,6 +308,8 @@ describe("KNOWN_EVENT_TYPES", () => {
       "hub",
       "container_restart",
       "container_recreate",
+      // The hub's record of each message it sent.
+      "notification",
       // The hub's own judgements, arriving as transitions.
       ...CONDITION_EVENT_TYPES,
       ...KERNEL_EVENT_TYPES,
@@ -637,5 +639,78 @@ describe("condition transitions", () => {
       cond("disk", "var-log", { transition: "escalated", from: "warning" }),
     );
     expect(worse).not.toBe(opened);
+  });
+});
+
+// The detail is internal/hub/notify/log.go's Notification, marshalled as-is.
+describe("messageOf, notification events", () => {
+  const note = (detail: Record<string, unknown>) =>
+    event({ type: "notification", subject: null, detail });
+
+  it("names every alert a message carried, as the log names it", () => {
+    expect(
+      messageOf(
+        note({
+          outcome: "sent",
+          alerts: [
+            {
+              kind: "disk",
+              subject: "/var",
+              what: "opened",
+              severity: "critical",
+            },
+            { kind: "silent", what: "reminder", severity: "critical" },
+            { kind: "load", what: "escalated", severity: "critical" },
+            { kind: "drive", subject: "sda", what: "cleared" },
+            { kind: "nvme_error", subject: "nvme0", what: "event" },
+          ],
+        }),
+      ),
+    ).toBe(
+      "Notified: Filesystem nearly full — /var opened; Stopped reporting still open; " +
+        "Load above normal worsened; Drive errors — sda cleared; nvme_error — nvme0",
+    );
+  });
+
+  it("names the channels a message failed on, and counts what was cut", () => {
+    expect(
+      messageOf(
+        note({
+          outcome: "partial",
+          failed: ["channel 2 (ntfy)"],
+          alerts: [{ kind: "disk", subject: "/var", what: "opened" }],
+          more: 3,
+        }),
+      ),
+    ).toBe(
+      "Notified, failed on channel 2 (ntfy): Filesystem nearly full — /var opened; 3 more",
+    );
+  });
+
+  it("says a message that reached no channel was not delivered", () => {
+    expect(
+      messageOf(
+        note({
+          outcome: "failed",
+          failed: ["channel 1 (smtp)"],
+          alerts: [{ kind: "silent", what: "opened" }],
+        }),
+      ),
+    ).toBe(
+      "Not delivered, failed on channel 1 (smtp): Stopped reporting opened",
+    );
+  });
+
+  // An unreadable outcome must not claim the message got through.
+  it("survives a detail it cannot read, claiming nothing", () => {
+    const unknown = "Notification of unknown outcome";
+    expect(messageOf(note({ alerts: "nope", failed: [1] }))).toBe(unknown);
+    expect(messageOf(note({ outcome: "sent", alerts: [null, ["x"]] }))).toBe(
+      "Notified",
+    );
+  });
+
+  it("is a type the log's filter offers", () => {
+    expect(KNOWN_EVENT_TYPES).toContain("notification");
   });
 });

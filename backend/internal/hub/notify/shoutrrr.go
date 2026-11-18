@@ -76,7 +76,7 @@ func (c *Channels) SetTimeoutForTest(d time.Duration) { c.timeout = d }
 // Send delivers to every channel at once. It succeeds when at least one
 // channel accepted the message: retrying the whole message because one of
 // three channels is down would repeat it on the other two every minute. A
-// partial failure comes back as a PartialError for the caller to log.
+// failure comes back as a SendError naming the channels that failed.
 //
 // Every error names its channel and is scrubbed of the URLs' credentials:
 // shoutrrr wraps net/http errors that quote the request URL, and a Telegram
@@ -108,22 +108,29 @@ func (c *Channels) Send(title, body string) error {
 		}
 	}
 
-	var failed []error
+	var (
+		failed []error
+		labels []string
+	)
 	for i, ch := range c.channels {
 		switch {
 		case !answered[i]:
 			failed = append(failed, fmt.Errorf("%s: timed out after %s", ch.label, c.timeout))
 		case errs[i] != nil:
 			failed = append(failed, fmt.Errorf("%s: %s", ch.label, c.scrub(errs[i].Error())))
+		default:
+			continue
 		}
+		labels = append(labels, ch.label)
 	}
 	if len(failed) == 0 {
 		return nil
 	}
-	if len(failed) < len(c.channels) {
-		return &PartialError{Err: errors.Join(failed...)}
+	return &SendError{
+		Failed:  labels,
+		Partial: len(failed) < len(c.channels),
+		Err:     errors.Join(failed...),
 	}
-	return errors.Join(failed...)
 }
 
 func (c *Channels) scrub(s string) string {
@@ -173,12 +180,23 @@ func secretsOf(raw string) []string {
 	return out
 }
 
-// PartialError reports channels that failed while others delivered. The
-// message counts as sent.
-type PartialError struct{ Err error }
+// SendError reports the channels a message failed on. Partial says another
+// channel delivered it, and the message then counts as sent.
+type SendError struct {
+	// Failed are the failing channels' labels, safe to store.
+	Failed  []string
+	Partial bool
+	Err     error
+}
 
-func (e *PartialError) Error() string { return "some channels failed: " + e.Err.Error() }
-func (e *PartialError) Unwrap() error { return e.Err }
+func (e *SendError) Error() string {
+	if e.Partial {
+		return "some channels failed: " + e.Err.Error()
+	}
+	return e.Err.Error()
+}
+
+func (e *SendError) Unwrap() error { return e.Err }
 
 // scheme is the part of a channel URL that is safe to log.
 func scheme(u string) string {

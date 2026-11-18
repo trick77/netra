@@ -597,6 +597,15 @@ describe("event markers", () => {
       },
       // An unreadable timestamp has no place on a time axis
       { ...base, id: "e:2", ts: "not a time", subject: "x", severity: "info" },
+      // Nor a notification, which repeats the marker it follows.
+      {
+        ...base,
+        id: "e:3",
+        ts: "2026-08-10T00:30:30Z",
+        type: "notification",
+        subject: null,
+        severity: "info",
+      },
     ]);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ at, severity: "critical" });

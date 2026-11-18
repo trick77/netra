@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/trick77/netra/internal/hub/notify"
 	"github.com/trick77/netra/internal/hub/systemdstate"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
@@ -239,6 +240,12 @@ func (s *Store) InsertEvents(ctx context.Context, hostID int32, rows []*netrav1.
 	if len(rows) == 0 {
 		return 0, nil
 	}
+
+	// The hub's own record of a message it sent: an agent's row of that type
+	// would read as one, and is dropped.
+	rows = slices.DeleteFunc(slices.Clone(rows), func(r *netrav1.Event) bool {
+		return r.GetType() == notify.EventType
+	})
 
 	rows, err := s.dropUnchangedStates(ctx, hostID, rows)
 	if err != nil {

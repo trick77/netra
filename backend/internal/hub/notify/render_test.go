@@ -163,9 +163,10 @@ func TestChannelsSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = some.Send("t", "b")
-	var partial *notify.PartialError
-	if err == nil || !errors.As(err, &partial) {
-		t.Errorf("one of two failing: %v, want a PartialError", err)
+	var sendErr *notify.SendError
+	if !errors.As(err, &sendErr) || !sendErr.Partial ||
+		len(sendErr.Failed) != 1 || sendErr.Failed[0] != "channel 2 (generic+http)" {
+		t.Errorf("one of two failing: %v, want a partial SendError naming channel 2", err)
 	}
 
 	if err != nil && !strings.Contains(err.Error(), "channel 2 (generic+http)") {
@@ -177,8 +178,8 @@ func TestChannelsSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = none.Send("t", "b")
-	if err == nil || errors.As(err, &partial) {
-		t.Errorf("all failing: %v, want a plain error", err)
+	if !errors.As(err, &sendErr) || sendErr.Partial || len(sendErr.Failed) != 1 {
+		t.Errorf("all failing: %v, want a SendError that is not partial", err)
 	}
 }
 
