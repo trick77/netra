@@ -38,6 +38,10 @@ services:
     security_opt:
       - no-new-privileges:true
 
+    mem_limit: ${AGENT_MEM_LIMIT:-128m}
+    environment:
+      GOMEMLIMIT: ${AGENT_GOMEMLIMIT:-100MiB}
+
     pid: host
     #__AGENT_VOLUMES__
     #__AGENT_DEVICES__

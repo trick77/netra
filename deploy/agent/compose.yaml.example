@@ -94,6 +94,22 @@ services:
     security_opt:
       - no-new-privileges:true
 
+    # Memory bounded so a leak in the agent cannot take down the host it
+    # watches. Measured on a 31 GiB host with containers: 30 MiB peak, smartctl
+    # included (it runs in this cgroup, and so does one stuck in an ioctl). An
+    # OOM kill restarts the agent and leaves a gap; raise AGENT_MEM_LIMIT in
+    # .env, which setup-agent.sh never overwrites, and AGENT_GOMEMLIMIT with it.
+    # GOMEMLIMIT because Go does not read the cgroup's memory limit: without it
+    # the GC lets the heap run to twice the live set and into the kill.
+    #
+    # No CPU limit, on purpose. A throttled agent stalls mid-measurement, and
+    # the handshake, round trip and collector timings it reports are wall-clock:
+    # the stall would be drawn as hub latency. `cpus:` also refuses to start on
+    # a kernel without CFS bandwidth control, which preflight does not check.
+    mem_limit: ${AGENT_MEM_LIMIT:-128m}
+    environment:
+      GOMEMLIMIT: ${AGENT_GOMEMLIMIT:-100MiB}
+
     # Every bind is written in LONG FORM on purpose. The `source:target:ro` short
     # form is parsed by splitting on ':', so a host mount point that contains a
     # colon breaks it outright and one that contains a space has to be quoted.
