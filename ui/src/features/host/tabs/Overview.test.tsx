@@ -481,7 +481,9 @@ describe("the Events card", () => {
 
   it("says a quiet window was quiet, and an unread one was not read", () => {
     const { unmount } = renderOverview({ events: [], range: "24h" });
-    expect(screen.getByText(/Nothing happened on this host in the last/));
+    expect(
+      screen.getByText("Nothing happened on this host in the last 24h."),
+    ).toBeInTheDocument();
     unmount();
     renderOverview({ events: null });
     expect(screen.getByText("No events have been read yet."));

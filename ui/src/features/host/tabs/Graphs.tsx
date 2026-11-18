@@ -277,14 +277,20 @@ export function PanelGroups({
             fetchFamily={sources.fetchFamily}
           />
         ) : block.form === "filesystems" ? (
-          <FilesystemTable
+          <section
             key={block.title}
-            rows={sources.filesystems ?? []}
-            metrics={sources.filesystem ?? null}
-            range={sources.range}
-            lastSeen={sources.lastSeen}
-            fetchFamily={sources.fetchFamily}
-          />
+            className="fstable"
+            aria-label="Filesystems"
+          >
+            <h3 className="grouphead">Filesystems</h3>
+            <FilesystemTable
+              rows={sources.filesystems ?? null}
+              metrics={sources.filesystem ?? null}
+              range={sources.range}
+              lastSeen={sources.lastSeen}
+              fetchFamily={sources.fetchFamily}
+            />
+          </section>
         ) : block.form === "drives" ? (
           <DriveRows
             key={block.title}

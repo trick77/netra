@@ -58,7 +58,8 @@ export function FilesystemTable({
   lastSeen,
   fetchFamily,
 }: {
-  rows: readonly Filesystem[];
+  /** The inventory, or null when it has not been read. */
+  rows: readonly Filesystem[] | null;
   metrics: MetricsResponse | null;
   range?: Range;
   /** The filesystem family at another range, for a trend's enlarged view. */
@@ -78,11 +79,11 @@ export function FilesystemTable({
     (
       currentFilesystems({
         last_seen: lastSeen ?? null,
-        filesystems: [...rows],
+        filesystems: [...(rows ?? [])],
       }) ?? []
     ).map((fs) => fs.id),
   );
-  const joined: FsRow[] = rows.map((row) => {
+  const joined: FsRow[] = (rows ?? []).map((row) => {
     // The stored gauge, for a figure the window does not carry.
     const gauge = fresh.has(row.id) ? row : null;
     const gaugePct =
@@ -236,16 +237,24 @@ export function FilesystemTable({
     },
   ];
 
+  // The table alone: the caller gives it its frame -- a card beside the
+  // Events card on the Overview, a section head on the Storage tab. A bare
+  // header row says nothing, so an unread or empty inventory says which.
+  if (joined.length === 0)
+    return (
+      <p className="note">
+        {rows === null
+          ? "No filesystems have been read yet."
+          : "This host reports no filesystems."}
+      </p>
+    );
   return (
-    <section className="fstable" aria-label="Filesystems">
-      <h3 className="grouphead">Filesystems</h3>
-      <Table
-        columns={columns}
-        rows={joined}
-        rowKey={(row) => row.key}
-        defaultSort={{ key: "used", dir: "desc" }}
-      />
-    </section>
+    <Table
+      columns={columns}
+      rows={joined}
+      rowKey={(row) => row.key}
+      defaultSort={{ key: "used", dir: "desc" }}
+    />
   );
 }
 

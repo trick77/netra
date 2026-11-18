@@ -46,7 +46,7 @@ export interface HostCardsProps {
 }
 
 /**
- * The fleet as one card per host: the default view.
+ * The fleet as one card per host: the second view, beside the table.
  *
  * The card's parts ARE the table's cells -- HostCell, the four readings in
  * their card layout, LastSeenCell -- so the two views cannot say different
