@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Inbox } from "lucide-react";
+import { EmptyPage } from "iconoir-react";
 import { EmptyState } from "./EmptyState";
 
 describe("EmptyState", () => {
   it("renders title and body text", () => {
     render(
       <EmptyState
-        icon={Inbox}
+        icon={EmptyPage}
         title="No hosts yet"
         body="Add a host to start monitoring."
       />,
@@ -20,7 +20,7 @@ describe("EmptyState", () => {
   });
 
   it("renders the icon", () => {
-    render(<EmptyState icon={Inbox} title="Empty" body="Nothing here." />);
+    render(<EmptyState icon={EmptyPage} title="Empty" body="Nothing here." />);
     const svg = document.querySelector("svg");
     expect(svg).not.toBeNull();
   });
@@ -30,7 +30,7 @@ describe("EmptyState", () => {
     const onClick = vi.fn();
     render(
       <EmptyState
-        icon={Inbox}
+        icon={EmptyPage}
         title="Empty"
         body="Nothing here."
         action={<button onClick={onClick}>Add host</button>}
@@ -41,7 +41,7 @@ describe("EmptyState", () => {
   });
 
   it("omits the action region when none is given", () => {
-    render(<EmptyState icon={Inbox} title="Empty" body="Nothing here." />);
+    render(<EmptyState icon={EmptyPage} title="Empty" body="Nothing here." />);
     expect(screen.queryByRole("button")).toBeNull();
   });
 });

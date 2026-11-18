@@ -63,15 +63,15 @@ import { LoginPage } from "./features/auth/LoginPage";
 import { HostAdminPage } from "./features/admin/HostAdminPage";
 import {
   Bell,
-  CircleSlash,
-  KeyRound,
-  LayoutGrid,
+  Key,
   LogOut,
   Plus,
+  Prohibition,
   Server,
-  Settings2,
-  type LucideIcon,
-} from "lucide-react";
+  Settings,
+  ViewGrid,
+} from "iconoir-react";
+import type { IconComponent } from "./ui/icons";
 
 /**
  * The composition root: it owns the URL, the polling, and the one decision
@@ -149,7 +149,7 @@ export default function App() {
                 URL that lost it. */}
             <NavLink
               href="/containers"
-              icon={LayoutGrid}
+              icon={ViewGrid}
               active={here(route.name, "containers", "container")}
             >
               Containers
@@ -169,7 +169,7 @@ export default function App() {
                 contradicting itself. */}
             <NavLink
               href="/admin/hosts"
-              icon={KeyRound}
+              icon={Key}
               active={here(route.name, "admin")}
             >
               Agents
@@ -183,7 +183,7 @@ export default function App() {
                 as the rest of the same list. One run, in reading order. */}
             <NavLink
               href="/settings"
-              icon={Settings2}
+              icon={Settings}
               active={here(route.name, "settings")}
             >
               Settings
@@ -337,7 +337,7 @@ function NavLink({
 }: {
   href: string;
   active: Here;
-  icon: LucideIcon;
+  icon: IconComponent;
   // A string, not a node: it has to survive into data-tip as well as into
   // the hidden label, and only one of those can hold markup.
   children: string;
@@ -401,7 +401,7 @@ function Screen({
     case "notFound":
       return (
         <EmptyState
-          icon={CircleSlash}
+          icon={Prohibition}
           title="No such page"
           body={`Nothing is served at ${route.path}.`}
         />
@@ -837,7 +837,7 @@ function ContainerScreen({
   if (poll.data === null || container === undefined) {
     return (
       <EmptyState
-        icon={CircleSlash}
+        icon={Prohibition}
         title="No such container"
         body={`${containerKey} is not among the containers this host reported.`}
       />

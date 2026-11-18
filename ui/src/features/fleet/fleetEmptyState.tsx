@@ -1,4 +1,4 @@
-import { Server } from "lucide-react";
+import { Server } from "iconoir-react";
 import { EmptyState } from "../../ui/EmptyState";
 
 /**

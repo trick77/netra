@@ -1315,15 +1315,17 @@ describe("hostColumns", () => {
           <>{hostCol.cell(makeRow({ last_seen: new Date().toISOString() }))}</>,
         );
         // The whole drawing, not one path: both marks share an exclamation
-        // and differ by outline, which may be a <circle> rather than a path.
+        // and differ by outline and by weight.
         return container.querySelector(".smark")!.innerHTML;
       };
 
       expect(path("warning")).not.toBe(path("critical"));
-      // The OUTLINE differs, not just a coordinate inside it: a disc for
-      // critical (filled in CSS), and no disc on the warning triangle.
-      expect(path("critical")).toContain("<circle");
-      expect(path("warning")).not.toContain("<circle");
+      // The WEIGHT differs, not just a coordinate inside it: critical is a
+      // filled disc with no stroke at all, warning an outlined triangle.
+      expect(path("critical")).toContain('fill="currentColor"');
+      expect(path("critical")).not.toContain("stroke=");
+      expect(path("warning")).toContain('stroke="currentColor"');
+      expect(path("warning")).not.toContain('fill="currentColor"');
     });
 
     // And the word is still there for anyone not reading the row by eye.

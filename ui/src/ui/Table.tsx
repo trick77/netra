@@ -5,7 +5,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { ChevronRight } from "lucide-react";
+import { NavArrowRight } from "iconoir-react";
 import { ABSENT } from "../lib/format";
 
 /**
@@ -488,7 +488,7 @@ export function Table<T>({
                             });
                           }}
                         >
-                          <ChevronRight className="chev" aria-hidden="true" />
+                          <NavArrowRight className="chev" aria-hidden="true" />
                           {/* The button's accessible name. The heading beside
                               it is a heading, not a label for this control,
                               and "immich" alone would not say what the button

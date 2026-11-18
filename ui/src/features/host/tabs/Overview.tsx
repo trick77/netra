@@ -17,7 +17,7 @@
 // the Inventory facts, which are three counts of things that have their own
 // tabs; and the sensor cards, which are hardware facts and are now on System.
 import type { ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
+import { NavArrowRight } from "iconoir-react";
 import { AttentionBand } from "../../../ui/AttentionBand";
 import type {
   ConditionRow,
@@ -715,7 +715,7 @@ export function Overview({
                 its left. aria-hidden because <details>/<summary> announces
                 the open state itself -- a screen reader that also read the
                 icon would hear the control twice. */}
-            <ChevronRight className="chev" aria-hidden="true" />
+            <NavArrowRight className="chev" aria-hidden="true" />
             {/* Guarded like the other four. os_name is nullable in the store
                 -- ingest.go NULLIFs it, for an agent in a container that
                 cannot read the host's /etc/os-release -- and osLabel(null) is

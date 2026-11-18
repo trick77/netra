@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Box, Search, Server } from "lucide-react";
+import { BoxIso, Search, Server } from "iconoir-react";
 import {
   getFleetContainers,
   getHosts,
@@ -356,7 +356,7 @@ function Group({
             {row.kind === "host" ? (
               <Server aria-hidden="true" />
             ) : (
-              <Box aria-hidden="true" />
+              <BoxIso aria-hidden="true" />
             )}
             <span className="pal-name">{row.name}</span>
             {row.under !== undefined && (

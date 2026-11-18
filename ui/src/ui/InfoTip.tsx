@@ -10,7 +10,7 @@
 // glyph at all, and that absence is the point: an explanation on "Uptime"
 // teaches the reader that these are not worth opening.
 import { useEffect, useId, useRef, useState } from "react";
-import { Info } from "lucide-react";
+import { InfoCircle } from "iconoir-react";
 
 export interface InfoTipProps {
   /** The sentence or two. One to three sentences; this is not a manual. */
@@ -86,7 +86,12 @@ export function InfoTip({ text, label }: InfoTipProps) {
         onBlur={() => setOpen(false)}
         onClick={() => setOpen(true)}
       >
-        <Info size={13} aria-hidden="true" focusable="false" />
+        <InfoCircle
+          width={13}
+          height={13}
+          aria-hidden="true"
+          focusable="false"
+        />
       </button>
       {open && (
         <span className="itipbub" id={id} role="tooltip">
