@@ -2061,6 +2061,13 @@ tbody tr:hover .host-cell-name {
 }
 
 .topbar {
+  /* min-width:0 for the same reason as .app > main: as a grid item at
+     min-width:auto the bar's min-content set the TRACK's width, and that
+     counts the search at its full label, which min-width:0 on .searchbox
+     does not take back. Between the 700px rule and ~775px the whole page
+     ran 775 wide and scrolled sideways (iPad mini portrait, 744: 31px).
+     With it the search shrinks into what the fixed items leave. */
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--space-4);
@@ -4321,9 +4328,9 @@ svg.spark {
    measures the VIEWPORT and the bar gets the viewport minus a classic
    scrollbar, another ~15px, so a threshold set on the floor still overflows
    by a hair on the first width above it -- measured at a 440px viewport,
-   435 of bar in 425 of room. .topbar is a flex row inside a 1fr grid column
-   -- minmax(auto, 1fr) -- so it is never narrower than its content and the
-   page, not the bar, is what scrolls.
+   435 of bar in 425 of room. .topbar may be narrower than its content
+   (min-width:0), but these fixed items do not shrink: they spill past its
+   edge and the page scrolls all the same.
 
    Nothing is dropped to fix it: the glyphs get a row of their own, spread
    across it, with the wordmark and the action on the line above. That is what
