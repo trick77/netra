@@ -745,13 +745,14 @@ export function HostPage({
               failed. `refresh` stays -- the load-failure "Try again" is a
               retry a reader genuinely has to ask for, and the Containers tab
               calls it after a purge. */}
+            {/* The notification mutes belong to the host rather than to any
+              tab, so the header -- but on the title's own line, pushed to its
+              right end. On a line of their own under the title they cost a
+              whole row of header for one small button. Where the host is, its
+              OS, kernel and arch are printed in the Overview tab's System
+              card, which owns them. */}
+            <MuteControl hostId={host.id} />
           </div>
-          {/* Under the title: only the notification mutes, which belong to the
-            host rather than to any tab. Where the host is, its OS, kernel and
-            arch are printed a few centimetres below in the Overview tab's
-            System card, which owns them -- the header was spending a line
-            restating the card. */}
-          <MuteControl hostId={host.id} />
         </div>
       </header>
 

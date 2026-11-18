@@ -3762,9 +3762,10 @@ svg.spark {
 .hosthead .meta .age {
   font-size: inherit;
 }
-/* The notification mutes under the host title: each active mute with its own
-   Unmute, then the button or the small form that adds one. Wraps like
-   .hostbar so a narrow screen stacks it instead of scrolling sideways. */
+/* The notification mutes at the right end of the host title's line: each
+   active mute with its own Unmute, then the button or the small form that
+   adds one. Wraps like .hostbar so a narrow screen stacks it instead of
+   scrolling sideways. */
 .mutes,
 .muteform,
 .mutes .mute {
@@ -3774,7 +3775,16 @@ svg.spark {
   gap: var(--space-2);
 }
 .mutes {
-  margin-top: var(--space-2);
+  margin-left: auto;
+  justify-content: flex-end;
+}
+/* The open form is five controls wide and only there while someone fills it
+   in: a line of its own under the title then, left-aligned like the form it
+   is, instead of squeezing the title's line or hanging off its right end. */
+.mutes.open {
+  flex-basis: 100%;
+  margin-left: 0;
+  justify-content: flex-start;
 }
 .mutes .note {
   margin-top: 0;
@@ -4476,6 +4486,13 @@ svg.spark {
      growing to hold them all on one. */
   .hosthead .hostbar > h1 {
     flex: 1 1 100%;
+  }
+  /* Here the mutes wrap onto lines of their own under the title anyway, and
+     pushed right a long "Muted: ..." badge left its Unmute stranded at the
+     left edge below it and the button at the right edge below that. */
+  .mutes {
+    margin-left: 0;
+    justify-content: flex-start;
   }
   /* The bar holds five glyphs, a wordmark and a "+" at this width and does
      not wrap: wrapping it would push the page's first line of content half a
