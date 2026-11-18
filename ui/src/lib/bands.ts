@@ -8,7 +8,7 @@
  * particular is a subtraction with several ways to get it subtly wrong.
  */
 import { fsName, griddedValues, carriesColumn, hasReading } from "./metrics";
-import { SWEPT_FILL_OPACITY } from "../ui/charts/size";
+import { SOFT_STACK_FILL, SWEPT_FILL_OPACITY } from "../ui/charts/size";
 import type { ContainerTrend } from "./containers";
 import type { MetricsResponse } from "./api";
 import type { Band } from "../ui/charts/StackedSparkline";
@@ -235,30 +235,26 @@ export function perCoreBands(
 }
 
 /**
- * One band per container on a host, for the three stacked Docker panels above
- * its Containers list.
+ * The stacked Docker panels above a host's Containers list: the five
+ * heaviest containers by name and colour, everything else as one grey band.
  *
- * The same construction perCoreBands uses, for the same reason: an unbounded
- * number of series that no fixed palette can name apart, so cpu and mem take
- * seriesHue's sweep and the band's name -- the container_key -- is what
- * identifies it beyond that.
+ * Five, because a hue is only worth giving where a legend can name it and a
+ * reader can hold it: --s1..--s5, in rank order, at SOFT_STACK_FILL. A
+ * seventeenth container in its own hue named nothing a reader could find
+ * again, and the sweep that coloured every container repainted all of them
+ * whenever one started. "others" is the rest summed, in --ink-3, so the
+ * stack's top edge is still the host's whole Docker load.
  *
- * "net" is the exception, and deliberately. It returns bands INTERLEAVED --
- * [c1 in, c1 out, c2 in, c2 out, ...] -- which is the order MirrorStackMarks
- * reads its halves off (every other series, ui/charts/Chart.tsx), and it
- * colours them from IN_SHADES and OUT_SHADES rather than the sweep. Direction
- * is the first question a traffic chart answers, and green-in over amber-out
- * is what every other traffic mark in the app already says.
+ * Ranked by the container's total over the window: heaviest at the bottom,
+ * where a stack's band is easiest to read. The rank is the window's, so a
+ * container can change colour when the range changes -- the price of the
+ * colours meaning "the heaviest", chosen over a name hash that is stable and
+ * collides.
  *
- * The interleaved pair means a container contributes TWO entries, so the
- * shade index is the container's position and not the band's -- container k
- * is --in-{k%4} above the midline and --out-{k%4} below it, and its two
- * halves belong to each other.
- *
- * Band ORDER is the response's, never re-sorted by size. The host page polls,
- * and a stack re-ordered on every poll would shuffle its bands between
- * refreshes; the enlarged view refetches at its own range and would order
- * them differently again from the panel it was opened out of.
+ * "net" is one mirrored pair instead: every container's in summed above the
+ * midline, out below, in the traffic greys. Which container moved the bytes
+ * is the list's question; the chart's is how much the host's containers
+ * moved, and which way.
  *
  * THE NULL RULE IS LOAD-BEARING. stackBands (ui/charts/geometry.ts) breaks
  * EVERY band at an index where ANY series is null -- a running total is
@@ -291,26 +287,63 @@ export function containerBands(
   if (trends.length === 0) return [];
 
   const reported = bucketsWithAnyReading(trends.map((t) => t.values));
-  const n = trends.length;
+  const filled = (values: (number | null)[]) =>
+    reported.map((any, j) => values[j] ?? (any ? 0 : null));
+  const total = (values: (number | null)[]) =>
+    values.reduce<number>((sum, v) => sum + (v ?? 0), 0);
 
-  return trends.map((trend, i) => ({
+  // The window's total picks WHICH containers are named; the response's own
+  // order, not the rank, then sets their place and colour. Two containers of
+  // similar weight trade rank as the window slides, and ranked colours would
+  // swap them on a poll -- "the blue one" must stay the same container. Only
+  // a container crossing the top-five line changes the picture, and that is
+  // the fold doing its job.
+  const ranked = trends
+    .map((t, i) => ({ ...t, i, sum: total(t.values) }))
+    .sort((a, b) => b.sum - a.sum || a.i - b.i);
+  const cut =
+    ranked.length > TOP_CONTAINERS + 1 ? TOP_CONTAINERS : ranked.length;
+  const named = ranked.slice(0, cut).sort((a, b) => a.i - b.i);
+  const rest = ranked.slice(cut);
+
+  const bands: Band[] = named.map((trend, i) => ({
     name: trend.key,
-    color: seriesHue(i, n, CONTAINER_HUE_OFFSET),
-    fill: SWEPT_FILL_OPACITY,
-    values: reported.map((any, j) => trend.values[j] ?? (any ? 0 : null)),
+    color: CONTAINER_COLORS[i]!,
+    fill: SOFT_STACK_FILL,
+    values: filled(trend.values),
   }));
+  if (rest.length > 0) {
+    bands.push({
+      name: `${rest.length} others`,
+      color: OTHERS_COLOR,
+      fill: SOFT_STACK_FILL,
+      values: sumReported(
+        reported,
+        rest.map((t) => t.values),
+      ),
+    });
+  }
+  return bands;
 }
 
+/** How many containers a stack names before the rest fold into "others".
+ * Six would fit the categorical walk; the sixth slot is the grey band. A
+ * host with exactly six names all six -- a band reading "1 others" is a name
+ * hidden behind a count. */
+const TOP_CONTAINERS = 5;
+const CONTAINER_COLORS = [
+  "var(--s1)",
+  "var(--s2)",
+  "var(--s3)",
+  "var(--s4)",
+  "var(--s5)",
+  "var(--s6)",
+] as const;
+const OTHERS_COLOR = "var(--ink-3)";
+
 /**
- * The mirrored half of containerBands: one in band and one out band per
- * container, interleaved.
- *
- * A container is kept only when it reported at least one of the two -- a
- * container with rx and no tx is a real reading and draws one half -- and
- * both halves are then emitted, so the pairing MirrorStackMarks relies on
- * (index 2k is up, 2k+1 is down) holds however sparse the data is. An absent
- * half is an empty series rather than a missing entry, which the null rule
- * below then fills exactly as it fills a container that was not running.
+ * The mirrored half of containerBands: every container's in and out, summed
+ * into one pair.
  *
  * The reported-bucket test spans BOTH directions: a bucket where some
  * container moved bytes either way is a bucket the host answered in, and a
@@ -325,21 +358,27 @@ function containerNetBands(byKey: ReadonlyMap<string, ContainerTrend>): Band[] {
   const reported = bucketsWithAnyReading(
     trends.flatMap((t) => [t.rx, t.tx]).filter((v) => v.length > 0),
   );
-  const fill = (values: (number | null)[]): (number | null)[] =>
-    reported.map((any, j) => values[j] ?? (any ? 0 : null));
+  const summed = (pick: (t: (typeof trends)[number]) => (number | null)[]) =>
+    sumReported(reported, trends.map(pick));
 
-  return trends.flatMap((trend, i) => [
-    {
-      name: `${trend.key} in`,
-      color: IN_SHADES[i % IN_SHADES.length]!,
-      values: fill(trend.rx),
-    },
-    {
-      name: `${trend.key} out`,
-      color: OUT_SHADES[i % OUT_SHADES.length]!,
-      values: fill(trend.tx),
-    },
-  ]);
+  return [
+    { name: "in", color: "var(--traffic-in)", values: summed((t) => t.rx) },
+    { name: "out", color: "var(--traffic-out)", values: summed((t) => t.tx) },
+  ];
+}
+
+/** The per-bucket sum of these series under the stack's null rule: a gap
+ * where no container reported, and a silent one counted as 0 elsewhere. */
+function sumReported(
+  reported: readonly boolean[],
+  series: readonly (readonly (number | null)[])[],
+): (number | null)[] {
+  return reported.map((any, j) => {
+    if (!any) return null;
+    let sum = 0;
+    for (const values of series) sum += values[j] ?? 0;
+    return sum;
+  });
 }
 
 /**
@@ -387,40 +426,8 @@ export function containerStackTotal(bands: readonly Band[]): (number | null)[] {
   });
 }
 
-/**
- * The traffic stack's two walks -- one band per container, in above the
- * midline and out below it.
- *
- * DIRECTION WINS, and the container is a lightness step within its half. It
- * is the construction the host's per-interface Traffic panel already uses,
- * and the reason is the same one index.css gives there: the fleet row's
- * traffic cell, the host Traffic panel and this one are the same fact at
- * three sizes, and a panel that re-hued its bands per container would be a
- * different chart from the cell it was opened out of. So the CPU and memory
- * panels beside this one sweep hue per container, and this one does not:
- * green is inbound bytes and amber is outbound, here as everywhere.
- *
- * Four steps, wrapping. A host running more than four containers repeats a
- * shade, exactly as more than four interfaces does; the shade only ever told
- * a band from the one beside it, and the band's key is what names it.
- */
-export const IN_SHADES = [
-  "var(--in-1)",
-  "var(--in-2)",
-  "var(--in-3)",
-  "var(--in-4)",
-];
-
-export const OUT_SHADES = [
-  "var(--out-1)",
-  "var(--out-2)",
-  "var(--out-3)",
-  "var(--out-4)",
-];
-
-/** Where each sweep starts, in degrees. See seriesHue. */
+/** Where the per-core sweep starts, in degrees. See seriesHue. */
 export const CORE_HUE_OFFSET = 212;
-export const CONTAINER_HUE_OFFSET = 0;
 
 /**
  * The colour of band `i` in a stack of `n` anonymous ones -- one core of
@@ -583,9 +590,11 @@ export function fsUsePercent(
     const u = used[j] ?? null;
     const f = free[j] ?? null;
     // A gap is a gap: the host reported nothing for that bucket, which is
-    // not the same as the disk being empty.
+    // not the same as the disk being empty. A capacity at or below zero --
+    // FUSE can report more free blocks than blocks -- has no Use% either;
+    // divided anyway it drew a 200% disk.
     values.push(
-      u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
+      u === null || f === null || u + f <= 0 ? null : (u / (u + f)) * 100,
     );
   }
   return values;

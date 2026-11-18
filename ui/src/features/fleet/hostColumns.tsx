@@ -763,9 +763,9 @@ export function MemoryCell({
   // cached -- so its top edge is "not free", and a host doing nothing but
   // serving files reads 97% while most of its memory is available. mem_used
   // is MemTotal - MemAvailable (internal/agent/collector/memory.go), which is
-  // what `free` calls used and what the host page's own Memory tile prints
-  // (overviewTiles.ts): a fleet row and a host page must not disagree about
-  // the same machine.
+  // what `free` calls used and what the host page's Overview prints -- with
+  // this very cell: a fleet row and a host page must not disagree about the
+  // same machine.
   //
   // A gauge off host_current rather than the end of the series, for the same
   // reason the traffic rates are: the series' last bucket depends on the

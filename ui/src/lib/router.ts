@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { isRange, type Range } from "./range";
 import {
-  COLLECTOR_GROUPS,
+  AGENT_GROUPS,
   NETWORK_GROUPS,
   STORAGE_GROUPS,
   UNGROUPED_SLUGS,
@@ -44,9 +44,8 @@ const HOST_TABS = new Set<HostTab>([
   "storage",
   "containers",
   "packages",
-  "units",
-  "collectors",
   "events",
+  "agent",
 ]);
 
 /**
@@ -64,6 +63,10 @@ const HOST_TABS = new Set<HostTab>([
 const RENAMED_TABS: Record<string, HostTab> = {
   graphs: "system",
   filesystems: "storage",
+  // Units joined Packages: the ones needing attention on top, every unit
+  // below the packages. Collectors became Agent, the agent's own health.
+  units: "packages",
+  collectors: "agent",
 };
 
 /**
@@ -93,6 +96,14 @@ const RETIRED_SLUGS: Record<string, string> = {
   // long -- so its links land there rather than on System, and any panel on
   // that tab names it.
   "device-availability": "scrape-duration",
+  // The per-core stack became the heat strip under the CPU chart, and the
+  // Uptime chart a figure in the page's header. Both land on System's CPU.
+  "cpu-cores": "host-cpu",
+  uptime: "host-cpu",
+  // Space and inodes are figures on each mount's row of the Filesystems
+  // table now, beside its Use% trend.
+  "filesystem-space": "host-filesystem",
+  "filesystem-inodes": "host-filesystem",
 };
 
 export function hostTabForSlug(retiring: string): HostTab {
@@ -107,8 +118,8 @@ export function hostTabForSlug(retiring: string): HostTab {
   if (STORAGE_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
     return "storage";
   }
-  if (COLLECTOR_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
-    return "collectors";
+  if (AGENT_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
+    return "agent";
   }
   return "system";
 }

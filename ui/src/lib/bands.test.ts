@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONTAINER_HUE_OFFSET,
   CORE_HUE_OFFSET,
-  IN_SHADES,
-  OUT_SHADES,
   seriesHue,
   containerBands,
   containerStackTotal,
@@ -11,7 +8,7 @@ import {
   memoryBands,
   perCoreBands,
 } from "./bands";
-import { SWEPT_FILL_OPACITY } from "../ui/charts/size";
+import { SOFT_STACK_FILL, SWEPT_FILL_OPACITY } from "../ui/charts/size";
 import { containerTrends } from "./containers";
 import type { MetricsResponse } from "./api";
 
@@ -554,14 +551,39 @@ describe("containerBands", () => {
     ],
   });
 
-  it("draws one band per container, named by its key", () => {
+  // The response's order, not the rank: two containers of similar weight
+  // trade rank as the window slides, and must not trade colours with it.
+  it("draws one band per container, named by its key, in a stable order", () => {
     expect(bandsOf(three, "cpu").map((b) => b.name)).toEqual([
       "web/api",
       "web/db",
       "web/cache",
     ]);
     expect(bandsOf(three, "cpu")[0]!.values).toEqual([40, 60]);
+    expect(bandsOf(three, "mem").map((b) => b.name)).toEqual([
+      "web/api",
+      "web/db",
+      "web/cache",
+    ]);
     expect(bandsOf(three, "mem")[1]!.values).toEqual([400, 420]);
+    // A shift in weight leaves every container its colour
+    const swapped = containers({
+      "web/api": [
+        [t0, 1, 100, null],
+        [t0 + hour, 1, 120, null],
+      ],
+      "web/db": [
+        [t0, 90, 400, null],
+        [t0 + hour, 90, 420, null],
+      ],
+      "web/cache": [
+        [t0, 5, 50, null],
+        [t0 + hour, 6, 55, null],
+      ],
+    });
+    expect(bandsOf(swapped, "cpu").map((b) => [b.name, b.color])).toEqual(
+      bandsOf(three, "cpu").map((b) => [b.name, b.color]),
+    );
   });
 
   // The stack total is the whole point of the panel, and stackBands drops
@@ -611,28 +633,82 @@ describe("containerBands", () => {
     expect(containerStackTotal(bands)).toEqual([50, null, 72]);
   });
 
-  // A wrapping walk, exactly as the per-core stack: no adjacent pair shares a
-  // shade however many containers the host runs.
-  it("walks its shades so no two neighbours share one", () => {
+  // Five named hues for the five heaviest, the rest one grey band: a hue is
+  // only worth giving where a legend can name it.
+  it("names the five heaviest and folds the rest into others", () => {
     const many = containers(
       Object.fromEntries(
         Array.from({ length: 11 }, (_, i) => [
           `stack/svc-${i}`,
-          [[t0, i, i * 10, null]],
+          [
+            [t0, i, i * 10, null],
+            [t0 + hour, i, i * 10, null],
+          ],
         ]),
       ),
     );
 
-    const cpu = bandsOf(many, "cpu").map((b) => b.color);
-    expect(cpu).toHaveLength(11);
-    // Eleven containers, eleven hues -- the case the four-shade walk could
-    // not answer, where it repeated itself very nearly three times over.
-    expect(new Set(cpu).size).toBe(11);
-    expect(cpu[0]).toBe(seriesHue(0, 11, CONTAINER_HUE_OFFSET));
+    const cpu = bandsOf(many, "cpu");
+    expect(cpu.map((b) => b.name)).toEqual([
+      "stack/svc-6",
+      "stack/svc-7",
+      "stack/svc-8",
+      "stack/svc-9",
+      "stack/svc-10",
+      "6 others",
+    ]);
+    expect(cpu.map((b) => b.color)).toEqual([
+      "var(--s1)",
+      "var(--s2)",
+      "var(--s3)",
+      "var(--s4)",
+      "var(--s5)",
+      "var(--ink-3)",
+    ]);
+    // The others band is the rest summed, so the stack's top edge is still
+    // the host's whole Docker load: 0 + 1 + 2 + 3 + 4 + 5
+    expect(cpu[5]!.values).toEqual([15, 15]);
+    // Every band is soft, so the hues separate without shouting
+    for (const b of cpu) expect(b.fill).toBe(SOFT_STACK_FILL);
+  });
 
-    // Memory takes the SAME sweep, so a container is one colour on the two
-    // panels a reader compares side by side.
-    expect(bandsOf(many, "mem").map((b) => b.color)).toEqual(cpu);
+  it("names all six of a host running six, rather than one as an others", () => {
+    const six = containers(
+      Object.fromEntries(
+        Array.from({ length: 6 }, (_, i) => [
+          `stack/svc-${i}`,
+          [[t0, i + 1, 10, null]],
+        ]),
+      ),
+    );
+    const cpu = bandsOf(six, "cpu");
+    expect(cpu).toHaveLength(6);
+    expect(cpu.map((b) => b.color)).toContain("var(--s6)");
+    expect(cpu.some((b) => b.name.endsWith("others"))).toBe(false);
+  });
+
+  it("keeps the others band a gap where no container reported", () => {
+    const sparse = {
+      ...containers(
+        Object.fromEntries(
+          Array.from({ length: 7 }, (_, i) => [
+            `stack/svc-${i}`,
+            [
+              [t0, i, 10, null],
+              [t0 + 2 * hour, i, 10, null],
+            ],
+          ]),
+        ),
+      ),
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T03:00:00Z" },
+      requested_window: {
+        from: "2026-08-10T00:00:00Z",
+        to: "2026-08-10T03:00:00Z",
+      },
+    };
+    const others = bandsOf(sparse, "cpu").at(-1)!;
+    expect(others.name).toBe("2 others");
+    expect(others.values).toEqual([1, null, 1]);
   });
 
   // --- the mirrored network half -------------------------------------------
@@ -659,54 +735,18 @@ describe("containerBands", () => {
     ],
   });
 
-  // MirrorStackMarks reads its halves off band POSITION -- every other series
-  // is one half -- so the pairing is the contract, not a convenience.
-  it("interleaves each container's in and out bands", () => {
+  // One mirrored pair for every container: how much the host's containers
+  // moved and which way, in the traffic greys every direction pair draws in.
+  it("sums every container's in and out into one mirrored pair", () => {
     const bands = bandsOf(traffic, "net");
 
-    expect(bands.map((b) => b.name)).toEqual([
-      "web/api in",
-      "web/api out",
-      "web/db in",
-      "web/db out",
-    ]);
-    expect(bands[0]!.values).toEqual([1000, 1200]);
-    expect(bands[1]!.values).toEqual([200, 300]);
-  });
-
-  // Direction wins over identity here, unlike the two panels beside it: green
-  // is inbound and amber is outbound on every traffic mark in the app, and a
-  // panel that re-hued per container would be a different chart from the cell
-  // it was opened out of.
-  it("colours the halves green over amber, container as a lightness step", () => {
-    const bands = bandsOf(traffic, "net");
-
+    expect(bands.map((b) => b.name)).toEqual(["in", "out"]);
+    expect(bands[0]!.values).toEqual([1050, 1260]);
+    expect(bands[1]!.values).toEqual([1100, 1250]);
     expect(bands.map((b) => b.color)).toEqual([
-      IN_SHADES[0],
-      OUT_SHADES[0],
-      IN_SHADES[1],
-      OUT_SHADES[1],
+      "var(--traffic-in)",
+      "var(--traffic-out)",
     ]);
-    // The sweep is emphatically NOT used here.
-    for (const b of bands) expect(b.color).toMatch(/^var\(--(in|out)-\d\)$/);
-  });
-
-  // The walk wraps, exactly as the host Traffic panel's interfaces do: the
-  // fifth container repeats the first shade and its key is what tells them
-  // apart.
-  it("wraps the in/out walk past four containers", () => {
-    const many = withNet(
-      Object.fromEntries(
-        Array.from({ length: 5 }, (_, i) => [
-          `stack/svc-${i}`,
-          [[t0, i, i * 10, null, i * 100, i * 50]],
-        ]),
-      ),
-    );
-
-    const colors = bandsOf(many, "net").map((b) => b.color);
-    expect(colors[0]).toBe(IN_SHADES[0]);
-    expect(colors[8]).toBe(IN_SHADES[0]);
   });
 
   // The same null rule the cpu and mem stacks follow, over BOTH columns: a
@@ -722,8 +762,8 @@ describe("containerBands", () => {
     });
 
     const bands = bandsOf(late, "net");
-    expect(bands[2]!.values).toEqual([0, 500]);
-    expect(bands[3]!.values).toEqual([0, 90]);
+    expect(bands[0]!.values).toEqual([1000, 1700]);
+    expect(bands[1]!.values).toEqual([200, 390]);
   });
 
   // A host whose agent could not read the namespaces reports no net columns
@@ -733,13 +773,16 @@ describe("containerBands", () => {
     expect(bandsOf(three, "net")).toEqual([]);
   });
 
-  // Band ORDER is the response's. The page polls, and a stack re-sorted by
-  // size on every refresh would shuffle under the reader.
-  it("keeps the response's order rather than sorting by size", () => {
-    expect(bandsOf(three, "cpu").map((b) => b.name)).toEqual([
-      "web/api",
-      "web/db",
-      "web/cache",
+  // A tie keeps the response's order, so equal containers do not swap places
+  // between polls.
+  it("keeps the response's order between equals", () => {
+    const tied = containers({
+      "b/second": [[t0, 5, 10, null]],
+      "a/first": [[t0, 5, 10, null]],
+    });
+    expect(bandsOf(tied, "cpu").map((b) => b.name)).toEqual([
+      "b/second",
+      "a/first",
     ]);
   });
 

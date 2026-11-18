@@ -11,7 +11,7 @@
 // per series independently would normalise a 2% series and a 200% series
 // to look identical, which is exactly the comparison this component exists
 // to make possible.
-import { Chart } from "./Chart";
+import { Chart, type ChartMarker } from "./Chart";
 import type { Tick, TimeTick } from "./ticks";
 
 export interface OverlaySeries {
@@ -146,6 +146,10 @@ export interface OverlayProps {
   spine?: boolean;
   labels?: boolean;
   widestYLabel?: string;
+  /** The crosshair's bucket and its pointer handler, forwarded to Chart. */
+  cursor?: number | null;
+  onCursorChange?: (index: number | null) => void;
+  markers?: readonly ChartMarker[];
 }
 
 export function Overlay({
@@ -169,6 +173,9 @@ export function Overlay({
   spine,
   labels,
   widestYLabel,
+  cursor,
+  onCursorChange,
+  markers,
 }: OverlayProps) {
   return (
     <>
@@ -200,6 +207,9 @@ export function Overlay({
         spine={spine}
         labels={labels}
         widestYLabel={widestYLabel}
+        cursor={cursor}
+        onCursorChange={onCursorChange}
+        markers={markers}
       />
       {/* A legend names series; on a fleet overlay it would name all
           nineteen of them, which is the opposite of "every host

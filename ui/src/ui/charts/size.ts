@@ -187,6 +187,17 @@ export const MIRROR_FILL_OPACITY = 0.45;
 export const SWEPT_FILL_OPACITY = 0.45;
 
 /**
+ * The fill weight of a host-page stack whose bands are told apart by HUE:
+ * CPU time breakdown and the top-five container stacks.
+ *
+ * Fainter than SWEPT_FILL_OPACITY. A hue stack at 0.45 was the loudest mark
+ * on a page whose other charts are inks; at this weight the bands still
+ * separate by hue, and the full-strength top edge carries each one's shape.
+ * The fleet's swept dialogs keep their own weight.
+ */
+export const SOFT_STACK_FILL = 0.26;
+
+/**
  * The edge on a filled band, whatever kind of band it is.
  *
  * One constant, because it is one mark: a CPU stack's ribbon, a memory

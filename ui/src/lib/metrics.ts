@@ -639,6 +639,26 @@ export function latestValue(values: readonly (number | null)[]): number | null {
   return values.length > 0 ? (values[values.length - 1] ?? null) : null;
 }
 
+/** The largest reading in a window, or null when there is none: an empty
+ * window has no peak, and 0 would be a reading. */
+export function peakValue(values: readonly (number | null)[]): number | null {
+  let max: number | null = null;
+  for (const v of values) if (v !== null && (max === null || v > max)) max = v;
+  return max;
+}
+
+/** The mean of the readings in a window, gaps left out; null without one. */
+export function meanValue(values: readonly (number | null)[]): number | null {
+  let sum = 0;
+  let n = 0;
+  for (const v of values) {
+    if (v === null) continue;
+    sum += v;
+    n++;
+  }
+  return n === 0 ? null : sum / n;
+}
+
 /**
  * The per-bucket increase of a cumulative counter.
  *

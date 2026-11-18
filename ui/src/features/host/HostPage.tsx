@@ -2,7 +2,7 @@
 // then the active tab. This is the only file in the feature that talks to
 // the read API -- the tabs take plain props, so a tab renders identically
 // whether its data came from a fetch, a poll or a fixture.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getAddresses,
   getConditions,
@@ -35,7 +35,7 @@ import { When } from "../../ui/When";
 import { duration } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
 import { catalogueOf, EMPTY_CATALOGUE } from "../fleet/conditions";
-import { hostTabForSlug } from "../../lib/router";
+import { ChartCursorProvider } from "../../ui/charts/cursor";
 import {
   clampRange,
   rangeWindow,
@@ -47,15 +47,19 @@ import { POLL_MS, pollMsFor, usePoll } from "../../lib/poll";
 import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
-import { NetworkGraphs, StorageGraphs, SystemGraphs } from "./tabs/Graphs";
-import { CollectorsTab } from "./tabs/CollectorsTab";
+import {
+  NetworkGraphs,
+  StorageGraphs,
+  SystemGraphs,
+  timedEvents,
+} from "./tabs/Graphs";
+import { AgentTab } from "./tabs/AgentTab";
 import { LimitsCard } from "./tabs/LimitsCard";
 import { Sensors } from "./tabs/Sensors";
 import {
   Containers,
   Drives,
   Interfaces,
-  Mounts,
   Network,
   Packages,
   Units,
@@ -69,9 +73,19 @@ export type HostTab =
   | "storage"
   | "containers"
   | "packages"
-  | "units"
-  | "collectors"
-  | "events";
+  | "events"
+  | "agent";
+
+/** How many of the window's events the marked tabs ask for. */
+const MARKER_EVENTS = 500;
+
+/** The tabs that draw the window's events as markers on their lead charts.
+ * The Overview's Events card is the log, not markers: it reads `events`. */
+const MARKED_TABS: ReadonlySet<HostTab> = new Set([
+  "system",
+  "network",
+  "agent",
+]);
 
 /** The bar is built to take a tenth tab (Alerts, with the Stage 2 engine)
  * without relayout; it wraps at narrow widths rather than scrolling, and
@@ -94,12 +108,13 @@ export const HOST_TABS: readonly { id: HostTab; label: string }[] = [
   { id: "network", label: "Network" },
   { id: "storage", label: "Storage" },
   { id: "containers", label: "Containers" },
+  // Units joined Packages, the ones needing attention on top: two thin tabs
+  // about what is installed and what is running became one.
   { id: "packages", label: "Packages" },
-  { id: "units", label: "Units" },
-  // Between the inventories and the log, at the quiet end of the bar: it is
-  // the tab you open when you doubt what the other tabs are telling you.
-  { id: "collectors", label: "Collectors" },
   { id: "events", label: "Events" },
+  // Last, at the quiet end of the bar: the agent's own health is the tab you
+  // open when you doubt what the other tabs are telling you.
+  { id: "agent", label: "Agent" },
 ];
 
 /**
@@ -141,7 +156,12 @@ interface TabData {
   interfaces: Iface[] | null;
   packages: Pkg[] | null;
   units: Unit[] | null;
+  /** The window's events, the log: the Events tab and the Overview card. */
   events: Event[] | null;
+  /** The window's events as the marked tabs' lead charts place them. A slot
+   * of its own so neither use draws the other's list: capped and on the
+   * series' cadence here, the full table and every poll there. */
+  markerEvents: Event[] | null;
 }
 
 const NO_DATA: TabData = {
@@ -166,6 +186,7 @@ const NO_DATA: TabData = {
   packages: null,
   units: null,
   events: null,
+  markerEvents: null,
 };
 
 /**
@@ -267,6 +288,13 @@ export function HostPage({
   // When the series last came down, and for which tab and range. A ref, not
   // state: nothing renders from it, and writing it must not cost a render on
   // every poll.
+  //
+  // Written once an answer has been ACCEPTED (the effect below the merge),
+  // never when a request goes out. A run usePoll then drops -- superseded by
+  // a refresh, or StrictMode's discarded first effect in development -- had
+  // already marked the key fetched, the run that replaced it found nothing
+  // due, and the tab showed "not collected" for families nobody had asked
+  // for until the slow timer came round.
   const seriesFetch = useRef({ key: "", at: 0 });
 
   // The active tab's own families, on that same tick. usePoll owns the
@@ -275,7 +303,12 @@ export function HostPage({
   // `to` forward instead of pinning it at the instant the tab was opened --
   // the same reason EventsScreen gives in App.tsx.
   const tabPoll = usePoll(
-    async (): Promise<Partial<TabData>> => {
+    async (): Promise<{
+      families: Partial<TabData>;
+      series: { key: string; at: number } | null;
+      /** Which host, tab and range this answer is for. */
+      key: string;
+    }> => {
       const window = rangeWindow(range);
       // The SERIES, and only the series, slow down with the range.
       //
@@ -300,7 +333,6 @@ export function HostPage({
       const due =
         key !== seriesFetch.current.key ||
         at - seriesFetch.current.at >= pollMsFor(rangeStepMs(range));
-      if (due) seriesFetch.current = { key, at };
       // `undefined` rather than the previous response: what is already on
       // screen lives in `data`, and the merge below leaves a family it is not
       // told about alone. Returning null would blank the very charts this is
@@ -317,49 +349,61 @@ export function HostPage({
             )
           : Promise.resolve(undefined);
 
+      // The log, an inventory: every poll. The same table the fleet log
+      // uses. A flat 500 is fine at 1h and a silent truncation at 7d, which
+      // this page offers: one host's dist-upgrade plus a week of ordinary
+      // churn reaches it, and the rows lost are the oldest -- exactly the
+      // ones someone widening the window is looking for.
+      const eventLog = () =>
+        orNull(
+          getEvents({
+            host: hostId,
+            since: window.from,
+            until: window.to,
+            limit: EVENT_LIMITS[range],
+          }),
+        );
+
       async function load(): Promise<Partial<TabData>> {
         switch (tab) {
           case "overview": {
-            // Six requests, down from eight. The tab stopped drawing the
-            // per-core stack (cpu_core), the sensor cards (sensor) and the
-            // Inventory counts (containers) when they moved or were dropped,
-            // and a page that keeps fetching what it no longer draws is three
-            // round trips a reader pays for and never sees. units stays: the
-            // attention band lists the failed ones, and the ones restarting
-            // repeatedly, neither of which the hub models per unit. drives is
-            // here for the Storage tab.
-            //
-            // The conditions are what the band renders now: the disk and
-            // drive rows used to be worked out on this page against thresholds
-            // written out in TypeScript, which is how it came to disagree with
-            // the fleet page about one host.
+            // What the four readings, the Filesystems table and the Docker
+            // CPU panel draw, and nothing else: the agent and drive families
+            // used to ride along here for other tabs and drew nothing on this
+            // one. units stays: the attention band lists the failed ones, and
+            // the ones restarting repeatedly. The conditions are what the band
+            // renders, so this page and the fleet cannot disagree about one
+            // host. The container family answers empty on a host without
+            // Docker, and the panel then draws nothing. The Events card is the
+            // log the Events tab shows, as fresh as this poll.
             const [
               hostMetrics,
               filesystemMetrics,
-              agentMetrics,
-              units,
-              drives,
               netMetrics,
+              containerMetrics,
+              filesystems,
+              units,
               conditions,
+              events,
             ] = await Promise.all([
               metrics("host"),
               metrics("filesystem"),
-              metrics("agent"),
-              orNull(getUnits(hostId)),
-              orNull(getDrives(hostId)),
-              // Traffic: the overview summarised every subsystem except the
-              // one most likely to explain a problem.
               metrics("net"),
+              metrics("container"),
+              orNull(getFilesystems(hostId)),
+              orNull(getUnits(hostId)),
               orNull(getConditions()),
+              eventLog(),
             ]);
             return {
               hostMetrics,
               filesystemMetrics,
-              agentMetrics,
-              units,
-              drives,
               netMetrics,
+              containerMetrics,
+              filesystems,
+              units,
               conditions,
+              events,
             };
           }
           // Each subject tab fetches the families ITS panels draw, rather than
@@ -383,7 +427,7 @@ export function HostPage({
               sensorMetrics,
             };
           }
-          case "collectors": {
+          case "agent": {
             const [collectorMetrics, agentMetrics] = await Promise.all([
               metrics("collector"),
               metrics("agent"),
@@ -468,30 +512,42 @@ export function HostPage({
             ]);
             return { containers, containerMetrics };
           }
-          case "packages":
-            return { packages: await orNull(getPackages(hostId)) };
-          case "units":
-            return { units: await orNull(getUnits(hostId)) };
+          case "packages": {
+            const [packages, units] = await Promise.all([
+              orNull(getPackages(hostId)),
+              orNull(getUnits(hostId)),
+            ]);
+            return { packages, units };
+          }
           case "events":
-            return {
-              events: await orNull(
-                getEvents({
-                  host: hostId,
-                  since: window.from,
-                  until: window.to,
-                  // The same table the fleet log uses. A flat 500 is fine at
-                  // 1h and a silent truncation at 7d, which this page offers:
-                  // one host's dist-upgrade plus a week of ordinary churn
-                  // reaches it, and the rows lost are the oldest -- exactly the
-                  // ones someone widening the window is looking for.
-                  limit: EVENT_LIMITS[range],
-                }),
-              ),
-            };
+            return { events: await eventLog() };
         }
       }
 
-      return load();
+      // The tabs whose lead charts carry event markers fetch the window's
+      // events beside their series, and at the series' cadence: a marker is
+      // placed on a bucket, so it cannot move faster than the buckets do.
+      // Capped well under the Events tab's own limit -- a marker per event
+      // on every lead chart is a picture of the window, not the log.
+      const [families, markerEvents] = await Promise.all([
+        load(),
+        MARKED_TABS.has(tab) && due
+          ? orNull(
+              getEvents({
+                host: hostId,
+                since: window.from,
+                until: window.to,
+                limit: MARKER_EVENTS,
+              }),
+            )
+          : Promise.resolve(undefined),
+      ]);
+      return {
+        families:
+          markerEvents === undefined ? families : { ...families, markerEvents },
+        series: due ? { key, at } : null,
+        key,
+      };
     },
     POLL_MS,
     [hostId, tab, range],
@@ -517,7 +573,7 @@ export function HostPage({
     if (loaded !== null) {
       setData((prev) => {
         const next = { ...prev };
-        for (const [family, value] of Object.entries(loaded)) {
+        for (const [family, value] of Object.entries(loaded.families)) {
           if (value !== undefined) {
             (next as Record<string, unknown>)[family] = value;
           }
@@ -526,6 +582,22 @@ export function HostPage({
       });
     }
   }
+  // The window's events as chart markers, for the lead charts of a tab.
+  const markers = useMemo(
+    () => timedEvents(data.markerEvents),
+    [data.markerEvents],
+  );
+
+  // Whether the tab in front of the reader has had its first answer yet.
+  // Until it has, a family with nothing in it is loading -- not "not
+  // collected", which is a statement about the host this page cannot make
+  // before the hub has been asked.
+  const pending = loaded?.key !== `${hostId}:${tab}:${range}`;
+
+  // After commit, so only an answer usePoll accepted counts as fetched.
+  useEffect(() => {
+    if (loaded?.series) seriesFetch.current = loaded.series;
+  }, [loaded]);
 
   useEffect(() => {
     onPollError?.(hostPoll.error);
@@ -641,6 +713,15 @@ export function HostPage({
               absolute instant on hover, and "never" rather than a dash for a
               host that has not reported once -- this header used to be the
               one place that drew the dash. */}
+            {/* The uptime as a figure, where the Uptime chart's rising
+              diagonal used to say the same less directly. The same guard as
+              the reboot chip: a host the hub is not hearing from has no
+              current uptime to state, and a recent boot says it in the chip. */}
+            {status.severity !== "critical" &&
+              host.uptime_s !== null &&
+              !recentlyBooted && (
+                <span className="meta">up {duration(host.uptime_s)}</span>
+              )}
             <span className="meta">
               last seen <When iso={host.last_seen} never />
             </span>
@@ -682,154 +763,167 @@ export function HostPage({
         onChange={(id) => onTabChange(id as HostTab)}
       />
 
-      {tab === "overview" && (
-        <Overview
-          host={host}
-          hostMetrics={data.hostMetrics}
-          filesystemMetrics={data.filesystemMetrics}
-          netMetrics={data.netMetrics}
-          units={data.units}
-          conditions={(data.conditions?.conditions ?? []).filter(
-            (row) => row.host_id === host.id,
-          )}
-          // null is "netra could not be asked", which the panel must not
-          // render as "nothing is wrong" -- it draws nothing at all when the
-          // list is empty, so an offline host with a full disk and a failing
-          // drive would show no panel whatsoever. The same line the fleet page
-          // draws for the same failure.
-          conditionsUnavailable={data.conditions === null}
-          catalogue={
-            data.conditions
-              ? catalogueOf(data.conditions.kinds)
-              : EMPTY_CATALOGUE
-          }
-          range={range}
-          fetchFamily={fetchFamily}
-          // A tile's href is /hosts/{id}/chart/<slug>, which the router
-          // already resolves to whichever tab draws that panel. This is that
-          // same walk done client-side, so a plain click switches tabs
-          // instead of reloading the app -- and cmd-click still gets the real
-          // URL, which lands in the same place.
-          onOpenChart={(slug) => onTabChange(hostTabForSlug(slug))}
-        />
-      )}
-      {tab === "system" && (
-        <>
-          <SystemGraphs
-            host={data.hostMetrics}
-            cpuCore={data.coreMetrics}
+      {/* One cursor per tab: hovering any chart draws the crosshair at the
+          same moment in every other chart of the tab. Keyed so a tab switch
+          starts without one. */}
+      <ChartCursorProvider key={tab}>
+        {tab === "overview" && (
+          <Overview
+            host={host}
+            hostMetrics={data.hostMetrics}
+            filesystemMetrics={data.filesystemMetrics}
+            netMetrics={data.netMetrics}
+            units={data.units}
+            conditions={(data.conditions?.conditions ?? []).filter(
+              (row) => row.host_id === host.id,
+            )}
+            // null is "netra could not be asked", which the panel must not
+            // render as "nothing is wrong" -- it draws nothing at all when the
+            // list is empty, so an offline host with a full disk and a failing
+            // drive would show no panel whatsoever. The same line the fleet page
+            // draws for the same failure.
+            conditionsUnavailable={data.conditions === null}
+            catalogue={
+              data.conditions
+                ? catalogueOf(data.conditions.kinds)
+                : EMPTY_CATALOGUE
+            }
             range={range}
             fetchFamily={fetchFamily}
+            events={data.events}
+            filesystems={data.filesystems}
+            containerMetrics={data.containerMetrics}
           />
-          {/* Below the charts and above the limits: hardware readings after
+        )}
+        {tab === "system" && (
+          <>
+            <SystemGraphs
+              host={data.hostMetrics}
+              cpuCore={data.coreMetrics}
+              range={range}
+              fetchFamily={fetchFamily}
+              events={markers}
+              threads={host.threads}
+              pending={pending}
+            />
+            {/* Below the charts and above the limits: hardware readings after
               the software ones, and still charts rather than the ceilings the
               card below states. Renders nothing at all on a host with no
               sensors, which is most of a cloud fleet. */}
-          <Sensors
-            sensorMetrics={data.sensorMetrics}
-            range={range}
-            fetchFamily={fetchFamily}
-          />
-          {/* At the FOOT of the tab, below the charts. Four bars that do not
+            <Sensors
+              sensorMetrics={data.sensorMetrics}
+              range={range}
+              fetchFamily={fetchFamily}
+            />
+            {/* At the FOOT of the tab, below the charts. Four bars that do not
               move on a healthy host are not what this tab opens with -- the
               reader came for what CPU, memory and the kernel have been doing,
               and the ceilings are the reference they read those against. It
               renders nothing at all on a host whose agent reports no limits.
           */}
-          <LimitsCard host={host} hostMetrics={data.hostMetrics} />
-        </>
-      )}
-      {tab === "collectors" && (
-        <CollectorsTab
-          host={host}
-          sources={{
-            collector: data.collectorMetrics,
-            agent: data.agentMetrics,
-            range,
-            fetchFamily,
-          }}
-        />
-      )}
-      {tab === "containers" && (
-        <Containers
-          rows={data.containers ?? []}
-          // The id AND the name: the rows link to
-          // /containers/{host_id}/{key}, and this component is the only
-          // party that has both. Without them the tab could not offer a
-          // link at all, which is exactly what it did for a long time.
-          // last_seen too: a container is "gone" only when its HOST kept
-          // reporting and it stopped, so the tab cannot decide that without
-          // the host's own clock. See containerIsGone.
-          host={{
-            id: host.id,
-            hostname: host.hostname,
-            last_seen: host.last_seen,
-            // Reporting is judged on the hub's clock, as the fleet does.
-            received_at: host.received_at,
-            // The two denominators the saturation cells read against. This
-            // page holds a HostDetail, which names them cores/memory_total
-            // where the fleet's list row says threads/mem_total -- the same
-            // box's CPUs and RAM under two names. The row calls each one
-            // thing, so the mapping happens here rather than in the cell.
-            threads: host.threads,
-            mem_total: host.memory_total,
-          }}
-          metrics={data.containerMetrics ?? null}
-          range={range}
-          // A purged container is gone from the inventory, so the page
-          // refetches rather than editing a copy of the list it does not own.
-          onPurged={refresh}
-          // Why the list is empty, or why its rows are named after 64 hex
-          // digits. The agent is the only party that knows, and it said so.
-          capabilities={host.capabilities}
-        />
-      )}
-      {/* Tables first on both of these, then the charts.
-          What EXISTS, then how it behaves: the table reads instantly at any
-          window height, and it is also the shorter answer -- a reader who
-          came to check an MTU or a mount point is done without scrolling
-          past six charts to reach it. */}
-      {tab === "network" && (
-        <>
-          <Interfaces rows={data.interfaces ?? []} />
-          <Network rows={data.addresses ?? []} />
-          <NetworkGraphs
-            host={data.hostMetrics}
-            hostSnmp={data.hostSnmpMetrics}
-            hostProto={data.hostProtoMetrics}
-            net={data.netMetrics}
+            <LimitsCard host={host} hostMetrics={data.hostMetrics} />
+          </>
+        )}
+        {tab === "agent" && (
+          <AgentTab
+            host={host}
+            sources={{
+              collector: data.collectorMetrics,
+              agent: data.agentMetrics,
+              range,
+              fetchFamily,
+              events: markers,
+              pending,
+            }}
+          />
+        )}
+        {tab === "containers" && (
+          <Containers
+            rows={data.containers ?? []}
+            // The id AND the name: the rows link to
+            // /containers/{host_id}/{key}, and this component is the only
+            // party that has both. Without them the tab could not offer a
+            // link at all, which is exactly what it did for a long time.
+            // last_seen too: a container is "gone" only when its HOST kept
+            // reporting and it stopped, so the tab cannot decide that without
+            // the host's own clock. See containerIsGone.
+            host={{
+              id: host.id,
+              hostname: host.hostname,
+              last_seen: host.last_seen,
+              // Reporting is judged on the hub's clock, as the fleet does.
+              received_at: host.received_at,
+              // The two denominators the saturation cells read against. This
+              // page holds a HostDetail, which names them cores/memory_total
+              // where the fleet's list row says threads/mem_total -- the same
+              // box's CPUs and RAM under two names. The row calls each one
+              // thing, so the mapping happens here rather than in the cell.
+              threads: host.threads,
+              mem_total: host.memory_total,
+            }}
+            metrics={data.containerMetrics ?? null}
             range={range}
-            fetchFamily={fetchFamily}
-          />
-        </>
-      )}
-      {tab === "storage" && (
-        <>
-          {/* Mounts first: "how full is it" is what people open this tab
-              for. Drives is the hardware under those mounts, and reads as
-              the answer to a question the first table has just raised. */}
-          <Mounts
-            rows={data.filesystems ?? []}
-            metrics={data.filesystemMetrics ?? null}
-          />
-          <Drives
-            rows={data.drives ?? []}
+            // A purged container is gone from the inventory, so the page
+            // refetches rather than editing a copy of the list it does not own.
+            onPurged={refresh}
+            // Why the list is empty, or why its rows are named after 64 hex
+            // digits. The agent is the only party that knows, and it said so.
             capabilities={host.capabilities}
-            metrics={data.smartMetrics}
-            range={range}
-            fetchFamily={fetchFamily}
           />
-          <StorageGraphs
-            filesystem={data.filesystemMetrics}
-            diskIo={data.diskIoMetrics}
-            range={range}
-            fetchFamily={fetchFamily}
-          />
-        </>
-      )}
-      {tab === "packages" && <Packages rows={data.packages ?? []} />}
-      {tab === "units" && <Units rows={data.units ?? []} />}
-      {tab === "events" && <Events events={data.events} />}
+        )}
+        {/* The charts first now: three charts and a row per interface are
+          short enough that the inventory tables below are still one scroll
+          away, and how the network is behaving is what the tab opens for. */}
+        {tab === "network" && (
+          <>
+            <NetworkGraphs
+              host={data.hostMetrics}
+              hostSnmp={data.hostSnmpMetrics}
+              hostProto={data.hostProtoMetrics}
+              net={data.netMetrics}
+              range={range}
+              fetchFamily={fetchFamily}
+              events={markers}
+              pending={pending}
+            />
+            <Interfaces rows={data.interfaces ?? []} />
+            <Network rows={data.addresses ?? []} />
+          </>
+        )}
+        {tab === "storage" && (
+          <>
+            {/* Filesystems first: "how full is it" is what people open this
+              tab for. Then a row per drive, how hard it is working, and its
+              SMART health last -- the hardware under those mounts. */}
+            <StorageGraphs
+              filesystem={data.filesystemMetrics}
+              diskIo={data.diskIoMetrics}
+              filesystems={data.filesystems}
+              lastSeen={host.last_seen}
+              pending={pending}
+              range={range}
+              fetchFamily={fetchFamily}
+            />
+            <Drives
+              rows={data.drives ?? []}
+              capabilities={host.capabilities}
+              metrics={data.smartMetrics}
+              range={range}
+              fetchFamily={fetchFamily}
+            />
+          </>
+        )}
+        {/* The units that need attention -- the only ones the hub lists --
+            above what is installed: a failed service is the question, the
+            package list the reference. */}
+        {tab === "packages" && (
+          <>
+            <Units rows={data.units ?? []} />
+            <Packages rows={data.packages ?? []} />
+          </>
+        )}
+        {tab === "events" && <Events events={data.events} />}
+      </ChartCursorProvider>
     </div>
   );
 }

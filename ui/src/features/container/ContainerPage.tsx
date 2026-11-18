@@ -295,24 +295,18 @@ function bandsFor(sampled: Sampled | null): ContainerBands {
   return {
     cpuBands,
     memBands,
-    // Mirrored about a midline, ingress above and egress below, like every
-    // other traffic chart in the app -- and now in the same two colours as
-    // every one of them.
-    //
-    // It was green over VIOLET, from the series ramp, on the argument that
-    // blue below green separates by only CVD dE 9 and reads as one mass.
-    // True, and it does not reach amber: --out-1 is the status palette's own
-    // #fab219, which is what the fleet row's traffic cell, the host Traffic
-    // panel and the host-page Docker Network panel all draw egress in. A
-    // reader who has learnt "orange here is outbound bytes" was learning it
-    // everywhere except on this page.
+    // Mirrored about a midline, ingress above and egress below, in the two
+    // traffic greys every direction pair in the app draws in: light in, dark
+    // out. Green and amber are status hues and no longer double as
+    // directions.
     netBands: [
-      band("in", "var(--in-1)", sampled?.netRx ?? empty),
-      band("out", "var(--out-1)", sampled?.netTx ?? empty),
+      band("in", "var(--traffic-in)", sampled?.netRx ?? empty),
+      band("out", "var(--traffic-out)", sampled?.netTx ?? empty),
     ],
+    // Read and write are a direction pair too: the same greys, mirrored.
     ioBands: [
-      band("read", "var(--s2)", sampled?.ioRead ?? empty),
-      band("write", "var(--s4)", sampled?.ioWrite ?? empty),
+      band("read", "var(--traffic-in)", sampled?.ioRead ?? empty),
+      band("write", "var(--traffic-out)", sampled?.ioWrite ?? empty),
     ],
   };
 }
@@ -669,9 +663,7 @@ export function ContainerPage({
         {/* Mirrored about a midline, ingress above and egress below, like
             every other traffic chart in the app -- two lines climbing one
             axis make a reader compare shapes to answer which way the traffic
-            is going. Green over violet, from the series ramp rather than
-            the fleet row's --in-1/--out-1 pair: blue below green would
-            separate by only CVD dE 9 and read as one mass. */}
+            is going. */}
         <ChartPanel
           title="Network"
           fmt={byterate}
@@ -691,6 +683,7 @@ export function ContainerPage({
         />
         <ChartPanel
           title="Disk I/O"
+          mirrored
           fmt={byterate}
           notice={notice}
           window={metrics.window}

@@ -5,18 +5,15 @@ import type {
   Address,
   Container,
   Drive,
-  Filesystem,
   Iface,
   MetricsResponse,
   Pkg,
   Unit,
 } from "../../../lib/api";
-import { ABSENT } from "../../../lib/format";
 import {
   Containers,
   Drives,
   Interfaces,
-  Mounts,
   Inventory,
   Network,
   Packages,
@@ -60,11 +57,6 @@ const containers: Container[] = [
     labels: null,
     last_seen: "2026-08-10T14:00:00Z",
   },
-];
-
-const filesystems: Filesystem[] = [
-  { id: 1, label: "/", mountpoint: "/", device_id: 3 },
-  { id: 2, label: "data", mountpoint: "/srv/data", device_id: 4 },
 ];
 
 const addresses: Address[] = [
@@ -398,16 +390,14 @@ describe("Containers", () => {
   });
 
   // A mirror has two totals and no single headline, so this panel passes no
-  // nowValue and takes ChartPanel's LABELLED headline instead -- the same
-  // thing the host's per-interface Traffic panel does, which is the identical
-  // construction. What must never happen is the bare number the CPU and
-  // Memory panels print: unlabelled, it reads as the whole host's traffic
-  // when it is one container's inbound half.
+  // nowValue and takes ChartPanel's LABELLED headline instead. The bands are
+  // every container summed, so the label is the direction alone: a bare
+  // number would read as both halves together.
   it("names whose number the network headline is", () => {
     render(<Containers rows={containers} host={host} metrics={withTraffic} />);
 
     const now = headline("Docker Network") ?? "";
-    expect(now).toContain("netra/hub in");
+    expect(now).toMatch(/^in /);
     // The two beside it DO headline the stack total, and unlabelled.
     expect(headline("Docker CPU")).toBe("100%");
   });
@@ -556,16 +546,6 @@ describe("Containers", () => {
     expect(headline("Docker CPU")).toBe("100%");
     expect(
       screen.queryByText(/No container CPU or memory reached the hub/),
-    ).toBeNull();
-  });
-});
-
-describe("Mounts", () => {
-  it("lists label and mountpoint without inventing timestamps", () => {
-    render(<Mounts rows={filesystems} />);
-    expect(screen.getByText("/srv/data")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("columnheader", { name: /last seen/i }),
     ).toBeNull();
   });
 });
@@ -770,71 +750,6 @@ describe("Units", () => {
   });
 });
 
-describe("Mounts", () => {
-  const rows = [
-    { id: 1, label: "root", mountpoint: "/", device_id: null },
-    { id: 2, label: "data", mountpoint: "/data", device_id: null },
-  ];
-
-  const metrics = {
-    family: "filesystem",
-    tier: "raw",
-    step_s: 60,
-    window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:02:00Z" },
-    requested_window: {
-      from: "2026-08-10T00:00:00Z",
-      to: "2026-08-10T00:02:00Z",
-    },
-    warnings: [],
-    key_columns: ["filesystem"],
-    columns: ["total", "used", "free"],
-    series: [
-      {
-        key: { filesystem: "root" },
-        points: [[Date.parse("2026-08-10T00:00:00Z"), 110, 68, 32]],
-      },
-    ],
-    truncated: false,
-  } as unknown as MetricsResponse;
-
-  // The inventory row carries a label and a mountpoint and nothing else, so
-  // the tab answered none of the question anyone opens it for. The sizes
-  // come from the metrics family, joined by label.
-  it("joins the sizes in from the metrics family", () => {
-    render(<Mounts rows={rows} metrics={metrics} />);
-
-    expect(screen.getByText("68 B")).toBeInTheDocument();
-    expect(screen.getByText("32 B")).toBeInTheDocument();
-  });
-
-  // A filesystem the metrics did not answer for is not an empty disk.
-  it("renders the absent marker for a filesystem with no samples", () => {
-    render(<Mounts rows={rows} metrics={metrics} />);
-
-    const dataRow = screen.getByText("data").closest("tr")!;
-    expect(dataRow.textContent).toContain(ABSENT);
-    expect(dataRow.querySelector(".segbar")).toBeNull();
-  });
-
-  // FUSE can report Bfree > Blocks, which makes used negative and
-  // used + free below zero: no Use% exists, so no 200% red bar either.
-  it("renders the absent marker for a negative capacity", () => {
-    const negative = {
-      ...metrics,
-      series: [
-        {
-          key: { filesystem: "data" },
-          points: [[Date.parse("2026-08-10T00:00:00Z"), 10, -20, 10]],
-        },
-      ],
-    } as unknown as MetricsResponse;
-    render(<Mounts rows={rows} metrics={negative} />);
-
-    const dataRow = screen.getByText("data").closest("tr")!;
-    expect(dataRow.querySelector(".segbar")).toBeNull();
-  });
-});
-
 describe("Drives", () => {
   const ata: Drive = {
     device: "sdc",
@@ -1025,9 +940,12 @@ describe("Drives", () => {
 
   it("finds a drive by its findings, not only by its name", () => {
     render(<Drives rows={[ata, nvme]} />);
-    fireEvent.change(screen.getByRole("searchbox", { name: "Filter Drives" }), {
-      target: { value: "pending" },
-    });
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Filter Drive health" }),
+      {
+        target: { value: "pending" },
+      },
+    );
     expect(screen.getByRole("row", { name: /sdc/ })).toBeInTheDocument();
     expect(
       screen.queryByRole("row", { name: /nvme0n1/ }),
@@ -1037,12 +955,14 @@ describe("Drives", () => {
   // The empty state states the fact and no more. Why the table is empty is
   // the agent's to say, and it says it in the notice below -- guessing at all
   // three reasons here sent somebody looking for whichever one did not apply.
-  it("states an empty table as a fact rather than guessing at the cause", () => {
-    render(<Drives rows={[]} />);
-    expect(screen.getByText("No drives reported")).toBeInTheDocument();
+  // One line, not an empty table with a heading row: on a virtual disk there
+  // is no SMART, and the section says so.
+  it("states an empty table as a fact in one line", () => {
+    const { container } = render(<Drives rows={[]} />);
     expect(
       screen.getByText("No drive on this host has reported SMART data."),
     ).toBeInTheDocument();
+    expect(container.querySelector("table")).toBeNull();
   });
 
   // "No drives reported" is true of a host with no disks and of a container
@@ -1053,8 +973,10 @@ describe("Drives", () => {
 
     expect(screen.getByText(/smartctl/)).toBeInTheDocument();
     expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
-    // Alongside the empty state, not instead of it.
-    expect(screen.getByText("No drives reported")).toBeInTheDocument();
+    // The agent's reason IS the one line, in place of the generic one.
+    expect(
+      screen.queryByText("No drive on this host has reported SMART data."),
+    ).toBeNull();
   });
 
   // The value on a table that is fully present and still worth explaining:
@@ -1095,7 +1017,6 @@ describe("Drives", () => {
 
     expect(screen.getByText(/SAS drives/)).toBeInTheDocument();
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
-    expect(screen.getByText("No drives reported")).toBeInTheDocument();
   });
 
   // An empty table that is working as intended still has to say so. The one
@@ -1105,7 +1026,6 @@ describe("Drives", () => {
 
     expect(screen.getByText(/USB-attached/)).toBeInTheDocument();
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
-    expect(screen.getByText("No drives reported")).toBeInTheDocument();
   });
 
   it("stays silent when the agent reported no trouble", () => {
@@ -1156,146 +1076,6 @@ describe("inventory sorting", () => {
       expect(screen.getAllByRole("row")).toHaveLength(before);
     }
   }
-
-  describe("Mounts", () => {
-    // The sizes are joined in from the metrics family by label, so a row
-    // literal cannot carry them -- see Mounts itself.
-    // Root is pinned to the top whatever the sort (see Mounts), so the
-    // ordering tests need TWO other mounts to have anything to order.
-    const mounts = [
-      { id: 1, label: "root", mountpoint: "/", device_id: null },
-      { id: 2, label: "data", mountpoint: "/data", device_id: null },
-      { id: 3, label: "media", mountpoint: "/media", device_id: null },
-    ];
-
-    // root: 500 GB, 450 used, 50 free -> 90% of what df counts.
-    // data: 8 TB, 800 used, 7200 free -> 10%.
-    // media: 900 GB, 450 used, 450 free -> 50%.
-    const sizes = {
-      family: "filesystem",
-      tier: "raw",
-      step_s: 60,
-      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:01:00Z" },
-      requested_window: {
-        from: "2026-08-10T00:00:00Z",
-        to: "2026-08-10T00:01:00Z",
-      },
-      warnings: [],
-      key_columns: ["filesystem"],
-      columns: ["total", "used", "free"],
-      series: [
-        {
-          key: { filesystem: "root" },
-          points: [[Date.parse("2026-08-10T00:00:00Z"), 500e9, 450e9, 50e9]],
-        },
-        {
-          key: { filesystem: "data" },
-          points: [[Date.parse("2026-08-10T00:00:00Z"), 8000e9, 800e9, 7200e9]],
-        },
-        {
-          key: { filesystem: "media" },
-          points: [[Date.parse("2026-08-10T00:00:00Z"), 900e9, 450e9, 450e9]],
-        },
-      ],
-      truncated: false,
-    } as unknown as MetricsResponse;
-
-    it("sorts on every column", async () => {
-      render(<Mounts rows={mounts} metrics={sizes} />);
-
-      await sortByEveryColumn();
-    });
-
-    // The cells read "900 GB" and "8 TB", which as strings put the 8 TB mount
-    // first. Sorting on the byte count is the whole point of the column
-    // having its own accessor.
-    it("orders Size by bytes and not by the formatted string", async () => {
-      render(<Mounts rows={mounts} metrics={sizes} />);
-      await userEvent.click(header(/size/i));
-
-      expect(firstCells()).toEqual(["root", "media", "data"]);
-    });
-
-    // The bigger disk is the emptier one, so Usage and Size must not agree.
-    it("orders Usage by the same Use% the meter draws", async () => {
-      render(<Mounts rows={mounts} metrics={sizes} />);
-      await userEvent.click(header(/usage/i));
-
-      expect(firstCells()).toEqual(["root", "data", "media"]);
-    });
-
-    // The hub hands the rows over by label, which is whatever the operator
-    // named the marker, so "root" arrives under "data" and "media". The
-    // mountpoint is what says which one is root, and it stays on top through
-    // a sort that would otherwise bury it -- it is the fullest mount here, so
-    // Usage descending would put it last.
-    it("keeps the root mount first, on arrival and through every sort", async () => {
-      // Reversed, so "media, data" arriving proves the table sorts the rest
-      // by label itself rather than trusting the order the hub sent.
-      render(<Mounts rows={[...mounts].reverse()} metrics={sizes} />);
-      expect(firstCells()).toEqual(["root", "data", "media"]);
-
-      await userEvent.click(header(/usage/i));
-      expect(firstCells()).toEqual(["root", "data", "media"]);
-      await userEvent.click(header(/usage/i));
-      expect(firstCells()).toEqual(["root", "media", "data"]);
-      await userEvent.click(header(/label/i));
-      expect(firstCells()).toEqual(["root", "data", "media"]);
-    });
-
-    /*
-     * Two mounts at the SAME percentage, one of which is a problem.
-     *
-     * This table was the last place a filesystem was judged on its
-     * percentage alone, which is how it came to draw a red bar beside the
-     * words "3.7 TB free". The rule it uses now is diskSeverityFor, the one
-     * the Overview's Disk panel, the busiest-filesystem tile, the fleet's
-     * disk cell and both attention lists already share -- so 96% means
-     * something different on a 250 GB root than on a 4 TB array, which is
-     * what the bytes in the next column over already told the reader.
-     *
-     * Asserted on the class rather than on a colour: the class is what the
-     * stylesheet keys on, and it is the same st-* vocabulary every other
-     * severity in the app is spelled in.
-     */
-    it("reddens the figure of every mount at 96%, whatever its size", () => {
-      const at96 = (used: number, free: number) => [
-        Date.parse("2026-08-10T00:00:00Z"),
-        used + free,
-        used,
-        free,
-      ];
-      render(
-        <Mounts
-          rows={mounts}
-          metrics={
-            {
-              ...sizes,
-              series: [
-                // 96% of a 250 GB root, 9 GB left: hours from full.
-                { key: { filesystem: "root" }, points: [at96(241e9, 9e9)] },
-                // 96% of a 4 TB array, 160 GB left: weeks of headroom.
-                { key: { filesystem: "data" }, points: [at96(3840e9, 160e9)] },
-              ],
-            } as unknown as MetricsResponse
-          }
-        />,
-      );
-
-      const meterFor = (label: string) =>
-        screen
-          .getByText(label, { selector: ".lab" })
-          .closest(".mrow") as HTMLElement;
-
-      // Both, and on the FIGURE rather than only the bar: a bar answers
-      // "what does this number say", and 96% says the same thing on a 4 TB
-      // array as on a 250 GB root. Judging the fill by the bytes left --
-      // which is the attention band's rule, and right there -- left the
-      // array plain at 96% and put red out of reach on any large volume.
-      expect(meterFor("root").querySelector(".val")).toHaveClass("st-crit");
-      expect(meterFor("data").querySelector(".val")).toHaveClass("st-crit");
-    });
-  });
 
   describe("Network", () => {
     const two = [

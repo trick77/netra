@@ -684,9 +684,9 @@ export function hostConditions(
       // made the column that says HOW MANY unreadable.
       what: `${count} failed ${count === 1 ? "unit" : "units"}`,
       evidence: { type: "units", ...shown },
-      // The units tab lists every failed unit with its state and its restart
-      // count -- the names beside this row are a summary of exactly that page.
-      tab: "units",
+      // The Packages tab lists every failed unit, on top, with its state and
+      // its restart count -- the names beside this row summarise that list.
+      tab: "packages",
     });
   }
 

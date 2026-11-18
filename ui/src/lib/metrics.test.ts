@@ -6,7 +6,9 @@ import {
   griddedValues,
   optionalValues,
   meanBase,
+  meanValue,
   peakBase,
+  peakValue,
   ratioValues,
   reduceToColumns,
   seriesCells,
@@ -15,6 +17,22 @@ import {
   SeriesIndexError,
   windowNotice,
 } from "./metrics";
+
+describe("meanValue", () => {
+  it("averages the readings, gaps left out, and has none without one", () => {
+    expect(meanValue([1, null, 3])).toBe(2);
+    expect(meanValue([null])).toBeNull();
+  });
+});
+
+describe("peakValue", () => {
+  it("is the largest reading, and no peak for a window without one", () => {
+    expect(peakValue([1, null, 7, 3])).toBe(7);
+    expect(peakValue([-4, -2])).toBe(-2);
+    expect(peakValue([null, null])).toBeNull();
+    expect(peakValue([])).toBeNull();
+  });
+});
 
 const raw = {
   family: "cpu_core",

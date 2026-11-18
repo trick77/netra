@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { StrictMode } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostDetail, MetricsResponse } from "../../lib/api";
@@ -97,6 +98,24 @@ describe("hostTabHref", () => {
 });
 
 describe("HostPage", () => {
+  it("draws a tab's families when its first poll was discarded", async () => {
+    // StrictMode runs the poll effect twice and drops the first run's answer.
+    // That run used to mark the series fetched on the way out, so the run that
+    // replaced it asked for nothing and every panel said nothing had been read.
+    render(
+      <StrictMode>
+        <HostPage hostId={7} tab="agent" onTabChange={() => {}} />
+      </StrictMode>,
+    );
+    await screen.findByRole("heading", { name: "kessel" });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("No data has been read for this family yet."),
+      ).toBeNull(),
+    );
+  });
+
   it("renders every tab as a link to its own URL, with no More menu", async () => {
     render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
     await screen.findByRole("heading", { name: "kessel" });
@@ -208,11 +227,13 @@ describe("HostPage", () => {
 
     const header = await screen.findByRole("banner", { name: "Host summary" });
     expect(within(header).queryByText(/Zurich|Hetzner/)).toBeNull();
-    // The one .meta is "last seen", which carries its own label.
+    // The .meta lines are the uptime and "last seen", each with its own label.
     const meta = [...header.querySelectorAll(".meta")];
-    expect(meta).toHaveLength(1);
-    expect(meta[0].textContent).toMatch(/^last seen/);
-    expect(meta[0].textContent).not.toContain(ABSENT);
+    expect(meta.map((m) => m.textContent)).toEqual([
+      expect.stringMatching(/^up /),
+      expect.stringMatching(/^last seen/),
+    ]);
+    expect(meta[1].textContent).not.toContain(ABSENT);
     // The rest of the header is untouched.
     expect(within(header).getByText("online")).toBeInTheDocument();
   });

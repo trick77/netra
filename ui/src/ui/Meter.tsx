@@ -81,9 +81,9 @@ export const SEVERITY_COLOR: Record<FillSeverity, string> = {
  * threshold and no severity to draw -- it draws --traffic-in/--traffic-out,
  * two greys told apart by side of the midline and by lightness.
  *
- * Cell and the host page's tiles, which follow the same rule (see
- * overviewTiles.ts trendColor). The ENLARGED views and the host page's chart
- * panels keep the full palette: a dialog is a chart someone opened to read,
+ * Cell and the host page's lead charts and readings, which follow the same
+ * rule (cpuLeadBands in host/chartSpecs.ts calls this). The ENLARGED views
+ * keep their stacks' palettes: a dialog is a chart someone opened to read,
  * not a mark scanned down a column, and its stacks name their bands by colour.
  *
  * Lives here rather than in hostColumns because the CONTAINER list uses it
@@ -181,8 +181,8 @@ function Row({
   /**
    * The reading's severity, or null for a row with nothing to say.
    *
-   * `ok` is deliberately not a treatment here, the same rule StatTile states
-   * at length: painting a healthy reading green would make a hue mean
+   * `ok` is deliberately not a treatment here, the same rule the fleet's
+   * reading Figure follows: painting a healthy reading green would make a hue mean
    * "someone thought about it" rather than "look at this". The BAR still
    * takes its ok colour -- a bar's fill needs some colour to be a fill --
    * but the figure beside it stays plain ink until there is a reason.

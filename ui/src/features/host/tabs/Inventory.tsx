@@ -8,7 +8,6 @@ import type {
   Address,
   Container,
   Drive,
-  Filesystem,
   Iface,
   Pkg,
   Unit,
@@ -48,13 +47,8 @@ import { FLAP_THRESHOLD } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
-import {
-  Table,
-  type Column,
-  type SortState,
-  type TableProps,
-} from "../../../ui/Table";
-import { Meter, SEVERITY_CLASS } from "../../../ui/Meter";
+import { Table, type Column, type TableProps } from "../../../ui/Table";
+import { SEVERITY_CLASS } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
 import { stateKindLabel } from "../../container/state";
 import { rangeLabel, type Range } from "../../../lib/range";
@@ -469,9 +463,8 @@ export function Containers({
  *
  * The list answers "what is running here"; twenty rows of sparkline do not
  * add up to "the containers on this box are holding 11 GB and four cores'
- * worth of CPU, and have been all day". Two stacked panels do, and they are
- * the same two quantities each row already draws -- CPU in blue, memory in
- * amber -- so the overview and the cells under it read as one picture.
+ * worth of CPU, and have been all day". Two stacked panels do: the five
+ * heaviest containers by name, the rest as one grey band.
  *
  * IT IS DELIBERATELY NOT FILTERED. The caller hands it the whole
  * family=container response rather than the rows that survived the search box
@@ -561,9 +554,9 @@ function DockerOverview({
         nowValue={now(cpu)}
         series={cpu}
         stacked
-        // The list is longer than the chart, exactly as it is for the
-        // per-core stack: a hovered band names itself from its key.
-        legend={false}
+        // At most six bands -- the five heaviest and "others" -- so the
+        // legend fits and is what names the five colours.
+        legend
         height={PANEL_HEIGHT}
         notice={notice}
         window={window}
@@ -579,7 +572,7 @@ function DockerOverview({
         nowValue={now(mem)}
         series={mem}
         stacked
-        legend={false}
+        legend
         height={PANEL_HEIGHT}
         notice={notice}
         window={window}
@@ -595,10 +588,9 @@ function DockerOverview({
 
           MIRRORED, unlike the two above it, because traffic has a direction
           and every other traffic mark in the app says so the same way: in
-          above the midline, out below. That also settles the colour -- green
-          over amber, the container as a lightness step within its half,
-          rather than the hue sweep the CPU and Memory panels use. See
-          containerBands' "net" branch.
+          above the midline, out below, in the traffic greys. Every
+          container summed into one pair -- which container moved the bytes
+          is the list's question. See containerBands' "net" branch.
 
           No nowValue: a mirror has two totals, and one number beside a shape
           that is two quantities would have to pick one of them. The detail
@@ -656,167 +648,9 @@ function DockerOverview({
 const PANEL_HEIGHT = 200;
 
 // --- Filesystems ----------------------------------------------------------
-
-// The inventory row carries a label, a mountpoint and a device id; size,
-// used and free live in the metrics family, so the sizes are joined in by
-// label. A filesystem the metrics have not answered for renders the absent
-// marker rather than a zero -- "not measured" is not "empty".
-type FilesystemRow = Filesystem & {
-  total: number | null;
-  used: number | null;
-  free: number | null;
-};
-
-const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
-  {
-    key: "label",
-    header: "Label",
-    cell: (row) => row.label,
-    sortValue: (row) => row.label,
-  },
-  {
-    key: "mountpoint",
-    header: "Mountpoint",
-    cell: (row) => row.mountpoint ?? ABSENT,
-    sortValue: (row) => row.mountpoint ?? null,
-  },
-  // The three byte columns sort on the RAW bytes, never on the "1.4 TB" the
-  // cell prints: those strings collate "999 GB" above "1.4 TB", which is the
-  // one thing a size column must not do.
-  {
-    key: "size",
-    header: "Size",
-    cell: (row) => bytes(row.total),
-    sortValue: (row) => row.total,
-  },
-  {
-    key: "used",
-    header: "Used",
-    cell: (row) => bytes(row.used),
-    sortValue: (row) => row.used,
-  },
-  {
-    key: "free",
-    header: "Free",
-    cell: (row) => bytes(row.free),
-    sortValue: (row) => row.free,
-  },
-  {
-    key: "usage",
-    header: "Usage",
-    // used / (used + free), which is df's Use% -- NOT used / total, because
-    // total includes the root reserve and would report a full disk as less
-    // full than df does. Same definition as the fleet list's disk meter, and
-    // now the same SEVERITY rule as well: see the severity prop below.
-    cell: (row) =>
-      row.used === null || row.free === null || row.used + row.free <= 0 ? (
-        ABSENT
-      ) : (
-        // Wrapped, for the reason .usage-cell is: Meter brings
-        // its own .mrow, a 1fr/92px row with padding and a rule of its own,
-        // and all three are wrong inside a <td> that already has them. This
-        // cell had no such scope, so every mount's bar sat under a second
-        // horizontal rule and its percentage was stranded 92px from the bar
-        // it belonged to.
-        <div className="usage-cell">
-          <Meter
-            value={(row.used / (row.used + row.free)) * 100}
-            max={100}
-            label={row.label}
-            // No severity passed: Meter's 70/95 colours the fill and the
-            // figure, as it does on the Overview's Disk panel and in the
-            // fleet's disk cell. The bytes listed beside the bar are context
-            // for the reading, not a reason to mute it. What keeps a large
-            // volume with real headroom quiet is the attention list, which
-            // judges on the compound rule and leaves it out.
-          />
-        </div>
-      ),
-    // The same Use% the meter is drawn from, computed once here rather than
-    // read back off the bar. A mount the metrics have not answered for draws
-    // ABSENT and sorts as unknown, not as empty.
-    sortValue: (row) =>
-      row.used === null || row.free === null || row.used + row.free <= 0
-        ? null
-        : (row.used / (row.used + row.free)) * 100,
-  },
-];
-
-/**
- * The Storage tab's mount table.
- *
- * Called Mounts rather than Filesystems because it is no longer a tab of its
- * own: the tab is Storage, and it carries this table and the disk charts.
- * Splitting them was the same "the format is not the subject" mistake the
- * Graphs tab made.
- */
-export function Mounts({
-  rows,
-  metrics = null,
-}: {
-  rows: readonly Filesystem[];
-  metrics?: MetricsResponse | null;
-}) {
-  const sizes = new Map(
-    (metrics?.series ?? []).map((series, index) => [
-      series.key.filesystem,
-      {
-        total: lastOf(metrics, index, "total"),
-        used: lastOf(metrics, index, "used"),
-        free: lastOf(metrics, index, "free"),
-      },
-    ]),
-  );
-
-  const joined: FilesystemRow[] = rows.map((row) => ({
-    ...row,
-    total: sizes.get(row.label)?.total ?? null,
-    used: sizes.get(row.label)?.used ?? null,
-    free: sizes.get(row.label)?.free ?? null,
-  }));
-
-  return (
-    <Inventory
-      // "Mounts", not "Filesystems". The Storage tab stacks two tables and
-      // then a chart group already called Filesystems, and two identical
-      // headings on one page is a page that cannot be scanned. This table is
-      // one row per MOUNT -- label, mountpoint, usage -- while the charts
-      // below plot the filesystems those mounts sit on.
-      label="Mounts"
-      heading
-      columns={FILESYSTEM_COLUMNS}
-      rows={joined}
-      rowKey={(row) => String(row.id)}
-      searchText={(row) => `${row.label} ${row.mountpoint ?? ""}`}
-      // Root first, whatever the sort. It is the mount every reader looks
-      // for, and the hub orders by label, which is whatever the operator
-      // named the marker -- "root" lands under "data" and "media". The
-      // MOUNTPOINT is the stable identity; the label is not.
-      pinFirst={isRoot}
-      // And the rest by label. The hub already hands them over that way,
-      // but said here so the header shows the order and the table does not
-      // depend on a query it cannot see.
-      defaultSort={BY_LABEL}
-    />
-  );
-}
-
-const isRoot = (row: FilesystemRow) => row.mountpoint === "/";
-const BY_LABEL: SortState = { key: "label", dir: "asc" };
-
-/** The latest non-null value of a column, or null if it never reported. */
-function lastOf(
-  res: MetricsResponse | null,
-  index: number,
-  base: string,
-): number | null {
-  const values = griddedValues(res, index, base);
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v !== null && v !== undefined) return v;
-  }
-  return null;
-}
+//
+// The mount table moved to tabs/Storage.tsx as the Filesystems table: one row
+// per mount with its Use%, what is left, its inodes and a trend.
 
 // --- Network --------------------------------------------------------------
 
@@ -1375,9 +1209,24 @@ export function Drives({
   // stop mattering.
   const note = hostDriveNote(capabilities);
 
+  // No drives at all says so in one line: on a virtual disk there is no
+  // SMART, and an empty table with a heading row is the same fact said
+  // with more furniture. The agent's reason when it has one.
+  if (rows.length === 0)
+    return (
+      <section aria-label="Drive health">
+        <h3 className="grouphead">Drive health</h3>
+        <p className="note">
+          {note ?? "No drive on this host has reported SMART data."}
+        </p>
+      </section>
+    );
+
   return (
     <Inventory
-      label="Drives"
+      // "Drive health", not "Drives": the row per drive above it is Drives,
+      // and this is its SMART reading.
+      label="Drive health"
       heading
       columns={driveColumns(metrics, range, fetchFamily)}
       rows={rows}
