@@ -150,7 +150,15 @@ timescaledb. The database is additionally told what it has — `TS_TUNE_MEMORY`
 and `TS_TUNE_NUM_CPUS` — because `timescaledb-tune` reads the host's
 `/proc/meminfo` rather than the container's cgroup limit, and would otherwise
 size a 31 GB machine's buffer pool for a database serving a handful of agents.
-Raise all four together if your fleet outgrows them.
+Raise all four together if your fleet outgrows them. Neither container has a
+CPU limit, on purpose: Docker refuses a quota above the host's CPU count.
+
+The agent is capped at 128 MB, with `GOMEMLIMIT` at 100 MiB so its garbage
+collector works before the cap rather than after. An agent that gets
+OOM-killed restarts and leaves a gap in its host's charts; raise
+`AGENT_MEM_LIMIT` and `AGENT_GOMEMLIMIT` together in that host's `.env`, which
+`setup-agent.sh` never overwrites. It has no CPU limit either: a throttled
+agent would report its own stalls as hub latency.
 
 **Upgrading an install created before those limits existed — order matters.**
 The tune step runs on first init only, so an existing `data/timescaledb` still

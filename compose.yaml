@@ -29,7 +29,13 @@ services:
 
     # 512m, not unbounded. The hub is a Go process serving a handful of
     # agents; an unbounded default only means a leak takes the host down with
-    # it. Raise this one line if the agent count grows.
+    # it. Raise this one line if the agent count grows. Measured with one agent:
+    # 58 MiB peak; the headroom is for long-range fleet queries.
+    #
+    # No `cpus:` here or on timescaledb. Docker refuses a quota above the
+    # host's CPU count, so a fixed value stops the stack on a smaller box, and
+    # the bursts a quota would throttle (long-range queries, aggregate
+    # refreshes, compression) are the work the reader is waiting on.
     mem_limit: 512m
 
     environment:
@@ -135,7 +141,7 @@ services:
     # Without a limit this container sizes itself from the WHOLE host: on a
     # 31GB/8CPU box the image's timescaledb-tune step wrote shared_buffers =
     # 7947MB and max_worker_processes = 27 for a database holding metrics from
-    # a couple of monitored hosts.
+    # a couple of monitored hosts. Measured: 863 MiB peak.
     mem_limit: 2g
 
     environment:
