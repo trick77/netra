@@ -26,7 +26,10 @@ import (
 // minting, so RequireAdmin on everything outside /api/agent/ is load-bearing
 // rather than defence in depth -- do not mount a route here without deciding,
 // explicitly, which credential it answers to.
-func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc *kitauth.OIDC) http.Handler {
+//
+// channels are the notification channels, nil when notifications are off.
+func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc *kitauth.OIDC,
+	channels NotifyChannels) http.Handler {
 	svc := admin.NewService(s.Pool())
 	rd := read.NewService(s.Pool())
 
@@ -42,7 +45,8 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 
 	// The admin API answers 401 to an unauthenticated caller; the UI sends it
 	// to a login page instead. Both accept the same credential.
-	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now, cfg.HubURL)))
+	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false,
+		NewAdminHandler(svc, rd, time.Now, cfg.HubURL, channels)))
 
 	// /login and /logout sit outside RequireAdmin: this is where an
 	// unauthenticated browser is sent, so gating them would loop.

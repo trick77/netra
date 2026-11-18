@@ -226,6 +226,10 @@ a while or until lifted: from the host page in the UI, or
 condition opened under a mute is announced when the mute ends if it is still
 open; an all-clear under a mute is dropped.
 
+**Settings → Notifications** shows the configured channels (or that there are
+none) and sends a test message through each, reporting per channel whether it
+was accepted and why not. The test bypasses mutes and is not logged as an event.
+
 Every message sent is an event of type `notification` in the events log, on
 its host, listing the alerts it carried and any channel it failed on. A
 message that reached no channel is logged once, as a warning, until one gets

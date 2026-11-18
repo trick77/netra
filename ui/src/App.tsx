@@ -393,7 +393,7 @@ function Screen({
     case "events":
       return <EventsScreen search={search} go={go} />;
     case "settings":
-      return <SettingsPage />;
+      return <SettingsScreen go={go} />;
     case "admin":
       return <HostAdminPage />;
     case "login":
@@ -874,6 +874,14 @@ function ContainerScreen({
       onPurged={() => go(`/hosts/${hostRow.id}/containers`)}
     />
   );
+}
+
+/** Settings, with the one thing it asks the hub (the notification card) sent
+ * to the login page on a 401 like every other screen's reads. */
+function SettingsScreen({ go }: { go: Go }) {
+  const [error, setError] = useState<Error | null>(null);
+  useAuthRedirect(error, go, { name: "settings" });
+  return <SettingsPage onError={setError} />;
 }
 
 function EventsScreen({ search, go }: { search: string; go: Go }) {

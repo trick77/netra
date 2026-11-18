@@ -61,7 +61,11 @@ beforeEach(() => {
   // The host admin page's own two calls. Unmocked they fall through to the
   // real fetch, so a test that only asks which nav link is current would make
   // a network request in jsdom and settle after the test had finished.
-  vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "http://hub.test" });
+  vi.mocked(api.getConfig).mockResolvedValue({
+    hub_url: "http://hub.test",
+    notify_channels: [],
+    notify_timeout_s: 45,
+  });
   goTo("/");
 });
 

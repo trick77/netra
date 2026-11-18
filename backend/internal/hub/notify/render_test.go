@@ -1,7 +1,9 @@
 package notify_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,6 +182,71 @@ func TestChannelsSend(t *testing.T) {
 	err = none.Send("t", "b")
 	if !errors.As(err, &sendErr) || sendErr.Partial || len(sendErr.Failed) != 1 {
 		t.Errorf("all failing: %v, want a SendError that is not partial", err)
+	}
+}
+
+// Several messages through one channel at once (the notifier sends hosts in
+// parallel, the test button beside it) share no service state: under -race
+// this fails if a service object is reused.
+func TestChannelsConcurrentSends(t *testing.T) {
+	var hits atomic.Int32
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"id":"x"}`))
+	}))
+	defer ok.Close()
+	// ntfy: one of the services that writes params into its own config.
+	c, err := notify.NewChannels([]string{"ntfy://" + strings.TrimPrefix(ok.URL, "http://") + "/topic?scheme=http"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 8)
+	for i := range 8 {
+		go func() { done <- c.Send(fmt.Sprintf("title %d", i), "body") }()
+	}
+	for range 8 {
+		if err := <-done; err != nil {
+			t.Errorf("send: %v", err)
+		}
+	}
+	if hits.Load() != 8 {
+		t.Errorf("server saw %d sends, want 8", hits.Load())
+	}
+}
+
+// A request that goes away stops the wait, not the send, and done says when
+// the send really returned.
+func TestChannelsDeliverStopsWithContext(t *testing.T) {
+	release := make(chan struct{})
+	hang := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	defer hang.Close()
+	c, err := notify.NewChannels([]string{"generic+" + hang.URL + "/hook"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out, done := c.Deliver(ctx, "t", "b")
+	if len(out) != 1 || out[0].Err == nil || !strings.Contains(out[0].Err.Error(), "abandoned") {
+		t.Fatalf("deliveries = %+v, want the one channel abandoned", out)
+	}
+	select {
+	case <-done:
+		t.Fatal("done closed while the send was still out")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("done never closed after the send returned")
+	}
+
+	var none *notify.Channels
+	if out, done := none.Deliver(context.Background(), "t", "b"); len(out) != 0 {
+		t.Errorf("nil channels delivered %+v", out)
+	} else {
+		<-done
 	}
 }
 

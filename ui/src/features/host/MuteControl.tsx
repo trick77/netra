@@ -3,7 +3,7 @@
 // fleet and the events log keep showing everything.
 import { useState } from "react";
 
-import { createMute, type Mute } from "../../lib/api";
+import { createMute, errorText, type Mute } from "../../lib/api";
 import { absolute } from "../../lib/format";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
@@ -87,7 +87,7 @@ export function MuteControl({ hostId }: { hostId: number }) {
       close();
       refresh();
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : String(e));
+      setFormError(errorText(e));
     } finally {
       setBusy(false);
     }

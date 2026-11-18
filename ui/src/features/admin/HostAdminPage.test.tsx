@@ -43,7 +43,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   getHosts.mockResolvedValue([]);
-  vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "" });
+  vi.mocked(api.getConfig).mockResolvedValue({
+    hub_url: "",
+    notify_channels: [],
+    notify_timeout_s: 45,
+  });
   vi.mocked(api.getMutes).mockResolvedValue([]);
 });
 
@@ -233,6 +237,8 @@ describe("HostAdminPage", () => {
     const user = userEvent.setup();
     vi.mocked(api.getConfig).mockResolvedValue({
       hub_url: "https://netra.example.org",
+      notify_channels: [],
+      notify_timeout_s: 45,
     });
     createHost.mockResolvedValue({
       id: 8,
@@ -268,6 +274,8 @@ describe("HostAdminPage", () => {
     const user = userEvent.setup();
     vi.mocked(api.getConfig).mockResolvedValue({
       hub_url: "https://netra.example.org",
+      notify_channels: [],
+      notify_timeout_s: 45,
     });
     createHost.mockResolvedValue({
       id: 8,

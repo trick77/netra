@@ -3,7 +3,13 @@
 // a fix to either is a fix to both.
 import { useState } from "react";
 
-import { ApiError, deleteMute, getMutes, type Mute } from "../../lib/api";
+import {
+  ApiError,
+  deleteMute,
+  errorText,
+  getMutes,
+  type Mute,
+} from "../../lib/api";
 import { POLL_MS, usePoll } from "../../lib/poll";
 
 export interface Mutes {
@@ -19,10 +25,6 @@ export interface Mutes {
   lifting: ReadonlySet<number>;
   lift: (id: number) => Promise<void>;
   refresh: () => void;
-}
-
-function message(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }
 
 /**
@@ -63,7 +65,7 @@ export function useMutes(
         setGone((s) => new Set(s).add(id));
         setError(id, null);
       } else {
-        setError(id, message(e));
+        setError(id, errorText(e));
       }
     } finally {
       setLifting((s) => {

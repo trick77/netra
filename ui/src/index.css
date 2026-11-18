@@ -4147,6 +4147,50 @@ svg.spark {
   flex: none;
 }
 
+/* Settings' defaults note, which a card follows: the bottom gap every
+   stacked block owns (see .card). Scoped to that note, not to every note a
+   card happens to follow. */
+.note.settingsnote {
+  margin-bottom: var(--space-4);
+}
+
+/* The settings page's notification test: the button with its wait note, and
+   one line per channel. A failed channel takes the warning ink; an accepted
+   one stays neutral, like every ok state here. */
+.notifytest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-4);
+}
+.notifytest .note {
+  margin-top: 0;
+}
+.notifyresults {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-label);
+}
+.notifyresults li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+.notifyresults svg {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+  margin-top: 0.15em;
+}
+.notifyresults .failed {
+  color: var(--st-warn-text);
+}
+
 .note {
   font-size: var(--text-label);
   color: var(--muted);

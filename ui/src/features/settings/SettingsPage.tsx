@@ -3,6 +3,7 @@ import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
 import { isRange, PAGE_RANGES, type Range } from "../../lib/range";
 import { RANGE_KEY, readPref, writePref } from "../../lib/prefs";
+import { NotificationsCard } from "./NotificationsCard";
 
 /** The stored default range. It is lib/range's type and deliberately the
  * whole union: this value is handed to whichever page the user opens next,
@@ -65,10 +66,16 @@ function Setting({
 }
 
 /**
- * Appearance and defaults (spec §9). Everything here is per-browser: none of
- * it reaches the hub, so nothing on this page needs saving or can fail.
+ * Defaults (spec §9), per-browser: none of them reaches the hub, so nothing
+ * there needs saving or can fail. Below them, the hub's notification
+ * channels, read-only here, with a test; onError receives their failed
+ * calls, so the screen can route a 401 to the login page.
  */
-export function SettingsPage() {
+export function SettingsPage({
+  onError,
+}: {
+  onError?: (e: Error) => void;
+} = {}) {
   const [range, setRange] = useState<RangeKey>(loadRange);
 
   function chooseRange(next: RangeKey) {
@@ -106,11 +113,17 @@ export function SettingsPage() {
         </Setting>
       </Card>
 
-      <p className="note">
-        These settings are stored in this browser only. They are not sent to the
+      {/* .settingsnote: the one note a card follows, and so the one that
+          needs the gap below it a card would own. */}
+      <p className="note settingsnote">
+        These defaults are stored in this browser only. They are not sent to the
         hub, so another browser — or the same one after clearing site data —
         starts from the defaults.
       </p>
+
+      {/* The hub's own setting, after the browser's: configured in its
+          environment, shown and tested here. */}
+      <NotificationsCard onError={onError} />
     </>
   );
 }

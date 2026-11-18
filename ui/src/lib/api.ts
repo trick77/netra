@@ -21,6 +21,12 @@ export class ApiError extends Error {
   }
 }
 
+/** What went wrong, as a sentence for the page: an Error's message, or
+ * whatever was thrown, as text. */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 // --- Response types, transcribed from internal/hub/read/*.go JSON tags ---
 
 // internal/hub/read/host.go: HostSummary
@@ -617,8 +623,29 @@ export function getConditions(): Promise<ConditionsResponse> {
 // browser reaches the hub on loopback, so window.location says nothing about
 // the name agents post to; only the hub knows it, and the setup command is
 // wrong without it.
-export function getConfig(): Promise<{ hub_url: string }> {
-  return request<{ hub_url: string }>("/api/v1/config");
+//
+// notify_channels names the notification channels ("channel 1 (smtp)"),
+// empty when BACKEND_NOTIFY_URLS is; notify_timeout_s is how long a test may
+// take. The hub serves this SPA, so the two always come together.
+export type HubConfig = {
+  hub_url: string;
+  notify_channels: string[];
+  notify_timeout_s: number;
+};
+
+export function getConfig(): Promise<HubConfig> {
+  return request<HubConfig>("/api/v1/config");
+}
+
+/** One channel's answer to a test notification. error is the channel's own
+ * reason, scrubbed of credentials by the hub. */
+export type NotifyDelivery = { channel: string; ok: boolean; error?: string };
+
+/** Sends a test message through every configured channel. 200 with each
+ * channel's result even when they failed; 409 when notifications are off or
+ * a test is already in flight. Can take up to notify_timeout_s. */
+export function testNotify(): Promise<NotifyDelivery[]> {
+  return request<NotifyDelivery[]>("/api/v1/notify/test", { method: "POST" });
 }
 
 // The token is returned exactly once, at creation and at each rotation, and

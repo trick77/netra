@@ -140,11 +140,15 @@ func run() error {
 	// Notifications, when channels are configured. A bad channel URL stops
 	// the start: finding out at the first disk failure that the mail never
 	// worked is the one outcome this exists to prevent.
+	// The settings page's test: nil when off (a nil *Channels would read as
+	// off too, its methods are nil-safe).
+	var testChannels httpapi.NotifyChannels
 	if cfg.Notify.Enabled() {
 		channels, err := notify.NewChannels(cfg.Notify.URLs)
 		if err != nil {
 			return err
 		}
+		testChannels = channels
 		notifier := notify.New(s, channels, cfg.HubURL, cfg.Notify.Repeat)
 		// Before the listener, so events an agent replays after this restart
 		// are not mistaken for ones the previous process announced. A failure
@@ -157,6 +161,6 @@ func run() error {
 	}
 
 	srv := httpx.NewServer(cfg.ListenAddr,
-		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg, oidcSvc))
+		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg, oidcSvc, testChannels))
 	return httpx.Serve(ctx, srv, 15*time.Second)
 }

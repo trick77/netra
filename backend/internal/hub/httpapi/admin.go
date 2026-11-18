@@ -24,6 +24,7 @@ type adminHandler struct {
 	// sends an agent token to whoever owns that name.
 	hubURL string
 	now    func() time.Time
+	notify *notifyTester
 }
 
 // NewAdminHandler serves ALL of spec 8's /api/v1: the admin operations here,
@@ -35,8 +36,12 @@ type adminHandler struct {
 // take the hub down on boot rather than at request time.
 //
 // It is mounted behind RequireAdmin, never on its own.
-func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time, hubURL string) http.Handler {
-	h := &adminHandler{svc: svc, hubURL: hubURL, now: now}
+//
+// channels may be nil: notifications are off, and the test endpoint says so.
+func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time, hubURL string,
+	channels NotifyChannels) http.Handler {
+	h := &adminHandler{svc: svc, hubURL: hubURL, now: now,
+		notify: &notifyTester{channels: channels, hubURL: hubURL, now: now}}
 
 	mux := http.NewServeMux()
 	// The SPA cannot know the address agents post to: the browser reaches
@@ -57,6 +62,9 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 	mux.Handle("GET /api/v1/mutes", http.HandlerFunc(h.listMutes))
 	mux.Handle("POST /api/v1/mutes", http.HandlerFunc(h.createMute))
 	mux.Handle("DELETE /api/v1/mutes/{id}", http.HandlerFunc(h.deleteMute))
+	// Registered with or without channels, so a 404 can only mean a hub too
+	// old to have it.
+	mux.Handle("POST /api/v1/notify/test", http.HandlerFunc(h.notify.test))
 
 	(&readHandler{svc: rd, now: now}).register(mux)
 	return mux
@@ -191,6 +199,13 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
+// config also names the notification channels (empty: off), so the settings
+// page can say what is configured without sending anything.
 func (h *adminHandler) config(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"hub_url": h.hubURL})
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		HubURL         string   `json:"hub_url"`
+		NotifyChannels []string `json:"notify_channels"`
+		// How long a test may take, so the page does not hard-code it.
+		NotifyTimeoutS int `json:"notify_timeout_s"`
+	}{h.hubURL, h.notify.labels(), h.notify.timeoutSeconds()})
 }

@@ -23,7 +23,7 @@ func TestIntegrationReadyzFailsWithoutTheDatabase(t *testing.T) {
 	gone := store.OpenTestSibling(t, s)
 
 	cfg := config.Config{AdminToken: testAdminToken}
-	srv := httptest.NewServer(httpapi.NewRouter(auth.NewAuthenticator(gone.Pool()), gone, cfg, nil))
+	srv := httptest.NewServer(httpapi.NewRouter(auth.NewAuthenticator(gone.Pool()), gone, cfg, nil, nil))
 	t.Cleanup(srv.Close)
 	gone.Close()
 
