@@ -5,11 +5,20 @@
 // panel is where that contract reaches the UI. It was built for the IP and
 // ICMP families, which had no columns in the schema at all; those are
 // collected now, and per-container networking is the remaining caller.
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import {
+  fractionAt,
+  indexAt,
+  timeAt,
+  useSharedCursor,
+  type TimedEvent,
+} from "./cursor";
+import type { ChartMarker } from "./Chart";
+import { Readout } from "./Readout";
 import { ABSENT } from "../../lib/format";
 import { extent, mirrorPeaks } from "./geometry";
 import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
-import { widestLabel } from "./plot";
+import { layout, widestLabel, xAt } from "./plot";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
 import { Enlargeable, type DetailData } from "./Enlargeable";
@@ -174,6 +183,13 @@ export interface ChartPanelProps {
    * collected" would be the empty chart that branch exists to prevent.
    */
   footer?: ReactNode;
+  /**
+   * Events in this window, drawn as markers on the chart and listed in the
+   * readout when the cursor is near one. Given to the lead charts of a tab
+   * only: on every small trend they would be noise, and the same event drawn
+   * twenty times says nothing more than once.
+   */
+  events?: readonly TimedEvent[];
 }
 
 /**
@@ -219,6 +235,7 @@ export function ChartPanel({
   ranges,
   fetchSeries,
   footer,
+  events = [],
 }: ChartPanelProps) {
   // The width the CARD gives the chart, not the constant it used to be drawn
   // at -- see useMeasuredWidth for why the SVG is redrawn rather than scaled
@@ -229,6 +246,46 @@ export function ChartPanel({
   // plot to measure yet.
   const { ref: plotRef, width: plotWidth } =
     useMeasuredWidth<HTMLDivElement>(width);
+
+  // The crosshair. Shared with every chart of the section when a provider
+  // wraps it, this panel's own otherwise; either way a moment, turned into
+  // this panel's bucket through its own window. See cursor.tsx.
+  const id = useId();
+  const shared = useSharedCursor();
+  const [ownAt, setOwnAt] = useState<number | null>(null);
+  const at = shared ? shared.at : ownAt;
+  const hovered = shared ? shared.owner === id : ownAt !== null;
+  const buckets = series.reduce((n, s) => Math.max(n, s.values.length), 0);
+  const cursor = indexAt(at, answered, buckets);
+  const onCursorChange =
+    answered === null
+      ? undefined
+      : (index: number | null) => {
+          const next = index === null ? null : timeAt(index, answered, buckets);
+          if (!shared) setOwnAt(next);
+          else if (next === null) shared.clear(id);
+          else shared.set(next, id);
+        };
+
+  // The events this window covers, placed on its axis. One outside it -- a
+  // poll that has not caught up, an event a second past `to` -- is dropped
+  // rather than pinned to an edge where it would claim the wrong moment.
+  const markers: ChartMarker[] = [];
+  for (const e of events) {
+    const fraction = fractionAt(e.at, answered);
+    if (fraction !== null)
+      markers.push({ fraction, severity: e.severity, label: e.label });
+  }
+  // Within two buckets of the cursor: close enough to be the cause of what
+  // the cursor rests on, which is the question the readout answers.
+  const bucketMs =
+    answered === null || buckets <= 1
+      ? 0
+      : (Date.parse(answered.to) - Date.parse(answered.from)) / (buckets - 1);
+  const near =
+    at === null
+      ? []
+      : events.filter((e) => Math.abs(e.at - at) <= 2 * bucketMs);
 
   if (unavailable !== undefined) {
     return (
@@ -500,8 +557,37 @@ export function ChartPanel({
             reference={reference}
             mirrored={mirrored}
             label={`${title} over time`}
+            cursor={cursor}
+            onCursorChange={onCursorChange}
+            markers={markers}
           />
         </Enlargeable>
+        {hovered && cursor !== null && at !== null && answered !== null && (
+          <Readout
+            series={series}
+            index={cursor}
+            at={at}
+            window={answered}
+            fmt={fmt}
+            total={stacked === true && mirrored !== true}
+            // Of .plotfit, which holds the value gutter as well as the plot:
+            // the crosshair's own x over the box's width, through the same
+            // layout the chart draws with, so the box sits beside the line.
+            fraction={
+              plotWidth > 0
+                ? xAt(
+                    layout(
+                      plotWidth,
+                      height,
+                      axis ? { yLabel: widest } : undefined,
+                    ),
+                    buckets > 1 ? cursor / (buckets - 1) : 0,
+                  ) / plotWidth
+                : 0
+            }
+            events={near}
+          />
+        )}
       </div>
       {notice && <p className="note">{notice}</p>}
       {/* Under the chart, inside the panel. The `unavailable` branch above

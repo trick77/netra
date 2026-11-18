@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { MetricsResponse } from "../../../lib/api";
 import {
-  CollectorGraphs,
+  AgentGraphs,
   NetworkGraphs,
   StorageGraphs,
   SystemGraphs,
+  timedEvents,
   type GraphsProps,
 } from "./Graphs";
 import {
@@ -28,7 +30,7 @@ function Graphs(props: GraphsProps) {
   return (
     <>
       <SystemGraphs {...props} />
-      <CollectorGraphs {...props} />
+      <AgentGraphs {...props} />
       <NetworkGraphs {...props} />
       <StorageGraphs {...props} />
     </>
@@ -80,11 +82,11 @@ const fullHostSnmp = response({
       key: {},
       points: [
         [
-          1_754_784_000_000, 800, 700, 220, 190, 0.2, 0.1, 0.3, 0.1, 1.2, 1.1,
+          1_786_320_000_000, 800, 700, 220, 190, 0.2, 0.1, 0.3, 0.1, 1.2, 1.1,
           0.5, 0.4,
         ],
         [
-          1_754_784_060_000, 820, 710, 225, 195, 0.3, 0.2, 0.4, 0.2, 1.3, 1.2,
+          1_786_320_060_000, 820, 710, 225, 195, 0.3, 0.2, 0.4, 0.2, 1.3, 1.2,
           0.6, 0.5,
         ],
       ],
@@ -140,18 +142,22 @@ const fullHost = response({
 
 describe("Graphs", () => {
   it("groups the small multiples under named headings", () => {
-    render(<Graphs host={fullHost} />);
+    const { container } = render(<Graphs host={fullHost} />);
+    // The ledger groups are heading rows inside one table, not h3s
+    const ledger = container.querySelector(".ledger") as HTMLElement;
+    expect(within(ledger).getByText("Kernel")).toBeInTheDocument();
+    // The group's heading row, and here its uncollected spec's row too
+    expect(
+      within(ledger).getAllByText("Memory pressure").length,
+    ).toBeGreaterThan(0);
     for (const group of [
       "Resources",
-      "Kernel",
-      "Agent",
+      "Hub",
       "Traffic",
-      "IP",
       "TCP",
-      "UDP",
-      "ICMP",
+      "Protocol counters",
       "Filesystems",
-      "Disks",
+      "Drives",
     ]) {
       // level 3, because a group heading and a panel title can be the same
       // word: "Traffic" is both the group and the panel inside it. The
@@ -178,80 +184,77 @@ describe("Graphs", () => {
     );
   });
 
-  // The Overview's traffic panel and the Network tab's are two specs over one
-  // pair of columns, and the split is the point: this page asks what the box
-  // is moving, that tab asks which link moved it.
-  // IP sits below UDP, where it was asked to be.
-  it("orders the Network groups Traffic, TCP, UDP, IP, ICMP", () => {
-    expect(NETWORK_GROUPS.map((g) => g.title)).toEqual([
-      "Traffic",
-      "TCP",
-      "UDP",
-      "IP",
-      "ICMP",
+  // Traffic for the whole host, then which link carried it as rows, then the
+  // TCP charts, then every counter as a ledger row. IP sits below UDP, where
+  // it was asked to be.
+  it("orders the Network groups traffic, interfaces, TCP, then counters", () => {
+    expect(NETWORK_GROUPS.map((g) => [g.title, g.form])).toEqual([
+      ["Traffic", "lead"],
+      ["By interface", "pairs"],
+      ["TCP", "lead"],
+      ["Interface errors", "ledger"],
+      ["TCP counters", "ledger"],
+      ["UDP", "ledger"],
+      ["IP", "ledger"],
+      ["ICMP", "ledger"],
     ]);
   });
 
-  it("keeps the summed traffic panel off the Network tab", () => {
-    const network = NETWORK_GROUPS.flatMap((g) => g.specs.map((s) => s.slug));
-    expect(network).toContain("host-traffic");
-    expect(network).not.toContain("host-traffic-total");
-    expect(UNGROUPED_SLUGS).toContain("host-traffic-total");
+  // The summed traffic is the Network tab's lead chart and the Overview's,
+  // with the per-interface pairs as rows under it -- never two "Traffic"
+  // charts on one tab.
+  it("leads the Network tab with the summed traffic, interfaces as rows", () => {
+    const traffic = NETWORK_GROUPS.slice(0, 2).map((g) =>
+      g.specs.map((s) => s.slug),
+    );
+    expect(traffic).toEqual([["host-traffic-total"], ["host-traffic"]]);
+    expect(UNGROUPED_SLUGS).toEqual([]);
   });
 
   it("puts the network panels on Network and the disks on Storage", () => {
     render(<NetworkGraphs host={fullHost} />);
     expect(
-      screen.getByRole("heading", { name: "TCP statistics" }),
+      screen.getByRole("heading", { name: "TCP connections" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Kernel" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Disks" })).toBeNull();
   });
 
   // These three used to be hardcoded "not collected" panels: spec §11 listed
-  // IP statistics, ICMP statistics and ICMP informational as families with no
-  // data behind them anywhere in the schema. They are collected now, so the
-  // assertion is inverted -- they must draw, and nothing in the Network group
-  // may still claim a permanent schema gap.
-  it("draws the IP and ICMP panels from the host_snmp family", () => {
-    render(<Graphs host={fullHost} hostSnmp={fullHostSnmp} />);
+  // them as families with no data behind them anywhere in the schema. They
+  // are collected now, so they must read as rows of figures.
+  it("reads the IP and ICMP counters from the host_snmp family", () => {
+    render(<NetworkGraphs host={fullHost} hostSnmp={fullHostSnmp} />);
 
     for (const title of [
       "IP statistics",
       "ICMP statistics",
       "ICMP informational",
     ]) {
-      expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
       expect(
-        screen.queryByRole("region", { name: `${title}, not collected` }),
-      ).not.toBeInTheDocument();
+        screen.getAllByText(new RegExp(`^${title} · `)).length,
+      ).toBeGreaterThan(0);
     }
   });
 
-  // Without the family the three panels have nothing to draw, and that must
-  // read as "this window has no samples" rather than as a chart of zeroes --
-  // absent is not zero (spec §7.5). It must also not take the Network group's
-  // other panels down with it.
-  it("leaves the IP and ICMP panels empty when the host_snmp family is absent", () => {
-    render(<Graphs host={fullHost} />);
+  // Without the family the three have nothing to draw, and that must read as
+  // "this window has no samples" rather than as a row of zeroes -- absent is
+  // not zero (spec §7.5) -- even folded away with the quiet rows.
+  it("says the IP and ICMP counters were not read when host_snmp is absent", async () => {
+    render(<NetworkGraphs host={fullHost} />);
 
-    // Not merely present: each of the three says it has nothing to draw,
-    // which is the whole point -- a blank chart would assert the host
-    // reported zeroes.
+    for (const button of screen.getAllByRole("button", { name: "show" }))
+      await userEvent.click(button);
     for (const title of [
       "IP statistics",
       "ICMP statistics",
       "ICMP informational",
     ]) {
-      expect(
-        screen.getByRole("region", { name: `${title}, not collected` }),
-      ).toHaveTextContent("No data has been read for this family yet.");
+      const row = screen.getByText(title).closest("tr")!;
+      expect(row).toHaveTextContent(
+        "No data has been read for this family yet.",
+      );
     }
-    // And the family it does have still draws, so one absent fetch does not
-    // take the rest of the Network group with it.
-    expect(
-      screen.getByRole("heading", { name: "IP fragmentation" }),
-    ).toBeInTheDocument();
   });
 
   // The failure this replaces: a panel whose columns this tier does not
@@ -277,18 +280,26 @@ describe("Graphs", () => {
     render(<Graphs host={silentHost} />);
 
     expect(
-      screen.getByRole("region", { name: /Load averages chart/ }),
+      screen.getByRole("region", { name: /^Load chart/ }),
     ).toBeInTheDocument();
   });
 
-  it("draws every panel at the same size", () => {
+  // One size per kind of view: every lead chart alike, every small multiple
+  // alike, and the lead ones taller.
+  it("draws the charts of a kind at one size, the lead ones taller", () => {
     const { container } = render(<Graphs host={fullHost} />);
-    const sizes = new Set(
-      Array.from(container.querySelectorAll("svg.spark")).map(
-        (svg) => `${svg.getAttribute("width")}x${svg.getAttribute("height")}`,
-      ),
-    );
-    expect(sizes.size).toBe(1);
+    const heights = (selector: string) =>
+      new Set(
+        Array.from(container.querySelectorAll(`${selector} svg.spark`)).map(
+          (svg) => Number(svg.getAttribute("height")),
+        ),
+      );
+    const lead = heights(".sm.lead");
+    const small = heights(".sm:not(.lead)");
+    expect(lead.size).toBe(1);
+    // A panel's own height is 112; small multiples, where drawn, keep it
+    expect(small.size).toBeLessThanOrEqual(1);
+    expect([...lead][0]).toBeGreaterThan(112);
   });
 
   // A tier that carries some of a panel's columns and not others still
@@ -298,7 +309,7 @@ describe("Graphs", () => {
     render(<Graphs host={sparseHost} />);
 
     const panel = screen.getByRole("region", {
-      name: /Load averages(, not collected| chart)/,
+      name: /^Load(, not collected| chart)/,
     });
     expect(panel).toBeInTheDocument();
   });
@@ -331,47 +342,15 @@ describe("Graphs", () => {
       ],
     });
     render(<Graphs host={fullHost} agent={agent} />);
-    const panel = screen.getByRole("region", {
-      name: /Hub connect failures chart/,
-    });
-    expect(panel).toHaveTextContent("1");
-    expect(panel).not.toHaveTextContent("4002");
+    // A ledger row now: its Now is the last bucket's increase
+    const row = screen.getByText("Hub connect failures").closest("tr")!;
+    expect(within(row).getAllByRole("cell")[1]).toHaveTextContent(/^1$/);
+    expect(row).not.toHaveTextContent("4002");
   });
 
   it("carries no range control of its own — the header's drives every panel", () => {
     render(<Graphs host={fullHost} />);
     expect(screen.queryByRole("group")).toBeNull();
-  });
-
-  it("keeps one panel per metric when a family has many series", () => {
-    const diskIo = response({
-      family: "disk_io",
-      key_columns: ["device"],
-      columns: [
-        "read_bytes",
-        "write_bytes",
-        "io_util_pct",
-        "r_await_ms",
-        "w_await_ms",
-      ],
-      series: [
-        {
-          key: { device: "sda" },
-          points: [[1_754_784_000_000, 1000, 2000, 4, 1, 2]],
-        },
-        {
-          key: { device: "sdb" },
-          points: [[1_754_784_000_000, 10, 20, 1, 3, 4]],
-        },
-      ],
-    });
-    render(<Graphs host={fullHost} diskIo={diskIo} />);
-    expect(
-      screen.getAllByRole("region", { name: /Disk throughput chart/ }),
-    ).toHaveLength(1);
-    // One band per device, named by device, inside that single panel.
-    expect(screen.getByText("sda read")).toBeInTheDocument();
-    expect(screen.getByText("sdb write")).toBeInTheDocument();
   });
 
   // A notice is about the RESPONSE, not about any one chart. Repeated under
@@ -493,8 +472,8 @@ describe("a cross-source panel with an empty foreign family", () => {
       {
         key: {},
         points: [
-          [1_754_784_000_000, 1.4, 0.05, 0.03, 1.1],
-          [1_754_784_060_000, 1.5, 0.04, 0.02, 1.2],
+          [1_786_320_000_000, 1.4, 0.05, 0.03, 1.1],
+          [1_786_320_060_000, 1.5, 0.04, 0.02, 1.2],
         ],
       },
     ],
@@ -507,25 +486,20 @@ describe("a cross-source panel with an empty foreign family", () => {
     series: [],
   });
 
-  it("draws its own bands instead of throwing", () => {
+  it("draws its own series instead of throwing", () => {
     render(<NetworkGraphs host={fragHost} hostSnmp={emptySnmp} />);
 
-    const panel = screen.getByRole("region", {
-      name: "IP fragmentation chart",
-    });
-    expect(panel).toBeInTheDocument();
-    // The four host_samples bands are there...
-    expect(within(panel).getByText("reasm reqd")).toBeInTheDocument();
-    expect(within(panel).getByText("frag create")).toBeInTheDocument();
+    // The four host_samples series are ledger rows...
+    expect(
+      screen.getByText("IP fragmentation · reasm reqd"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("IP fragmentation · frag create"),
+    ).toBeInTheDocument();
     // ...and the two that had no series to read are absent rather than drawn
     // as a flat zero the host never reported.
-    expect(within(panel).queryByText("reasm ok")).not.toBeInTheDocument();
-  });
-
-  it("does not report the panel as uncollected when it has bands", () => {
-    render(<NetworkGraphs host={fragHost} hostSnmp={emptySnmp} />);
     expect(
-      screen.queryByRole("region", { name: "IP fragmentation, not collected" }),
+      screen.queryByText("IP fragmentation · reasm ok"),
     ).not.toBeInTheDocument();
   });
 
@@ -533,65 +507,100 @@ describe("a cross-source panel with an empty foreign family", () => {
   // that answered empty, and must not throw either.
   it("tolerates the foreign family being absent entirely", () => {
     render(<NetworkGraphs host={fragHost} />);
-    const panel = screen.getByRole("region", {
-      name: "IP fragmentation chart",
-    });
-    expect(within(panel).getByText("reasm reqd")).toBeInTheDocument();
+    expect(
+      screen.getByText("IP fragmentation · reasm reqd"),
+    ).toBeInTheDocument();
   });
 });
 
 // The tab passes each spec's own sentence through, and the specs that have
 // none stay bare. Both halves matter: a glyph on every panel is the same as a
 // glyph on none.
+// "Loading" and "not collected" were the same panel: a family the page had
+// not been answered for yet read as one the host never collected.
+describe("a family that has not arrived", () => {
+  it("is loading while the tab's first answer is outstanding", () => {
+    const { container } = render(<SystemGraphs host={null} pending />);
+    expect(
+      screen.getByRole("region", { name: "Load, loading" }),
+    ).toHaveTextContent("Asking the hub for this window.");
+    expect(screen.queryByText(/Not collected/)).toBeNull();
+    // The ledger says the same in its rows
+    expect(
+      within(container.querySelector(".ledger") as HTMLElement).getAllByText(
+        "Asking the hub for this window.",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("is not read once the answer came without it", () => {
+    render(<SystemGraphs host={null} />);
+    expect(
+      screen.getByRole("region", { name: "Load, not collected" }),
+    ).toHaveTextContent("No data has been read for this family yet.");
+  });
+});
+
 describe("panel explanations", () => {
   it("carries a spec's text to its panel", () => {
-    render(<StorageGraphs filesystem={null} diskIo={null} />);
+    render(<SystemGraphs host={null} />);
 
     expect(
-      screen.getByRole("button", { name: "About Disk utilisation" }),
+      screen.getByRole("button", { name: "About Load" }),
     ).toBeInTheDocument();
   });
 
   it("leaves a spec without one bare", () => {
-    render(<StorageGraphs filesystem={null} diskIo={null} />);
+    render(<SystemGraphs host={null} />);
 
     expect(
-      screen.queryByRole("button", { name: "About Disk throughput" }),
+      screen.queryByRole("button", { name: "About Memory" }),
     ).not.toBeInTheDocument();
   });
 });
 
-// Filesystem usage is pinned 0-100 and shaded anyway (PanelSpec.filled): the
-// pinned 0 is an empty disk, and its two auto-scaled siblings on the same tab
-// are filled, so a bare line beside them read as a different kind of chart.
-describe("the Filesystem usage panel", () => {
-  const filesystem = response({
-    family: "filesystem",
-    columns: ["used", "free"],
-    series: [
-      {
-        key: { mount: "/" },
-        points: [
-          [1_786_320_000_000, 41, 59],
-          [1_786_320_060_000, 44, 56],
-        ],
-      },
-      {
-        key: { mount: "/var" },
-        points: [
-          [1_786_320_000_000, 88, 12],
-          [1_786_320_060_000, 91, 9],
-        ],
-      },
-    ],
+describe("event markers", () => {
+  const at = Date.parse("2026-08-10T00:30:00Z");
+
+  it("are drawn on the lead charts of a tab and nowhere else", () => {
+    // Given a host with load and context switches, and one event in the window
+    const { container } = render(
+      <SystemGraphs
+        host={fullHost}
+        events={[{ at, severity: "warning", label: "load high" }]}
+      />,
+    );
+
+    // Then Load, a lead chart, carries it, and the ledger's trends -- context
+    // switches among them -- do not
+    const load = screen.getByRole("region", { name: "Load chart" });
+    expect(load.querySelectorAll("[data-marker]")).toHaveLength(1);
+    const ledger = container.querySelector(".ledger")!;
+    expect(within(ledger as HTMLElement).getByText("Context switches"));
+    expect(ledger.querySelectorAll("[data-marker]")).toHaveLength(0);
   });
 
-  it("fills every mount's line despite the pinned floor", () => {
-    render(<StorageGraphs filesystem={filesystem} diskIo={null} />);
-
-    const panel = screen.getByRole("region", {
-      name: "Filesystem usage chart",
-    });
-    expect(panel.querySelectorAll("svg [data-area]").length).toBe(2);
+  it("are the page's events, in the event log's words", () => {
+    const base = {
+      host_id: 7,
+      hostname: "kessel",
+      type: "unit_failed",
+      detail: null,
+    };
+    const events = timedEvents([
+      {
+        ...base,
+        id: "e:1",
+        ts: "2026-08-10T00:30:00Z",
+        subject: "nginx.service",
+        severity: "critical",
+      },
+      // An unreadable timestamp has no place on a time axis
+      { ...base, id: "e:2", ts: "not a time", subject: "x", severity: "info" },
+    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ at, severity: "critical" });
+    expect(events[0]!.label).toMatch(/nginx/);
+    expect(timedEvents(null)).toEqual([]);
   });
 });

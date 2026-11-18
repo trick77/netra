@@ -12,22 +12,15 @@ import {
   seriesTimestamps,
   sumSeries,
 } from "../../lib/metrics";
-import {
-  ABSENT,
-  binaryBytes,
-  bytes,
-  duration,
-  percent,
-} from "../../lib/format";
+import { ABSENT, binaryBytes, bytes, percent } from "../../lib/format";
 import { type Band } from "../../ui/charts/ChartPanel";
-import { DOWN_SHADES, UP_SHADES } from "../../ui/charts/UpDownSparkline";
 import {
   CPU_STATE_COLORS,
   filesystemBands,
   memoryBands,
-  perCoreBands,
 } from "../../lib/bands";
-import { SWEPT_FILL_OPACITY } from "../../ui/charts/size";
+import { SOFT_STACK_FILL } from "../../ui/charts/size";
+import { trendColor } from "../../ui/Meter";
 
 /** See Overview.tsx for why every column lookup on these pages is
  * optional: column() throws during render for a column the answering tier
@@ -69,11 +62,14 @@ function booleanValues(
   return seriesOnGrid(res, mapped, seriesTimestamps(res, seriesIndex));
 }
 
-// Colours are token references (index.css owns the palette); the series
-// index wraps so a family with many devices still never names a hue here.
-// Eight, not four. The throughput panel draws two series per interface, so
-// four wrapped after the second one and bond0 and enp1s0f1 came out the same
-// colour in the same chart.
+// The categorical walk, for panels whose series are parts with a legend.
+// Token references; index.css owns the palette, and the index wraps.
+//
+// Six, not eight. --s7 and --s8 fail the palette validator as a pair (dE 4.8
+// for a deuteranope, 10.6 for normal vision) and both sit in the warm band
+// reserved for the accent and the status hues, so a seventh line in amber
+// read as a warning. A panel that needs more than six identities is better
+// as rows than as hues.
 const SERIES_VARS = [
   "var(--s1)",
   "var(--s2)",
@@ -81,9 +77,21 @@ const SERIES_VARS = [
   "var(--s4)",
   "var(--s5)",
   "var(--s6)",
-  "var(--s7)",
-  "var(--s8)",
 ];
+
+/**
+ * A lone series with no judgement behind it -- a rate, a count, a duration --
+ * draws in ink. A hue says "this is one of several" or "this is a state";
+ * a single interrupts line is neither, and the walk's first blue made every
+ * one-line panel look like the start of a legend.
+ */
+const LONE_SERIES = "var(--ink-2)";
+
+/** A direction pair -- in and out, read and write -- in the fleet's two
+ * traffic greys, light above the midline and dark below. Never green and
+ * amber: those are status hues. */
+const TRAFFIC_IN = "var(--traffic-in)";
+const TRAFFIC_OUT = "var(--traffic-out)";
 
 type Source =
   | "host"
@@ -366,21 +374,6 @@ interface PanelSpec {
    */
   fill?: number;
   /**
-   * Colours for a keyed spec whose hue carries DIRECTION and whose series are
-   * told apart by a step within it: outer index positional against `bases`,
-   * inner index walked per series, wrapping.
-   *
-   * `colors` cannot express this -- it is one hue per base, so every
-   * interface would draw in the same green -- and the SERIES_VARS walk cannot
-   * either, because it hands each band whatever hue its position lands on and
-   * loses the in/out pairing the mirror exists to show. Traffic is the case:
-   * see the spec, and index.css for the ladder itself.
-   *
-   * Takes precedence over `colors`; a spec setting both means the narrower
-   * statement wins.
-   */
-  shades?: string[][];
-  /**
    * Build this panel's bands with a shared helper instead of the base loop.
    *
    * For the charts a fleet row draws, the bands are not "one column per
@@ -392,7 +385,11 @@ interface PanelSpec {
    * whatever that function returns"; `bases` is then what the family lookup
    * and the missing-column message read, and nothing else.
    */
-  bands?: (res: MetricsResponse) => Band[];
+  bands?: (
+    res: MetricsResponse,
+    /** The other families this spec's bases name -- see BandOptions.extra. */
+    extra: Partial<Record<Source, MetricsResponse | null>>,
+  ) => Band[];
   /**
    * A ceiling read from the data rather than fixed, drawn as BOTH the scale
    * and a dashed reference rule.
@@ -405,6 +402,19 @@ interface PanelSpec {
    * so the same number is also the rule.
    */
   ceiling?: (res: MetricsResponse) => number | null;
+  /**
+   * Draw the host's thread count as a dashed rule and scale to whichever is
+   * higher, it or the data. For load, which reads against the number of
+   * CPUs rather than against 1.0. The count comes from the host record, not
+   * from the metrics, so the page hands it over (GraphsProps.threads).
+   */
+  threadsRule?: boolean;
+  /**
+   * A lead chart of its tab: one of the few a reader opens the tab for, and
+   * the ones that carry the window's events as markers. The rest are detail,
+   * where twenty copies of the same marker would be noise.
+   */
+  lead?: boolean;
 }
 
 /**
@@ -475,37 +485,96 @@ function millis(n: number | null): string {
   return String(Number(n.toPrecision(2)));
 }
 
+/**
+ * The CPU lead chart: the host's total, judged, and its busiest core.
+ *
+ * The total is cpu_total off the host family, mean as the line and the
+ * bucket's peak as the envelope wherever the tier carries one. Its colour is
+ * the reading's severity -- trendColor, the same call the fleet cell and the
+ * overview reading make -- so the panel cannot draw a healthy CPU in one ink
+ * and the tile beside it in another.
+ *
+ * The busiest core is the per-bucket maximum over every core's busy, the
+ * reading a mean hides: one core pinned while thirty-one idle averages to 3%.
+ * Placed on the host family's grid, like any foreign band, so the two lines
+ * cannot disagree about when a bucket was. Its envelope is the max of the
+ * cores' own peaks, where the tier has them.
+ */
+export function cpuLeadBands(
+  host: MetricsResponse,
+  cores: MetricsResponse | null | undefined,
+): Band[] {
+  const bands: Band[] = [];
+  const total = griddedValues(host, 0, "cpu_total");
+  if (total.length > 0) {
+    const peak = peakBase(host, "cpu_total");
+    const envelope =
+      peak !== meanBase(host, "cpu_total") ? griddedValues(host, 0, peak) : [];
+    bands.push({
+      name: "total",
+      color: trendColor(lastKnown(total)),
+      values: total,
+      ...(envelope.length > 0 ? { band: envelope } : {}),
+    });
+  }
+  if (cores && cores.series.length > 0 && host.series.length > 0) {
+    const onGrid = (i: number, column: string) => {
+      const values = optionalValues(cores, i, column);
+      return values.length === 0
+        ? []
+        : seriesOnGrid(host, values, seriesTimestamps(cores, i));
+    };
+    const peak = peakBase(cores, "busy");
+    const banded = peak !== meanBase(cores, "busy");
+    const busiest = maxAcross(cores.series.map((_, i) => onGrid(i, "busy")));
+    const envelope = banded
+      ? maxAcross(cores.series.map((_, i) => onGrid(i, peak)))
+      : [];
+    if (busiest.some((v) => v !== null)) {
+      bands.push({
+        name: "busiest core",
+        color: "var(--ink-3)",
+        values: busiest,
+        ...(envelope.length > 0 ? { band: envelope } : {}),
+      });
+    }
+  }
+  return bands;
+}
+
+/** Per bucket, the largest reading among the series; null where none read. */
+function maxAcross(series: (number | null)[][]): (number | null)[] {
+  const width = series.reduce((n, s) => Math.max(n, s.length), 0);
+  const out: (number | null)[] = new Array(width).fill(null);
+  for (const s of series) {
+    s.forEach((v, j) => {
+      if (v !== null && (out[j] === null || v > (out[j] as number))) out[j] = v;
+    });
+  }
+  return out;
+}
+
 export const SYSTEM: PanelSpec[] = [
-  // The fleet row's CPU cell, on a page.
-  //
-  // Normalised, like the cell and unlike "CPU cores" below: each core is
-  // divided by the core count, so the top of the stack is cpu_total and 100
-  // is a real ceiling. That is what makes a 4-core and a 32-core host
-  // comparable in one column, and redrawing the click unnormalised against a
-  // 0-3200 axis would change the very shape the reader pointed at. The
-  // unnormalised view answers a different question and keeps its own panel.
-  //
-  // On a host with more than MAX_PER_CORE threads the cell and the page do
-  // differ, deliberately: the fleet row will not fetch 128 series to draw a
-  // 150px chart, so it falls back to a single cpu_total band, while this page
-  // has the room and draws all 128. The SILHOUETTE is identical either way --
-  // a normalised per-core stack sums to cpu_total, which is exactly what that
-  // fallback band is -- so the shape the reader clicked is the shape they
-  // land on, with the cores it was made of underneath it. That is the page
-  // showing more, not the page showing something else.
+  // The fleet row's CPU reading, on a page: the host's total, which is the
+  // top edge of the per-core stack the fleet's dialog draws, plus the busiest
+  // core the total averages away. Which core, and when, is the heat strip
+  // under the lead charts. See cpuLeadBands.
   {
     title: "CPU",
     slug: "host-cpu",
+    lead: true,
     // No unit prop: fmt below already writes the percent sign, and
-    // ChartPanel prints `unit` whenever it is given, formatter or not (see
-    // the note there). The two together rendered "core 0 4.5% %" in the
-    // legend and the stats table -- the exact failure that note describes,
-    // in the one spec that still carried both.
-    source: "cpuCore",
-    bases: [{ base: "busy", label: "busy" }],
-    bands: (res) => perCoreBands(res, { normalise: true }),
+    // ChartPanel prints `unit` whenever it is given, formatter or not.
+    source: "host",
+    bases: [
+      { base: "cpu_total", label: "total" },
+      // Named so the page fetches the per-core family beside this one and
+      // the enlarged view asks for both. The builder reads it.
+      { base: "busy", label: "busiest core", source: "cpuCore" },
+    ],
+    bands: (res, extra) => cpuLeadBands(res, extra.cpuCore),
     max: 100,
-    stacked: true,
+    min: 0,
     fmt: (n) => (n === null ? ABSENT : `${count(n)}%`),
   },
   // The fleet row's Memory cell, on a page. Five bands against mem_total,
@@ -518,6 +587,7 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Memory",
     slug: "host-memory",
+    lead: true,
     source: "host",
     bases: [
       { base: "mem_used", label: "used" },
@@ -529,36 +599,18 @@ export const SYSTEM: PanelSpec[] = [
     fmt: (n) => binaryBytes(n),
     tickBase: 1024,
   },
-  // One band per logical CPU, each divided by the core count so the top of
-  // the stack is the mean -- cpu_total. Unnormalised, 32 cores at 50% would
-  // stack to 1600 against a ceiling of 100.
-  {
-    title: "CPU cores",
-    slug: "cpu-cores",
-    about:
-      "One band per logical CPU, each showing that core's own utilisation, so the stack runs to cores x 100 and has no axis. The CPU panel is the same data normalised to a 0-100 mean, where a single core pinned while the rest idle averages away.",
-    source: "cpuCore",
-    bases: [{ base: "busy", label: "busy" }],
-    // The SAME builder the CPU panel above uses, unnormalised. Spelling it
-    // out matters: with no `bands` this spec fell through to the generic
-    // per-index walk through SERIES_VARS, so the two per-core stacks on one
-    // page were coloured by two different mechanisms -- eight rotating
-    // series hues here, the swept per-core palette there. They are one
-    // chart at two scalings and now they say so.
-    bands: (res) => perCoreBands(res),
-    stacked: true,
-    // No ceiling and no axis: each band is one core's real utilisation, so
-    // the stack runs to cores x 100. Every number a reader sees is the
-    // number that core reported, which is the point of this panel.
-    hideAxis: true,
-    fmt: (n) => (n === null ? ABSENT : `${count(n)}%`),
-  },
+  // There is no "CPU cores" stack any more: the per-core heat strip under the
+  // lead charts draws every core in one ink, brighter when busier. A hue per
+  // core recoloured every band when the count changed and had no legend
+  // above six. Its links resolve to CPU (router.ts RETIRED_SLUGS).
+  //
   // The states partition busy time, so they stack honestly. They used to
   // exist only in the raw table and vanish above an hour; they reach the 5m
   // and 1h rollups now.
   {
     title: "CPU time breakdown",
     slug: "cpu-time-breakdown",
+    lead: true,
     about:
       "Where busy CPU time went. iowait is time blocked on disk and steal is time the hypervisor gave to someone else: in both the CPU was ready and something else held it up.",
     source: "host",
@@ -568,14 +620,11 @@ export const SYSTEM: PanelSpec[] = [
       { base: "cpu_iowait", label: "iowait" },
       { base: "cpu_steal", label: "steal" },
     ],
-    // The same treatment the per-core stack above gets, which is the point:
-    // the two sit in one group and were coloured by two unrelated mechanisms
-    // -- a swept hue family at 45% fill there, four separately tuned opaque
-    // hexes off the SERIES_VARS walk here. See CPU_STATE_COLORS in
-    // lib/bands.ts for why these are the s-token hues and not the literal
-    // four-way sweep.
+    // Parts of a whole with a legend, so hues -- soft, as every hue stack on
+    // this page is. See CPU_STATE_COLORS in lib/bands.ts for why these are
+    // the s-token hues.
     colors: CPU_STATE_COLORS,
-    fill: SWEPT_FILL_OPACITY,
+    fill: SOFT_STACK_FILL,
     max: 100,
     stacked: true,
     fmt: (n) => (n === null ? ABSENT : `${count(n)}%`),
@@ -606,24 +655,34 @@ export const SYSTEM: PanelSpec[] = [
     ],
     fmt: count,
   },
+  // The memory the kernel has pushed out to swap, in bytes. Nothing charted
+  // it before. Bytes and never "of N": swap_total is raw-only, so past an
+  // hour there is no total to set it against.
   {
-    title: "Uptime",
-    slug: "uptime",
+    title: "Swap used",
+    slug: "swap-used",
     source: "host",
-    bases: [{ base: "uptime_s", label: "uptime" }],
-    fmt: duration,
+    bases: [{ base: "swap_used", label: "swap used" }],
+    fmt: (n) => binaryBytes(n),
+    tickBase: 1024,
   },
+  // There is no Uptime chart: a rising diagonal said less than the figure in
+  // the page's header. Its links resolve to CPU (router.ts RETIRED_SLUGS).
+  //
+  // The 1-minute load against the machine's thread count, drawn as a rule.
+  // One line, not three: load5 and load15 exist only at the raw tier, so
+  // past an hour the panel lost two of its lines, and a mean of a 5-minute
+  // average says nothing the 1-minute mean and its peak do not.
   {
-    title: "Load averages",
+    title: "Load",
     slug: "load-averages",
+    lead: true,
     about:
-      "Processes runnable or stuck in uninterruptible sleep, averaged over 1, 5 and 15 minutes. Read it against the core count rather than against 1.0, and read the three together for the direction.",
+      "Processes runnable or stuck in uninterruptible sleep, the 1-minute average. The dashed rule is the thread count: above it, work is queueing for a CPU.",
     source: "host",
-    bases: [
-      { base: "load1", label: "1m" },
-      { base: "load5", label: "5m" },
-      { base: "load15", label: "15m" },
-    ],
+    bases: [{ base: "load1", label: "1 min" }],
+    threadsRule: true,
+    min: 0,
     fmt: count,
   },
   {
@@ -686,6 +745,7 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "Hub latency",
     slug: "hub-latency",
+    lead: true,
     about:
       "Handshake is the network path to the hub; round trip is the whole POST, TLS, the hub's own work and its database write included. The gap between the two is the hub, not the network.",
     unit: "ms",
@@ -748,11 +808,10 @@ export const NETWORK: PanelSpec[] = [
       { base: "rx_bytes", label: "in" },
       { base: "tx_bytes", label: "out" },
     ],
-    // Green above / orange below, one lightness step per interface. Direction
-    // is the strong read and the interface the weak one, which is the way
-    // round the fleet cell forces: it has two bands and no legend, and this
-    // panel must not re-hue the pair it was opened from. See PanelSpec.shades.
-    shades: [UP_SHADES, DOWN_SHADES],
+    // The fleet's traffic greys, light in above and dark out below. Green and
+    // amber are status hues and no longer double as directions; an interface
+    // is told from the next by its band edge and its legend name.
+    colors: [TRAFFIC_IN, TRAFFIC_OUT],
     mirrored: true,
     stacked: true,
     hideIdleSeries: true,
@@ -791,18 +850,18 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "Traffic",
     slug: "host-traffic-total",
+    lead: true,
     about:
-      "In and out for the whole host, every interface summed. Which link carried it is on the Network tab, where the same window is drawn one pair per interface.",
+      "In and out for the whole host, every interface summed. Which link carried it is the row per interface under this chart, on one shared scale.",
     unit: "B/s",
     source: "net",
     bases: [
       { base: "rx_bytes", label: "in" },
       { base: "tx_bytes", label: "out" },
     ],
-    // One band per direction, so the first shade of each ladder rather than
-    // the whole ladder: the pair must be the hue the fleet cell and the
-    // per-interface panel already use for in and out.
-    shades: [[UP_SHADES[0]], [DOWN_SHADES[0]]],
+    // The pair the fleet cell draws, so following the row to this panel
+    // lands on the same two greys.
+    colors: [TRAFFIC_IN, TRAFFIC_OUT],
     mirrored: true,
     // NOT stacked. There is one band per direction to stack.
     summed: true,
@@ -840,28 +899,55 @@ export const NETWORK: PanelSpec[] = [
     ],
     fmt: count,
   },
+  // Retransmits on their own lead chart: the one TCP rate a reader opens the
+  // tab to look at, and it read as one line of three on a shared axis.
+  {
+    title: "TCP retransmits",
+    slug: "tcp-retransmits",
+    lead: true,
+    about:
+      "Segments TCP had to send again. Read the rate against TCP segments: it only means something as a fraction of the traffic carrying it.",
+    unit: "/s",
+    source: "host",
+    bases: [{ base: "tcp_retrans_segs_per_s", label: "retransmits" }],
+    min: 0,
+    fmt: count,
+  },
   {
     title: "TCP statistics",
     slug: "tcp-statistics",
     about:
-      "Retransmits, malformed inbound segments, and resets this host sent. Read the retransmit rate against TCP segments - it only means something as a fraction of the traffic carrying it.",
+      "Malformed inbound segments, and resets this host sent. Retransmits have their own chart above.",
     unit: "/s",
     source: "host",
     bases: [
-      { base: "tcp_retrans_segs_per_s", label: "retransmits" },
       { base: "tcp_in_errs_per_s", label: "in errors" },
       { base: "tcp_out_rsts_per_s", label: "resets out" },
     ],
     fmt: count,
   },
+  // Established alone: a level, the sockets open right now. It shared an
+  // axis with three per-second rates, which put a count of 263 and a rate of
+  // 0.4 on one scale; the rates are rows in the ledger now.
   {
     title: "TCP connections",
     slug: "tcp-connections",
+    lead: true,
     about:
-      "Established is a level: sockets open right now. The other three are rates - connections this host opened, connections it accepted, and connection attempts that failed.",
+      "Sockets in the established state right now. The rates at which connections are opened, accepted and fail are in the protocol counters below.",
+    source: "host",
+    bases: [{ base: "tcp_curr_estab", label: "established" }],
+    min: 0,
+    fmt: count,
+  },
+  {
+    title: "TCP connection rates",
+    slug: "tcp-connection-rates",
+    about:
+      "Connections this host opened, connections it accepted, and connection attempts that failed, per second.",
+    unit: "/s",
     source: "host",
     bases: [
-      { base: "tcp_curr_estab", label: "established" },
       { base: "tcp_active_opens_per_s", label: "active opens" },
       { base: "tcp_passive_opens_per_s", label: "passive opens" },
       { base: "tcp_attempt_fails_per_s", label: "attempt fails" },
@@ -1201,31 +1287,9 @@ export const STORAGE: PanelSpec[] = [
     ],
     fmt: count,
   },
-  {
-    title: "Filesystem space",
-    slug: "filesystem-space",
-    unit: "B",
-    source: "filesystem",
-    bases: [
-      { base: "used", label: "used" },
-      { base: "free", label: "free" },
-    ],
-    fmt: bytes,
-  },
-  {
-    // Inode exhaustion presents as "disk full" with free space showing,
-    // and nothing else in this UI would explain it (spec §10).
-    title: "Filesystem inodes",
-    slug: "filesystem-inodes",
-    about:
-      "Inodes are the per-file slots, and a filesystem can run out of them with space to spare. The error a program gets is the one it gets for a full disk.",
-    source: "filesystem",
-    bases: [
-      { base: "inodes_used", label: "used" },
-      { base: "inodes_total", label: "total" },
-    ],
-    fmt: count,
-  },
+  // No Filesystem space or Filesystem inodes panels: the Filesystems table
+  // carries what is left and the inode figure on each mount's row, beside
+  // the Use% trend. Their links resolve to Filesystem usage (router.ts).
 ];
 export interface BandOptions {
   /**
@@ -1268,7 +1332,7 @@ function bandsFor(
   // the page draws exactly what the fleet cell draws, and the way to
   // guarantee that is to call the same function rather than to reproduce it
   // here and keep the two in step by hand.
-  if (spec.bands) return spec.bands(res);
+  if (spec.bands) return spec.bands(res, opts.extra ?? {});
   const keyed = res.key_columns.length > 0;
   const bands: Band[] = [];
 
@@ -1419,7 +1483,7 @@ function bandsFor(
     };
   };
 
-  ordered.forEach(({ prefix, read }, passIndex) => {
+  ordered.forEach(({ prefix, read }) => {
     // This pass's own bands, appended to `bands` only once the pass is
     // complete. A mirrored stack reads its halves off band POSITION -- even
     // is up, odd is down -- so a pass that contributed one band of its pair
@@ -1522,11 +1586,10 @@ function bandsFor(
         name: prefix ? `${prefix} ${label}` : label,
         // Indexed by BASE when the spec pins its colours, not by how many
         // bands happen to have been pushed: a spec that names its hues is
-        // saying "in is green", and reading the running count instead would
+        // saying "in is light", and reading the running count instead would
         // hand the second interface of a keyed spec the wrong end of the
         // pair.
         color:
-          shadeFor(spec, baseIndex, passIndex) ??
           spec.colors?.[baseIndex] ??
           SERIES_VARS[(bands.length + pass.length) % SERIES_VARS.length],
         values,
@@ -1539,6 +1602,11 @@ function bandsFor(
     bands.push(...pass);
   });
 
+  // One band from the walk is a lone, unjudged reading: ink, not the walk's
+  // first hue. A spec that names its colours keeps them.
+  if (bands.length === 1 && spec.colors === undefined) {
+    return [{ ...bands[0]!, color: LONE_SERIES }];
+  }
   return bands;
 }
 
@@ -1605,17 +1673,6 @@ function worstOf(
   return gapped ? -Infinity : worst;
 }
 
-/** The base's hue at this series' step, or undefined for a spec with none. */
-function shadeFor(
-  spec: PanelSpec,
-  baseIndex: number,
-  passIndex: number,
-): string | undefined {
-  const ladder = spec.shades?.[baseIndex];
-  if (ladder === undefined || ladder.length === 0) return undefined;
-  return ladder[passIndex % ladder.length];
-}
-
 // Names the columns this tier is missing, because "not collected" without a
 // reason is indistinguishable from a bug -- and the usual reason here is
 // recoverable by the reader: most per-state columns exist only at full
@@ -1670,6 +1727,14 @@ export const ALL_SPECS: readonly PanelSpec[] = [
 export interface PanelGroup {
   title: string;
   specs: PanelSpec[];
+  /**
+   * How the group is drawn: "lead" as a few large charts with markers and a
+   * shared cursor, "ledger" as one table row per series -- name, now, mean,
+   * peak and a small trend; "pairs" as one row per in/out pair -- an
+   * interface -- on one shared scale; "filesystems" and "drives" as the
+   * Storage tab's tables (tabs/Storage.tsx). Panels otherwise.
+   */
+  form?: "lead" | "ledger" | "pairs" | "filesystems" | "drives";
 }
 
 /**
@@ -1695,29 +1760,35 @@ export interface PanelGroup {
  * group on the grounds that it balanced the panel counts, which is not an
  * argument: fragmentation and reassembly happen at IP and UDP sits on top.
  */
-const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
+const GROUP_SLUGS: Record<
+  string,
+  { title: string; slugs: string[]; form?: PanelGroup["form"] }[]
+> = {
+  // Four charts a reader opens the tab for, then every other system series
+  // as a ledger row: one figure and one trend each, which is the fleet
+  // page's idea applied to metrics. Twelve equal panels made the four that
+  // matter as small as the eight that rarely move.
   system: [
     {
       title: "Resources",
-      slugs: [
-        "host-cpu",
-        "host-memory",
-        "cpu-cores",
-        "cpu-time-breakdown",
-        "memory-pressure",
-        "uptime",
-      ],
+      form: "lead",
+      slugs: ["host-cpu", "host-memory", "load-averages", "cpu-time-breakdown"],
     },
     {
       title: "Kernel",
+      form: "ledger",
       slugs: [
-        "load-averages",
         "context-switches",
         "interrupts",
         "running-processes",
         "total-processes",
         "users-logged-in",
       ],
+    },
+    {
+      title: "Memory pressure",
+      form: "ledger",
+      slugs: ["memory-pressure", "swap-used"],
     },
   ],
   // The agent's own health. It sat under System, because it is a fact about
@@ -1728,56 +1799,78 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
   // list without the charts cannot say whether a collector has been failing
   // all day; the charts without the list cannot name a collector that never
   // started. Together they are a tab.
-  collectors: [
+  agent: [
+    { title: "Hub", form: "lead", slugs: ["hub-latency"] },
     {
       title: "Agent",
-      slugs: ["hub-latency", "hub-connect-failures", "scrape-duration"],
+      form: "ledger",
+      slugs: ["scrape-duration", "hub-connect-failures"],
     },
   ],
+  // Traffic for the whole host, then a row per interface on one scale, the
+  // two TCP charts worth a chart, and every other counter as a ledger row
+  // with the ones that stayed at zero folded. Fourteen panels became three
+  // charts and a table that keeps every series.
   network: [
-    {
-      title: "Traffic",
-      slugs: ["host-traffic", "interface-errors"],
-    },
+    { title: "Traffic", form: "lead", slugs: ["host-traffic-total"] },
+    { title: "By interface", form: "pairs", slugs: ["host-traffic"] },
     {
       title: "TCP",
+      form: "lead",
+      slugs: ["tcp-connections", "tcp-retransmits"],
+    },
+    {
+      title: "Interface errors",
+      form: "ledger",
+      slugs: ["interface-errors"],
+    },
+    {
+      title: "TCP counters",
+      form: "ledger",
       slugs: [
         "tcp-statistics",
-        "tcp-connections",
+        "tcp-connection-rates",
         "tcp-segments",
         "tcp-listen-queue",
       ],
     },
     {
       title: "UDP",
+      form: "ledger",
       slugs: ["udp-statistics", "udp6-statistics", "udp-datagrams"],
     },
     {
       title: "IP",
+      form: "ledger",
       slugs: ["ip-statistics", "ip-fragmentation", "ip6-fragmentation"],
     },
-    { title: "ICMP", slugs: ["icmp-statistics", "icmp-informational"] },
-  ],
-  storage: [
     {
-      title: "Filesystems",
-      slugs: ["host-filesystem", "filesystem-space", "filesystem-inodes"],
+      title: "ICMP",
+      form: "ledger",
+      slugs: ["icmp-statistics", "icmp-informational"],
     },
+  ],
+  // A row per mount, then a row per drive. Filesystem usage is the trend on
+  // each mount's row; the four disk specs are the columns of each drive's.
+  storage: [
+    { title: "Filesystems", form: "filesystems", slugs: ["host-filesystem"] },
     {
-      title: "Disks",
+      title: "Drives",
+      form: "drives",
       slugs: [
         "disk-throughput",
-        "disk-operations",
-        "disk-latency",
         "disk-utilisation",
+        "disk-latency",
+        "disk-operations",
       ],
     },
   ],
 };
 
 function resolveGroups(key: string): PanelGroup[] {
-  return GROUP_SLUGS[key].map(({ title, slugs }) => ({
+  return GROUP_SLUGS[key].map(({ title, slugs, form }) => ({
     title,
+    ...(form !== undefined ? { form } : {}),
     specs: slugs.map((slug) => {
       const spec = specForSlug(slug);
       if (spec === undefined) {
@@ -1791,7 +1884,7 @@ function resolveGroups(key: string): PanelGroup[] {
 }
 
 export const SYSTEM_GROUPS: PanelGroup[] = resolveGroups("system");
-export const COLLECTOR_GROUPS: PanelGroup[] = resolveGroups("collectors");
+export const AGENT_GROUPS: PanelGroup[] = resolveGroups("agent");
 export const NETWORK_GROUPS: PanelGroup[] = resolveGroups("network");
 export const STORAGE_GROUPS: PanelGroup[] = resolveGroups("storage");
 
@@ -1804,13 +1897,11 @@ export const STORAGE_GROUPS: PanelGroup[] = resolveGroups("storage");
  * deliberately outside the groups has to say so here, in one place a reader
  * can check, instead of the check being loosened to let any orphan through.
  *
- * host-traffic-total is the Overview's summed in/out pair. It cannot join the
- * Network group: that tab draws host-traffic over the same two columns per
- * interface, and two panels titled "Traffic" on one tab, differing only in
- * whether they added the interfaces up, is exactly the confusion that panel's
- * own comment records being removed once already.
+ * Empty now: host-traffic-total, the Overview's summed pair, is also the
+ * Network tab's lead chart, with the per-interface pairs as rows under it
+ * rather than as a second "Traffic" chart.
  */
-export const UNGROUPED_SLUGS: readonly string[] = ["host-traffic-total"];
+export const UNGROUPED_SLUGS: readonly string[] = [];
 
 /**
  * Every slug that appears in some group, for the test that pairs with
@@ -1820,7 +1911,7 @@ export const UNGROUPED_SLUGS: readonly string[] = ["host-traffic-total"];
 export function groupedSlugs(): string[] {
   return [
     ...SYSTEM_GROUPS,
-    ...COLLECTOR_GROUPS,
+    ...AGENT_GROUPS,
     ...NETWORK_GROUPS,
     ...STORAGE_GROUPS,
   ].flatMap((g) => g.specs.map((s) => s.slug));

@@ -324,71 +324,13 @@
   --mem-arc: #2b7e7e;
   --mem-buffers: #2f5c7d;
   --mem-cached: #3d3a37;
-  /* Traffic's in/out pair, one step lighter per interface.
-
-     The per-interface Traffic panel stacks in above the midline and out
-     below it, and its colour has to answer TWO questions at once: which way
-     is this going, and which link carried it. Direction wins, because the
-     fleet row cell, the host overview card and this panel are the same fact
-     at three sizes and the cell has only two bands to spend on it -- a panel
-     that re-hued them per interface would be a different chart on click.
-     So the hue stays in-1 above / out-1 below and the interface is a
-     LIGHTNESS step within it. Index 0 is in-1/out-1 exactly, which is what
-     makes a one-NIC host draw the cell's own pair.
-
-     Three steps, not eight: the fourth interface on a box is rare, the steps
-     have to stay apart at a 112px panel, and a fifth would land on the
-     background. The walk wraps rather than growing -- a host with five
-     reportable NICs repeats a shade and the legend, which that panel always
-     carries, is what tells them apart. */
-  /* The traffic pair is the status palette's own two hues: --st-ok #0ca30c
-     for in, --st-warn #fab219 for out. It was RRDtool's pair, sampled out of
-     the operator's Observium graphs (#aeca4f / #9596de) so a host read the
-     same in both tools; that match is deliberately given up here. The
-     argument that won is the nearer one -- the colours on the SCREEN the
-     reader is on. The old pair matched nothing else in netra, and a traffic
-     cell drawn in two hues that appear in no other column read as a foreign
-     object in the row.
-
-     This is a knowing exception to the 0-41 degree rule above, and a bigger
-     one than --mem-used: both of these are full-brightness status hues, not
-     a dimmed cousin, and the out band carries --st-warn permanently rather
-     than on a state change. What makes it survivable is that severity on the
-     fleet row is never carried by this cell -- the rail, the dot and the
-     word all sit to the LEFT of it, and the traffic cell has no severity of
-     its own to confuse them with. A reader who learns "orange here is
-     outbound bytes" learns it once, in the one column that has no state.
-     The fleet list no longer draws this pair: it uses --traffic-in/-out
-     below, and only the host page's traffic panels keep these hues.
-
-     Used exactly as named, and NOT compensated for the fill.
-
-     A mirrored area is filled at MIRROR_FILL_OPACITY over --surface, so what
-     reaches the eye is 45 % of the way from #1b1b1a to the token: these
-     render as #145814 and #7f5f1a, duller than the swatch they come from.
-     Brightening the tokens to compensate was tried and reverted -- on a dark
-     ground with nothing behind the band, "translucent" IS "dimmer", so
-     pushing the token toward white makes the band read as SOLID, which is
-     the opposite of what was wanted.
-
-     Keeping the status values exactly means the token names the status
-     colour honestly, and the fill weight is the one dial left to turn. */
-  --in-1: #0ca30c;
-  --in-2: #42b742;
-  --in-3: #78cc78;
-  --in-4: #aee0ae;
-  --out-1: #fab219;
-  --out-2: #fbc34c;
-  --out-3: #fcd47f;
-  --out-4: #fde5b2;
-  /* The fleet's traffic pair: two greys, light for in and darker for out.
-     The status pair above made the traffic cell the one saturated mark on a
-     healthy row once ok went neutral -- a permanent amber band beside amber
-     warnings that mean something. In the fleet list and the chart it
-     enlarges to, in and out are told apart by side of the midline and by
-     lightness; hue stays for state. The host page keeps the --in-N and
-     --out-N steps: its traffic panel stacks up to four interfaces per
-     direction, and four greys a side are not separable. Out is lifted well
+  /* The traffic pair, everywhere: two greys, light for in and darker for
+     out, and for read and write the same way. It was the status green and
+     amber, which made the traffic cell the one saturated mark on a healthy
+     row once ok went neutral -- a permanent amber band beside amber warnings
+     that mean something. In and out are told apart by side of the midline
+     and by lightness; hue stays for state. An interface or a drive is named
+     by its row or its legend, never by a shade of its own. Out is lifted well
      above --ink-3 so it survives MIRROR_FILL_OPACITY in the enlarged chart. */
   --traffic-in: #c7c4bb;
   --traffic-out: #85837c;
@@ -1779,6 +1721,128 @@ tbody tr:hover .host-cell-name {
   grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
   gap: var(--space-3);
 }
+/* A tab's lead charts: two a row and taller, the few the tab is opened for.
+   One a row below 760px, where two would be thumbnails again. */
+.sm.lead {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 760px) {
+  .sm.lead {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* A lead group of one -- a tab's traffic -- spans the row. */
+.sm.lead > :only-child {
+  grid-column: 1 / -1;
+}
+.pairrows .grouphead small {
+  margin-left: var(--space-2);
+  color: var(--ink-3);
+}
+.pairrows td,
+.pairrows th[scope="row"] {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.pairrows .chartwrap {
+  display: block;
+}
+/* The Storage tab's tables: a row per mount, a row per drive. */
+.fsname small,
+.driverows .grouphead small {
+  margin-left: var(--space-2);
+  color: var(--ink-3);
+  font-size: var(--text-micro);
+}
+.fstable td,
+.driverows td {
+  font-variant-numeric: tabular-nums;
+}
+/* A size and its unit on one line; the mount name is what wraps. */
+.fstable td:not(:first-child) {
+  white-space: nowrap;
+}
+.driverows th[scope="row"] {
+  vertical-align: top;
+  white-space: nowrap;
+}
+.drivename {
+  display: block;
+}
+/* Operations per second, one click from the drive: no chart on the tab. */
+.opslink {
+  font-size: var(--text-micro);
+  color: var(--accent);
+}
+/* Fixed layout: the three chart columns come out the same width whatever
+   their figures say, so the one width DriveRows measures (in the first
+   throughput cell) is every cell's width. Auto layout sized each column by
+   its longest figure and the charts overflowed the narrower two. */
+.driverows table {
+  table-layout: fixed;
+  width: 100%;
+}
+.driverows th[scope="col"]:first-child {
+  width: 16%;
+}
+.drivecell {
+  width: 28%;
+}
+.drivecell .fig {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drivecell .chartwrap {
+  display: block;
+}
+/* The per-core strip: every core a row of one ink, brighter where busier. */
+.percore .grouphead small {
+  margin-left: var(--space-2);
+  color: var(--ink-3);
+}
+.heatstrip {
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+}
+.heatstrip svg {
+  display: block;
+}
+/* The ledger: a row per series under the lead charts. Figures right-aligned
+   in tabular digits so a column of them reads down; the trend is a button
+   into the full chart. */
+.ledger {
+  margin-top: var(--space-5);
+}
+.ledger td {
+  font-variant-numeric: tabular-nums;
+}
+/* A figure and its unit on one line; the name is what wraps. */
+.ledger td:not(:first-child) {
+  white-space: nowrap;
+}
+.ledger .chartwrap {
+  display: block;
+}
+.ledger-note,
+.ledger-fold {
+  color: var(--muted);
+}
+.ledger-fold .linkbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
 /* The two Docker panels above the host's Containers list.
 
    NOT `.sm`. That grid is auto-fill minmax(292px) because it carries twenty
@@ -3129,111 +3193,26 @@ svg.spark {
   border-bottom: 0;
 }
 
-/* The host System card, shut: one line of identity and a Details link, in the
-   position the attention band would otherwise have.
-
-   .sysstrip below already took the eight facts from ~170px to ~115px by
-   writing them label-above-value. What was left was the frame — a card
-   header, a border, 16px of body padding top and bottom, a bottom margin —
-   which came to more than the facts it wrapped, spent on identity that is
-   read once and scrolled past. So the summary replaces the card header
-   outright and .sysstrip becomes what OPENS.
-
-   A bordered surface, not loose text, and that is load-bearing: on a host
-   with something wrong this block sits directly under the .attn band, and
-   without a ground of its own the two merge; on a healthy host nothing
-   precedes it and it is the first thing on the tab. */
-details.sysfold {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ui);
-  margin-bottom: var(--space-4);
-}
-/* list-style AND the -webkit- marker: the two together are what removes the
-   disclosure triangle across engines, the same pair .attn details > summary
-   uses. */
-details.sysfold > summary {
-  list-style: none;
-  cursor: pointer;
+/* The host's facts, one line under its name: read once when the page opens
+   and then scrolled past, so plain text with no frame. The separator is
+   drawn by the SECOND of a pair, so an omitted fact takes its dot with it. */
+.hostfacts {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0;
-  padding: 10px var(--space-4);
+  margin: 0 0 var(--space-4);
   font-size: var(--text-label);
-  color: var(--ink-2);
+  color: var(--muted);
 }
-details.sysfold > summary::-webkit-details-marker {
-  display: none;
-}
-/* The separator belongs to the gap between two facts, so it is drawn by the
-   SECOND of the pair — a first span has nothing to its left, and an omitted
-   fact (a VPS with no kernel) takes its dot with it rather than leaving a
-   run of them. Same reason the facts are written conditionally in
-   Overview.tsx rather than as `?? ABSENT`. */
-details.sysfold > summary span {
+.hostfacts span {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
-details.sysfold > summary span + span::before {
+.hostfacts span + span::before {
   content: "\00b7";
   color: var(--border-strong);
   margin: 0 var(--space-2);
-}
-/* The screen-reader label is a span, so without this the FIRST visible fact
-   is a second span and takes a separator dot with nothing to its left. The
-   rule above cannot know the difference; this one does. */
-details.sysfold > summary .sr-only + span::before {
-  content: none;
-}
-details.sysfold > summary .strong {
-  color: var(--ink);
-  font-weight: 500;
-}
-details.sysfold > summary .dim {
-  color: var(--muted);
-}
-/* min-width: 0 is the whole mechanism — a flex item's default min is its
-   content, so without it the processor model refuses to shrink and pushes
-   the line onto a second row instead of ellipsizing. It is the only value
-   here allowed to give way; the full string is on its title. */
-details.sysfold > summary .cpu {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* The disclosure mark, at the head of the line -- what the word "Details"
-   used to say from the right edge. Quieter than the facts it opens: this is
-   the control, and a mark louder than the line it belongs to would be the
-   first thing read on the card.
-
-   align-self rather than the summary's own baseline: an <svg> has no
-   baseline of its own, so on a flex row of text it sits with its BOTTOM on
-   the text baseline and hangs a third of its height below the line. */
-details.sysfold > summary .chev {
-  width: 16px;
-  height: 16px;
-  align-self: center;
-  flex: none;
-  margin-right: var(--space-2);
-  color: var(--muted);
-  /* One icon in two states, not two icons: the rotation is what reads as
-     "this opens". Same treatment .gtoggle .chev gets, keyed off [open]
-     because a <details> owns its state rather than carrying aria-expanded. */
-  transition: transform 120ms ease;
-}
-details.sysfold[open] > summary .chev {
-  transform: rotate(90deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  details.sysfold > summary .chev {
-    transition: none;
-  }
-}
-details.sysfold[open] > summary {
-  border-bottom: 1px solid var(--border);
-}
-details.sysfold > .body {
-  padding: var(--space-4);
 }
 
 /* The Limits card, at the foot of the System tab.
@@ -3246,40 +3225,6 @@ details.sysfold > .body {
   display: block;
   max-width: 640px;
   margin-top: var(--space-4);
-}
-
-/* The host System card's eight facts, label ABOVE value and four across —
-   two rows where .kv.wide took four, and no key/value column rules at all.
-   Now the disclosed state of .sysfold above rather than the card's default
-   body; the facts on it are identity: read once when the page opens and then
-   scrolled past. Four rows of type plus the separators cost ~170px of the
-   page's best position; this costs ~115px and drops nothing.
-
-   minmax(0, 1fr), not 1fr: a grid track's default min is auto, so the CPU
-   model's nowrap dd would push its column wider than a quarter and the other
-   three would collapse around it. */
-.sysstrip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-3) var(--space-5);
-  margin: 0;
-}
-.sysstrip dt {
-  font-size: var(--text-micro);
-  color: var(--muted);
-}
-/* One line, always. A processor model is the only value here long enough to
-   wrap, and letting it wrap makes the block a different height on every host
-   in the fleet — a Pi and a 48-thread server should draw the same box. The
-   full string is on the dd's title. */
-.sysstrip dd {
-  margin: 0;
-  font-size: var(--text-label);
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* A Meter's row: the label on its own line, and under it the bar with its
@@ -3568,8 +3513,7 @@ details.sysfold > .body {
    rules further up: those are a single class and lose to `.mrow .val`, which
    is two -- which is exactly how a red bar came to sit beside a --muted
    number at every percentage. `ok` gets no rule here, the same as the fleet
-   row's figure: colour on a reading means "look here". StatTile takes the
-   same view. */
+   row's figure: colour on a reading means "look here". */
 .mrow .val.st-warn {
   color: var(--st-warn-text);
 }
@@ -3577,217 +3521,82 @@ details.sysfold > .body {
   color: var(--st-crit-text);
 }
 
-/* The host overview's blocks, on a 12-track grid.
-   This replaces .cardcols, which was a flex row of hand-assigned columns:
-   which card went in which column was a JS decision keyed off matchMedia,
-   and the two breakpoints had to be written out in Overview.tsx as well --
-   a page that thought it had three columns while this file drew two put a
-   card in a column nobody could see. A block states its own span now and the
-   browser places it, so there is exactly one copy of the layout. */
-.mosaic {
+/* The host overview: four readings across, as the host's card on the main
+   page draws them, then the events beside the filesystems. Two a row below
+   1100px and one below 760px; a grid item's min-width is reset because the
+   trends inside are drawn at the width they measure. */
+.readings {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-3);
-  /* stretch, not start: two cards in a row hold different numbers of tiles,
-     and letting the shorter one end early leaves a hole half the page wide
-     under it. Stretched, the tiles inside grow into the height instead --
-     which the sparkline is glad of, being anchored to the bottom edge. */
-  align-items: stretch;
+  margin-bottom: var(--space-4);
 }
-/* A grid item defaults to min-width:auto -- its CONTENT's width -- so a block
-   holding a chart drawn at the width it just measured refuses to shrink and
-   the page scrolls sideways. Same rule, same reason, as `.smp`. */
-.mo {
+.reading {
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+}
+.ovgrid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-3);
+  align-items: start;
+  margin-bottom: var(--space-4);
+}
+.ovgrid > * {
   min-width: 0;
 }
-/* The stretch has to reach the card: the grid stretches .mo, and .mo's
-   children are a plain section and a card that would otherwise sit at their
-   content height inside it. */
-.mo,
-.mo > section,
-.mo .card {
-  display: flex;
-  flex-direction: column;
-}
-.mo > section,
-.mo .card,
-.mo .card .body {
-  flex: 1;
-}
-/* A card wrapped in a section for its aria-label would otherwise add .card's
-   own margin to the grid gap. Same rule as `.grid2 > * .card`. */
-.mo .card {
-  margin-bottom: 0;
-}
-/* One column below the width two blocks can hold side by side. Every span
-   collapses together: a 5-track block left alone at 900px is not narrower
-   than the page, it is narrower than its own tiles. */
 @media (max-width: 1099px) {
-  .mosaic > .mo {
-    grid-column: span 12 !important;
+  .readings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ovgrid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
-
-/* The tiles inside one mosaic card.
-   auto-fill rather than a fixed count: a card spanning 5 tracks and one
-   spanning 7 hold different numbers of tiles at the same tile size, which is
-   the point of stating a span rather than a column count. 150px is the floor
-   because that is SPARK_WIDTH -- below it the sparkline is being asked to
-   say something in fewer pixels than it has buckets. */
-/* The card's own chrome, tightened. A chart panel's 12/16 padding exists to
-   keep an axis off the border; a grid of tiles has no axis and every pixel of
-   it was surface nobody read. */
-.mosaic .card > header {
-  padding: 6px var(--space-3);
+@media (max-width: 760px) {
+  .readings {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
-.mosaic .card .body {
-  padding: var(--space-3);
-}
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  /* Rows share the leftover height rather than leaving it at the foot of the
-     card, so a card beside a taller one gets taller tiles instead of a gap. */
-  grid-auto-rows: minmax(96px, 1fr);
-  gap: var(--space-2);
-  height: 100%;
-}
-.tile {
-  position: relative;
-  overflow: hidden;
-  display: block;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  /* NO padding on the tile, deliberately -- it belongs to the text below.
-     useMeasuredWidth reads contentRect, which is the CONTENT box, while the
-     absolutely-positioned sparkline resolves `left: 0` against the PADDING
-     box: with padding here the chart was drawn 20px narrower than the box it
-     sat in and left a gap down the right of every tile, which is the
-     opposite of the full bleed both this rule and StatTile claim. */
+/* The Events card: time, a severity mark, the log's sentence. */
+.evlist {
+  list-style: none;
+  margin: 0;
   padding: 0;
-  /* A tile is a link. It must not be underlined, must not take the accent,
-     and must not inherit the visited colour -- it is a control, and the
-     figure inside it is data. */
-  color: inherit;
-  text-decoration: none;
+  font-size: var(--text-label);
 }
-/* The padding the tile gave up. Only the text takes it; the sparkline is
-   full-bleed and must not. */
-.tile .k,
-.tile .v,
-.tile .sub {
-  padding-left: 10px;
-  padding-right: 10px;
+.evlist li {
+  display: grid;
+  grid-template-columns: 6.5em 16px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
 }
-.tile .k {
-  padding-top: 8px;
+.evlist li:last-child {
+  border-bottom: 0;
 }
-a.tile:hover {
-  border-color: var(--border-strong);
-}
-a.tile:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-/* Above the sparkline, always. The strip is sized to clear the text (see
-   SPARK_STRIP), and this is the guarantee for the case where it does not --
-   a sub-line that wraps, or a browser that lays the figure out taller. */
-.tile .k,
-.tile .v,
-.tile .sub {
-  position: relative;
-  z-index: 1;
-}
-/* The label and the figure in the type a fleet card's reading uses
-   (.treading-head .k, .fig), so a host's tile one click away from its card
-   reads as the same reading. */
-.tile .k {
-  display: block;
-  font-size: var(--text-micro);
-  line-height: 1.2;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.evlist time,
+.evlist li > :first-child {
   color: var(--muted);
-}
-.tile .v {
-  display: block;
-  margin-top: 4px;
-  font-size: 20px;
-  font-weight: 400;
-  line-height: 1;
-  color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
-.tile .v .u {
-  font-size: var(--text-micro);
-  font-weight: 400;
-  color: var(--muted-2);
-  margin-left: 2px;
+/* Info is a small square, the marker's own shape on the charts. */
+.evinfo {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--ink-3);
 }
-/* The unit rides with its figure. `.u` sets its own colour, and a colour set
-   directly on an element beats one inherited from the parent however specific
-   that parent's rule is -- so a tile at 96% drew a red "96" beside a grey "%",
-   which reads as two different things rather than one reading. */
-.tile[class*="sev-"] .v .u {
-  color: inherit;
+.ovgrid .more {
+  display: inline-block;
+  margin-top: var(--space-2);
+  font-size: var(--text-label);
+  color: var(--accent);
 }
-.tile .sub {
-  display: block;
-  font-size: var(--text-micro);
-  line-height: 1.2;
-  color: var(--muted-2);
-  margin-top: 1px;
-}
-/* Bled to the tile's edges, under the text. The sparkline is drawn at the
-   measured width (see StatTile), so this only has to place it. */
-.tile svg.spark {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-}
-
-/* A tile that is OFF, and only then.
-   Three marks that have to agree: a tinted ground, a rule down the leading
-   edge, and the figure in the status text colour. The trend line is set to
-   the same hue in StatTile's caller, so a warning tile is not amber in three
-   places and blue in the fourth.
-
-   Neutral is the default and stays the default. The fixed status palette
-   means severity on this page -- the attention band above and the fleet list
-   a reader arrived from both use it that way -- so a hue on a tile whose
-   reading crossed nothing would make the colour mean "someone thought about
-   this number" instead. Context switches has no good value; it does not get
-   a colour. */
-.tile[class*="sev-"]::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-}
-.tile.sev-warning {
-  background: color-mix(in srgb, var(--st-warn) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--st-warn) 38%, var(--border));
-}
-.tile.sev-warning::before {
-  background: var(--st-warn);
-}
-.tile.sev-warning .v {
-  color: var(--st-warn-text);
-}
-.tile.sev-critical {
-  background: color-mix(in srgb, var(--st-crit) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--st-crit) 38%, var(--border));
-}
-.tile.sev-critical::before {
-  background: var(--st-crit);
-}
-.tile.sev-critical .v {
-  color: var(--st-crit-text);
-}
-/* sev-ok has no rule here on purpose: StatTile's callers map "ok" to null,
-   so it cannot be rendered. A rule for it would be a rule for a state that
-   does not exist, and the next reader would take it as licence to use one. */
 
 /* Two columns that PACK rather than align.
    As a grid, every row was as tall as its taller card and the shorter one
@@ -3955,6 +3764,66 @@ a.tile:focus-visible {
    measured would ratchet its own track wider and never shrink back. */
 .plotfit {
   min-width: 0;
+  position: relative;
+}
+/* The hovered panel's numbers for the bucket under the pointer. Over the
+   plot, beside the crosshair, and never in the pointer's way: it must not
+   steal the hover that placed it. */
+.readout {
+  position: absolute;
+  top: 0;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 150px;
+  max-width: 260px;
+  margin: 0 10px;
+  padding: 6px 10px;
+  background: var(--raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-size: var(--text-micro);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.readout .rt {
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.readout .rr {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  white-space: nowrap;
+}
+.readout .rr i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+.readout .rr b {
+  font-weight: 400;
+  color: var(--ink);
+}
+.readout .rr small {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: inherit;
+}
+.readout .rr.more {
+  color: var(--muted);
+}
+/* An event under the readings, set off by a rule: it is a cause, not a
+   value. The words carry it; the marker on the chart carries the shape. */
+.readout .rr.ev {
+  white-space: normal;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+.readout .rr.ev b {
+  text-align: right;
 }
 .chartwrap {
   position: relative;
@@ -4469,12 +4338,6 @@ svg.spark {
   .kv.wide dt:last-of-type,
   .kv.wide dd:last-of-type {
     border-bottom: 0;
-  }
-  /* Two facts across rather than four: at this width a quarter of the card is
-     narrower than "AMD EPYC 7402P" and every value on the row would ellipsize
-     at once. Eight facts still divide evenly, into four rows. */
-  .sysstrip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

@@ -62,40 +62,12 @@ export interface UpDownSparklineProps {
 }
 
 /**
- * Green above the axis, amber below. Inbound is the green half in every
- * traffic graph an operator has already read, and these started out the
- * other way round. The lower half was a blue-violet sampled from RRDtool and
- * is now --st-warn; index.css owns why the status hues are allowed here at
- * all, and it is the only place that argument lives.
- *
- * Exported because the enlarged view of a traffic sparkline is drawn by
- * Overlay rather than by this component, and a chart that changed colour on
- * being clicked open would be a different chart.
+ * The traffic greys: light above the axis, dark below. Green and amber were
+ * the pair once and are status hues; a direction is told by the side of the
+ * midline and by lightness. See --traffic-in in index.css.
  */
-export const UP_COLOR = "var(--in-1)";
-export const DOWN_COLOR = "var(--out-1)";
-
-/**
- * The same pair, one lightness step per interface, for the panel that stacks
- * traffic per interface rather than summing it.
- *
- * Index 0 IS the pair above, so a one-NIC host draws exactly what its fleet
- * cell draws -- which is the property that lets the cell open into the panel
- * without the chart changing under the click. The walk wraps; see index.css
- * for why three steps and not eight.
- */
-export const UP_SHADES = [
-  UP_COLOR,
-  "var(--in-2)",
-  "var(--in-3)",
-  "var(--in-4)",
-];
-export const DOWN_SHADES = [
-  DOWN_COLOR,
-  "var(--out-2)",
-  "var(--out-3)",
-  "var(--out-4)",
-];
+export const UP_COLOR = "var(--traffic-in)";
+export const DOWN_COLOR = "var(--traffic-out)";
 
 export function UpDownSparkline({
   up,

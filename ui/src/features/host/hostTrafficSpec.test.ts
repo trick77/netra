@@ -14,8 +14,8 @@ import type { MetricsResponse } from "../../lib/api";
 import { bandsFor, familyFor, specForSlug } from "./chartSpecs";
 import { cpuBands, trafficSeries } from "../fleet/hostTrends";
 import { CPU_STATE_COLORS, perCoreBands } from "../../lib/bands";
-import { DOWN_SHADES, UP_SHADES } from "../../ui/charts/UpDownSparkline";
-import { SWEPT_FILL_OPACITY } from "../../ui/charts/size";
+import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
+import { SOFT_STACK_FILL } from "../../ui/charts/size";
 
 // Two interfaces, at the raw tier -- where peakBase() falls back to the bare
 // column and there is no _max peer, so no envelope is drawn. A null in eth0's
@@ -112,21 +112,20 @@ describe("the host-traffic spec", () => {
     expect(cell.rx[2]).toBeNull();
   });
 
-  it("keeps green above and orange below, one step per interface", () => {
+  it("draws in the fleet's traffic greys, never a status hue", () => {
     // Given the page's bands
     const bands = bandsFor(specForSlug("host-traffic")!, net());
 
-    // Then the FIRST interface draws the sparkline's pinned pair exactly, so
-    // a one-NIC host's panel is the fleet cell at another size; the second
-    // steps within the same two hues rather than taking the --s1/--s3 the
-    // SERIES_VARS index walk would have handed it. Green means "in" on the
-    // fleet row; it has to mean "in" here.
+    // Then every interface draws the fleet cell's light-in, dark-out pair:
+    // the direction is the colour, the interface is the band's name.
     expect(bands.map((b) => b.color)).toEqual([
-      UP_SHADES[0],
-      DOWN_SHADES[0],
-      UP_SHADES[1],
-      DOWN_SHADES[1],
+      UP_COLOR,
+      DOWN_COLOR,
+      UP_COLOR,
+      DOWN_COLOR,
     ]);
+    expect(UP_COLOR).toBe("var(--traffic-in)");
+    expect(DOWN_COLOR).toBe("var(--traffic-out)");
   });
 
   it("leaves out an interface that moved nothing all window", () => {
@@ -147,9 +146,8 @@ describe("the host-traffic spec", () => {
     // on the same tab is where "this NIC exists" belongs.
     expect(bands.map((b) => b.name)).toEqual(["eth0 in", "eth0 out"]);
 
-    // And the live interface keeps the FIRST shade, so which step a link
-    // draws in follows what was drawn rather than what was answered.
-    expect(bands.map((b) => b.color)).toEqual([UP_SHADES[0], DOWN_SHADES[0]]);
+    // And the live interface keeps the traffic pair.
+    expect(bands.map((b) => b.color)).toEqual([UP_COLOR, DOWN_COLOR]);
   });
 
   it("drops an interface that can only draw half its pair", () => {
@@ -199,7 +197,7 @@ describe("the host-traffic spec", () => {
   // response carrying none of the columns, and the page says "no samples"
   // about a host reporting perfectly well.
   it.each([
-    ["host-cpu", "cpu_core"],
+    ["host-cpu", "host"],
     ["host-memory", "host"],
     ["host-filesystem", "filesystem"],
     ["host-traffic", "net"],
@@ -371,41 +369,45 @@ describe("the CPU page on a host too large for the fleet cell", () => {
     } as unknown as MetricsResponse;
   }
 
-  // Above MAX_PER_CORE the fleet row will not fetch 128 series for a 150px
-  // chart and falls back to a single cpu_total band, while the page draws
-  // every core. That divergence is deliberate -- but only because the
-  // SILHOUETTE survives it: a normalised per-core stack sums to cpu_total.
-  // If it ever stops summing to cpu_total, the page stops being the chart the
-  // reader clicked, and that is what this pins.
-  it("stacks to the same total the cell's single band draws", () => {
-    // Given a 128-core response
+  function host(totals: number[]): MetricsResponse {
+    const at = (i: number) => Date.parse(`2026-08-10T00:0${i}:00Z`);
+    const iso = (i: number) => `2026-08-10T00:0${i}:00Z`;
+    return {
+      family: "host",
+      tier: "raw",
+      step_s: 60,
+      window: { from: iso(0), to: iso(3) },
+      requested_window: { from: iso(0), to: iso(3) },
+      warnings: [],
+      key_columns: [],
+      columns: ["cpu_total"],
+      series: [{ key: {}, points: totals.map((v, i) => [at(i), v]) }],
+      truncated: false,
+    } as unknown as MetricsResponse;
+  }
+
+  // The page draws the host's cpu_total as a line; the fleet's dialog draws a
+  // normalised per-core stack. They are one reading only because the stack's
+  // top edge IS cpu_total -- on every core count, including the 128 the fleet
+  // cell declines to fetch. This pins that the page's line is that edge.
+  it("draws as its total the top edge of the fleet's per-core stack", () => {
+    // Given a 128-core host whose cores all read 40, 80, 40
     const res = cores(128);
 
-    // When the page's bands are built
-    const page = bandsFor(specForSlug("host-cpu")!, res);
+    // When the page's bands are built beside its host family
+    const page = bandsFor(specForSlug("host-cpu")!, host([40, 80, 40]), {
+      extra: { cpuCore: res },
+    });
 
-    // Then there is one band per core...
-    expect(page).toHaveLength(128);
-
-    // ...and they sum, at every bucket, to the mean across cores -- which is
-    // cpu_total, the one band the large-host cell falls back to.
-    const totals = page[0]!.values.map((_, i) =>
-      page.reduce((sum, b) => sum + (b.values[i] ?? 0), 0),
+    // Then the total line is the stack's summed height at every bucket
+    const stack = cpuBands(null, res).bands;
+    const edge = stack[0]!.values.map((_, i) =>
+      stack.reduce((sum, b) => sum + (b.values[i] ?? 0), 0),
     );
-    expect(totals.map((t) => Math.round(t))).toEqual([40, 80, 40]);
-  });
-
-  // And the small-host case, where the two are the same chart outright.
-  it("matches the cell exactly on a host the cell does fetch cores for", () => {
-    const res = cores(4);
-
-    const page = bandsFor(specForSlug("host-cpu")!, res);
-    const cell = cpuBands(null, res).bands;
-
-    expect(page.map((b) => b.values)).toEqual(cell.map((b) => b.values));
-    expect(page.map((b) => b.name)).toEqual(
-      perCoreBands(res, { normalise: true }).map((b) => b.name),
-    );
+    expect(page[0]!.values).toEqual(edge.map((t) => Math.round(t)));
+    // and the busiest core is the per-core reading itself
+    expect(page[1]!.values).toEqual([40, 80, 40]);
+    expect(perCoreBands(res)).toHaveLength(128);
   });
 });
 
@@ -456,13 +458,13 @@ describe("the CPU time breakdown beside the per-core stack", () => {
     ]);
     expect(bands.map((b) => b.color)).toEqual(CPU_STATE_COLORS);
 
-    // ...and every one of them at the fill weight the per-core stack above it
-    // uses. Opaque beside translucent is the difference a reader sees first.
+    // ...and every one of them soft: a hue stack at full weight was the
+    // loudest mark on the page.
     expect(bands.map((b) => b.fill)).toEqual([
-      SWEPT_FILL_OPACITY,
-      SWEPT_FILL_OPACITY,
-      SWEPT_FILL_OPACITY,
-      SWEPT_FILL_OPACITY,
+      SOFT_STACK_FILL,
+      SOFT_STACK_FILL,
+      SOFT_STACK_FILL,
+      SOFT_STACK_FILL,
     ]);
   });
 

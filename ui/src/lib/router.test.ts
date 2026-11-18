@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseRoute, rangeFromSearch, routePath, withParam } from "./router";
+import {
+  hostTabForSlug,
+  parseRoute,
+  rangeFromSearch,
+  routePath,
+  withParam,
+} from "./router";
 
 describe("parseRoute", () => {
   it("routes the paths the spec names", () => {
@@ -128,6 +134,10 @@ describe("the old chart-page route", () => {
       hostId: "3",
       tab: "network",
     });
+    // The per-core stack became the heat strip, Uptime a header figure
+    for (const slug of ["cpu-cores", "uptime"]) {
+      expect(hostTabForSlug(slug)).toBe("system");
+    }
   });
 
   // The Graphs tab is gone and Filesystems is now Storage, but both are URLs
@@ -144,6 +154,18 @@ describe("the old chart-page route", () => {
       hostId: "3",
       tab: "storage",
     });
+    // Units joined Packages; Collectors became Agent
+    expect(parseRoute("/hosts/3/units")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "packages",
+    });
+    expect(parseRoute("/hosts/3/collectors")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "agent",
+    });
+    expect(hostTabForSlug("hub-latency")).toBe("agent");
   });
 
   // The trap this route was moved off /graphs/ to avoid, still pinned: the

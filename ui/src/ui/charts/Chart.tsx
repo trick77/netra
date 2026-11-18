@@ -11,7 +11,7 @@
 // an opt-in prop that defaults to absent, and a caller that asks for nothing
 // gets exactly the mark it drew before.
 
-import { useId } from "react";
+import { memo, useId } from "react";
 import {
   areaPath,
   dotPath,
@@ -95,6 +95,27 @@ export interface ChartSeries {
 export type ChartMark = "line" | "area" | "stack" | "mirror" | "mirrorStack";
 
 /**
+ * Something that happened at a moment on the chart's time axis: a dashed rule
+ * through the plot and a glyph above it.
+ *
+ * Severity is carried by SHAPE as well as hue -- an outlined triangle, a
+ * filled disc, a small square -- so a reader who cannot tell amber from red
+ * still tells a warning from a failure.
+ */
+export interface ChartMarker {
+  /** Where across the time axis, 0 at the oldest bucket and 1 at the newest. */
+  fraction: number;
+  severity: "critical" | "warning" | "info";
+  label: string;
+}
+
+const MARKER_INK = {
+  critical: "var(--st-crit)",
+  warning: "var(--st-warn)",
+  info: "var(--ink-3)",
+} as const;
+
+/**
  * The four-way choice every caller drawing "the same chart" has to make the
  * same way.
  *
@@ -172,7 +193,25 @@ export interface ChartProps {
    * dotted grid.
    */
   gapRule?: boolean;
+  /** Events on the time axis. See ChartMarker. */
+  markers?: readonly ChartMarker[];
+  /**
+   * The peaks a mirrored mark scales its halves to, instead of its own. For
+   * charts drawn as rows on ONE scale -- an interface per row -- where each
+   * deriving its own would draw a trickle the height of a saturated link.
+   */
+  mirrorPeak?: { up: number; down: number };
 }
+
+// The marks, memoised: a tab's shared cursor re-renders every panel on it
+// each time the pointer crosses a bucket, and only the crosshair moved. The
+// panels hand the same series array down while their data stands, so the
+// path geometry -- stacks, mirrors, peak envelopes -- is rebuilt per answer,
+// not per pointer move.
+const MemoMirrorStackMarks = memo(MirrorStackMarks);
+const MemoMirrorMarks = memo(MirrorMarks);
+const MemoStackMarks = memo(StackMarks);
+const MemoLineMarks = memo(LineMarks);
 
 /**
  * Where the mark is drawn, and what furniture surrounds it.
@@ -203,6 +242,8 @@ export function Chart({
   onCursorChange,
   bandStroke = BAND_STROKE_WIDTH,
   gapRule = false,
+  markers = [],
+  mirrorPeak,
 }: ChartProps) {
   // React's useId, not a counter: two charts on one page must not mint the
   // same clip-path id, and a module-level counter is not stable across a
@@ -256,12 +297,13 @@ export function Chart({
   const mirrorScale = mirrored
     ? mirrorCeilings(
         ...(({ up, down }) => [up, down] as const)(
-          mirrorPeaks(
-            series.map((s) =>
-              s.band && s.band.length > 0 ? s.band : s.values,
+          mirrorPeak ??
+            mirrorPeaks(
+              series.map((s) =>
+                s.band && s.band.length > 0 ? s.band : s.values,
+              ),
+              mirrorStacked,
             ),
-            mirrorStacked,
-          ),
         ),
       )
     : { up: 0, down: 0, zero: 0.5 };
@@ -372,16 +414,20 @@ export function Chart({
 
       <MarkGroup inset={inset} clipId={clipId} rect={rect}>
         {mirrorStacked && (
-          <MirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
+          <MemoMirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
         )}
         {mirrored && !mirrorStacked && (
-          <MirrorMarks {...{ series, w, h, max, pad, gapRule }} />
+          <MemoMirrorMarks
+            {...{ series, w, h, max, pad, gapRule, mirrorPeak }}
+          />
         )}
         {!mirrored && stacked && (
-          <StackMarks {...{ series, w, h, max, pad, highlight, bandStroke }} />
+          <MemoStackMarks
+            {...{ series, w, h, max, pad, highlight, bandStroke }}
+          />
         )}
         {!mirrored && !stacked && (
-          <LineMarks
+          <MemoLineMarks
             {...{ series, w, h, max, pad, highlight, floor, gapRule }}
             filled={mark === "area"}
           />
@@ -427,6 +473,10 @@ export function Chart({
       {labels && (
         <AxisLabels rect={furnitureRect} y={y} x={x} format={format} />
       )}
+
+      {markers.map((m, i) => (
+        <Marker key={i} marker={m} rect={axisRect} plot={rect} />
+      ))}
 
       {cursor !== null && (
         <Crosshair
@@ -538,6 +588,7 @@ function MirrorMarks({
   max,
   pad,
   gapRule = false,
+  mirrorPeak,
 }: {
   series: ChartSeries[];
   w: number;
@@ -545,6 +596,7 @@ function MirrorMarks({
   max: number;
   pad: number;
   gapRule?: boolean;
+  mirrorPeak?: { up: number; down: number };
 }) {
   return (
     <>
@@ -578,7 +630,7 @@ function MirrorMarks({
         // -- so the guard would have left the marks centred while the axis
         // furniture sat where the data puts zero, and ruled a line through
         // the chart.
-        const ceiling = mirrorHalves(up, down);
+        const ceiling = mirrorPeak ?? mirrorHalves(up, down);
         const paths = mirrorPaths(
           up.values,
           down?.values ?? [],
@@ -1086,6 +1138,57 @@ function LineMarks({
         );
       })}
     </>
+  );
+}
+
+/**
+ * One event: a dashed rule down the plot and its glyph at the top edge.
+ *
+ * Mapped across the same inset rect as the crosshair, so a marker and the
+ * cursor resting on its bucket draw on one line. Faint on purpose -- it
+ * annotates the series, it is not one.
+ */
+function Marker({
+  marker,
+  rect,
+  plot,
+}: {
+  marker: ChartMarker;
+  rect: PlotRect;
+  plot: PlotRect;
+}) {
+  const f = Math.min(1, Math.max(0, marker.fraction));
+  const x = rect.left + f * (rect.right - rect.left);
+  const ink = MARKER_INK[marker.severity];
+  // The glyph needs a few pixels above the plot; a bare sparkline has none,
+  // so it sits just inside the top edge instead of being cut off.
+  const top = Math.max(plot.top, 4);
+  return (
+    <g data-marker={marker.severity}>
+      <line
+        x1={x}
+        x2={x}
+        y1={top}
+        y2={plot.bottom}
+        stroke={ink}
+        strokeOpacity={0.55}
+        strokeDasharray="2 3"
+      />
+      {marker.severity === "warning" && (
+        <path
+          d={`M${x} ${top - 3}l4.5 7.5h-9z`}
+          fill="var(--surface)"
+          stroke={ink}
+          strokeWidth={1.5}
+        />
+      )}
+      {marker.severity === "critical" && (
+        <circle cx={x} cy={top} r={3.5} fill={ink} />
+      )}
+      {marker.severity === "info" && (
+        <rect x={x - 2.5} y={top - 2.5} width={5} height={5} fill={ink} />
+      )}
+    </g>
   );
 }
 

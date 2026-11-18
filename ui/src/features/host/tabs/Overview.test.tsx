@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
+import type {
+  Event,
+  HostDetail,
+  MetricsResponse,
+  Unit,
+} from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { Overview, needsAttention } from "./Overview";
-import { filesystemRows } from "./overviewTiles";
 import { catalogueOf } from "../../fleet/conditions";
 import type { ConditionKindInfo, ConditionRow } from "../../../lib/api";
 
@@ -177,20 +180,13 @@ function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
   );
 }
 
-/** The System block's one-line summary, which is what the card looks like
- * before anyone clicks it. Five of the eight facts are on it and the same
- * five are also in the strip underneath, so a bare getByText inside the
- * region now matches twice -- every assertion about the summary has to say
- * which of the two it means. */
-function systemSummary() {
-  return screen
-    .getByRole("region", { name: "System" })
-    .querySelector("summary")!;
-}
-
-/** The disclosed strip: the eight labelled facts. */
-function systemStrip() {
-  return screen.getByRole("region", { name: "System" }).querySelector("dl")!;
+/** The one-line facts under the name. */
+function facts() {
+  return [
+    ...screen
+      .getByRole("region", { name: "System" })
+      .querySelectorAll(".hostfacts span"),
+  ].map((s) => s.textContent);
 }
 
 describe("Overview system facts", () => {
@@ -198,160 +194,81 @@ describe("Overview system facts", () => {
   // falls back to it and the page used to print the compiler's token.
   it("names the operating system rather than printing GOOS", () => {
     renderOverview({ host: { ...host, os_name: "linux" } });
-    expect(within(systemSummary()).getByText("Linux")).toBeInTheDocument();
-    expect(within(systemStrip()).getByText("Linux")).toBeInTheDocument();
+    expect(facts()).toContain("Linux");
   });
 
   it("does not title-case its way to Darwin and Freebsd", () => {
     renderOverview({ host: { ...host, os_name: "darwin" } });
-    expect(within(systemSummary()).getByText("macOS")).toBeInTheDocument();
-  });
-
-  // A distro string is already the right answer and must pass through.
-  it("leaves a distribution name alone", () => {
-    renderOverview({ host: { ...host, os_name: "Debian GNU/Linux 13" } });
-    expect(
-      within(systemSummary()).getByText("Debian GNU/Linux 13"),
-    ).toBeInTheDocument();
+    expect(facts()).toContain("macOS");
   });
 
   // ~32 GiB of MemTotal. Decimally this reads "33.3 GB", which is above the
   // capacity the machine actually has.
   it("states installed memory in the binary units it was sold in", () => {
     renderOverview({ host: { ...host, memory_total: 33_260_000_000 } });
-    const system = screen.getByRole("region", { name: "System" });
-    expect(within(systemSummary()).getByText("31 GiB")).toBeInTheDocument();
-    expect(within(system).queryByText(/33.3 GB/)).toBeNull();
+    expect(facts()).toContain("31 GiB");
   });
-});
 
-// The card is shut when the page opens: the five facts an operator reads in
-// passing are on one line, and the other three cost a click. That is the
-// whole point of the shape -- a permanently open eight-fact table spent more
-// of the page's best position on its own frame than on its facts.
-describe("Overview System summary", () => {
-  it("states OS, kernel, processor, memory and uptime without a click", () => {
+  // One line, read once when the page opens: what the machine is and where.
+  it("states the machine in one line, where it is included", () => {
     renderOverview();
-    const summary = systemSummary();
-
-    expect(summary.closest("details")!.hasAttribute("open")).toBe(false);
-    for (const fact of [
+    expect(facts()).toEqual([
       "Ubuntu 24.04",
       "6.8.0-31-generic",
+      "amd64",
       "EPYC 7003",
+      "4 cores · 8 threads",
       "7.5 GiB",
-    ]) {
-      expect(within(summary).getByText(fact)).toBeInTheDocument();
-    }
-    expect(summary.textContent).toContain("up ");
+      "Roubaix, France",
+      "OVH",
+      "RBX2",
+      "agent 0.4.1",
+    ]);
   });
 
-  // Architecture, cores and the agent build are the three facts behind the
-  // click. They are looked up deliberately rather than read in passing --
-  // amd64 is implied by the processor model, the core count is a number you
-  // go and get when sizing something, and the version is what you read when a
-  // host reports something the code should not be able to report. If any of
-  // them creeps onto the summary the disclosure stops paying for its click.
-  it("keeps architecture, cores and the agent build behind the click", () => {
-    renderOverview();
-    const summary = systemSummary();
-    const strip = systemStrip();
-
-    for (const hidden of ["amd64", "4 cores · 8 threads", "0.4.1"]) {
-      expect(within(summary).queryByText(hidden)).toBeNull();
-      expect(within(strip).getByText(hidden)).toBeInTheDocument();
-    }
+  // A fact the agent never reported is not written: a dash is a placeholder
+  // for a value that should be there, and a VPS without a cpu_model is not
+  // missing anything.
+  it("omits a fact the host never reported rather than writing a dash", () => {
+    renderOverview({
+      host: {
+        ...host,
+        kernel: null,
+        cpu_model: null,
+        location: null,
+        provider: null,
+        facility: null,
+        cores: 1,
+        threads: 1,
+      },
+    });
+    expect(facts()).toEqual([
+      "Ubuntu 24.04",
+      "amd64",
+      "1 core",
+      "7.5 GiB",
+      "agent 0.4.1",
+    ]);
+    expect(facts().join(" ")).not.toContain(ABSENT);
   });
 
-  // The processor model is the raw string, long enough on a real host to push
-  // the line onto a second row on its own, so it is the one summary value
-  // allowed to ellipsize -- which makes its title the only place the full
-  // text survives.
-  it("carries the processor model's full text on the summary too", () => {
-    const cpu = "AMD EPYC 7402P 24-Core Processor";
-    renderOverview({ host: { ...host, cpu_model: cpu } });
-    const model = within(systemSummary()).getByText(cpu);
-
-    expect(model.getAttribute("title")).toBe(cpu);
-    expect(model.className).toContain("cpu");
-  });
-
-  // The worst case the store can actually produce: ingest.go NULLIFs every
-  // one of these columns, and an agent in a container that cannot read the
-  // host's /etc/os-release reports no os_name at all. Unguarded, the OS span
-  // rendered osLabel(null) and the whole summary read "—" -- a line whose
-  // only content is an em dash, which is the failure the omission rule exists
-  // to prevent rather than a milder version of it.
-  it("writes no facts at all rather than a line of dashes", () => {
+  it("writes no line at all for a host that reported nothing", () => {
     renderOverview({
       host: {
         ...host,
         os_name: null,
         kernel: null,
+        arch: null,
         cpu_model: null,
+        cores: null,
         memory_total: null,
-        uptime_s: null,
+        location: null,
+        provider: null,
+        facility: null,
+        agent_version: null,
       },
     });
-    const summary = systemSummary();
-
-    expect(summary.textContent).not.toContain(ABSENT);
-    // No FACTS. What is left is the screen-reader label, which is the whole
-    // point of it: a summary with no text at all is an unlabelled disclosure
-    // to anyone listening. The chevron is still there too -- it is the
-    // control, and a fold with nothing to click is not this state.
-    expect(summary.textContent).toBe("System details");
-    expect(summary.querySelector(".sr-only")).not.toBeNull();
-    expect(summary.querySelector("svg.chev")).not.toBeNull();
-    expect(summary.querySelector("svg.osicon")).toBeNull();
-    // The labelled strip still answers for all eight, dashes included.
-    expect(within(systemStrip()).getAllByText(ABSENT).length).toBeGreaterThan(
-      3,
-    );
-  });
-
-  // The summary line writes the OS name and nothing else in front of it. The
-  // distribution mark was here until the line was found to be carrying two
-  // marks: the chevron, which is the control, and a logo that only repeated
-  // the name spelled out beside it. The fleet list keeps its own, where the
-  // mark is the fastest way to tell forty rows apart.
-  it("writes the OS name with no distribution mark", () => {
-    renderOverview();
-    const os = systemSummary().querySelector(".strong")!;
-
-    expect(os.querySelector("svg.osicon")).toBeNull();
-    expect(os.textContent).toBe("Ubuntu 24.04");
-  });
-
-  // An absent fact is not written at all, rather than written as an em dash.
-  // The separators are drawn by CSS on `span + span`, so a placeholder span
-  // would leave a dot with nothing on one side of it -- the same reason the
-  // fleet list dropped the site line's dash and the Temperature card stopped
-  // rendering itself empty. The labelled strip below still shows ABSENT,
-  // because a labelled row is where a gap does need a mark.
-  it("omits a fact the host never reported rather than writing a dash", () => {
-    renderOverview({
-      // uptime_s included deliberately. It is the one summary fact whose
-      // formatter absorbs null itself -- duration(null) is ABSENT -- so an
-      // unguarded span writes "up —" rather than nothing, and a fixture that
-      // keeps an uptime passes this test while the page prints the dash.
-      host: {
-        ...host,
-        kernel: null,
-        cpu_model: null,
-        memory_total: null,
-        uptime_s: null,
-      },
-    });
-    const summary = systemSummary();
-
-    expect(summary.textContent).not.toContain(ABSENT);
-    expect(summary.textContent).not.toContain("up ");
-    expect(summary.querySelector(".cpu")).toBeNull();
-    // Still eight labelled rows underneath, three of them absent.
-    expect(
-      within(systemStrip()).getAllByText(ABSENT).length,
-    ).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByRole("region", { name: "System" })).toBeNull();
   });
 });
 
@@ -372,22 +289,20 @@ describe("Overview", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("shows disk as absolute bytes per filesystem, never as a ratio", () => {
-    renderOverview();
-    const disk = screen.getByRole("region", { name: /disk/i });
-    expect(within(disk).getByText("/")).toBeInTheDocument();
-    expect(within(disk).getByText(/40 GB used/)).toBeInTheDocument();
-    expect(disk.textContent).not.toMatch(/%/);
+  // The four readings the host's card on the main page shows, drawn by the
+  // same cells -- so a reading here cannot disagree with the one a page up.
+  it("leads with the main page's four readings", () => {
+    const { container } = renderOverview({ netMetrics });
+    const readings = container.querySelectorAll(".readings > .reading");
+    expect(readings).toHaveLength(4);
+    expect(
+      [...readings].map((r) => r.querySelector(".k")?.textContent),
+    ).toEqual(["CPU", "Memory", "Filesystem", "Traffic"]);
   });
 
-  // The band is the first thing on the tab and spans the page, so a healthy
-  // host must not spend that position on a box saying nothing. One quiet line
-  // confirms the check ran instead -- the same rule the fleet band follows.
-  // A card inside the mosaic is at most half the page wide. The band has to
-  // be outside the grid altogether to span the page and be read first.
-  it("puts the band above the mosaic, not inside it", () => {
-    // A failed unit rather than a dropped-sample count: this test is about
-    // where the band sits, and it only needs SOMETHING in it.
+  // The band is read first: above the facts and the readings, never among
+  // them.
+  it("puts the band above the readings", () => {
     const { container } = renderOverview({
       units: [
         {
@@ -401,141 +316,20 @@ describe("Overview", () => {
       ],
     });
     const band = screen.getByRole("region", { name: /needs attention/i });
-    const grid = container.querySelector(".mosaic");
-    expect(grid).not.toBeNull();
-    expect(grid?.contains(band)).toBe(false);
+    const readings = container.querySelector(".readings")!;
     expect(
-      band.compareDocumentPosition(grid!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      band.compareDocumentPosition(readings) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
-  // The reading order of the mosaic, two blocks a row: System metrics |
-  // Load averages, Traffic | Kernel, Memory pressure | Network, then Disk.
-  // DOM order is grid order and nothing else places a block, so this is the
-  // whole layout.
-  it("orders the mosaic system, load, traffic, kernel, disk last", () => {
-    const { container } = renderOverview();
-    const grid = container.querySelector(".mosaic")!;
-    // Every block is a labelled section, a chart's reading "<title> chart"
-    // or "<title>, not collected"; the label's first word run is the title.
-    const labels = [...grid.querySelectorAll(":scope > .mo > section")].map(
-      (s) => s.getAttribute("aria-label"),
-    );
-    expect(labels).toEqual([
-      "System metrics",
-      expect.stringMatching(/^Load averages/),
-      expect.stringMatching(/^Traffic/),
-      "Kernel",
-      "Memory pressure",
-      "Network",
-      "Disk",
-    ]);
-  });
-
-  // The System card is lifted out for a different reason: it is a strip of
-  // eight facts about the machine rather than a reading, and full width above
-  // the columns is where it can be laid out four across.
-  it("puts the System card above the mosaic, not inside it", () => {
-    const { container } = renderOverview();
-    const system = screen.getByRole("region", { name: "System" });
-    const grid = container.querySelector(".mosaic");
-    expect(grid).not.toBeNull();
-    expect(grid?.contains(system)).toBe(false);
-    expect(
-      system.compareDocumentPosition(grid!) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  // The only link between the hoisted card and the CSS that lays it out four
-  // across, label above value. Without it the card is a thin column of eight
-  // one-line rows down the left of a full-width card -- which renders
-  // perfectly, passes every other test here, and is exactly what the hoist
-  // and then the strip were meant to fix. jsdom applies no stylesheet, so the
-  // class name is the whole assertion available.
-  it("lays the System card's facts out four across, label above value", () => {
-    renderOverview();
-    const system = screen.getByRole("region", { name: "System" });
-    const dl = system.querySelector("dl")!;
-
-    expect(dl.className).toContain("sysstrip");
-    // Every pair is its own grid item -- a name-value group -- and all
-    // eleven facts survive the shape change.
-    expect(dl.querySelectorAll(":scope > .f").length).toBe(11);
-    // Where the machine is, ahead of what it is: the reader asks where this
-    // box sits and whose it is before they ask which processor.
-    expect([...dl.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual([
-      "Location",
-      "Provider",
-      "Facility",
-      "OS",
-      "Kernel",
-      "Architecture",
-      "Processor",
-      "Cores",
-      "Memory",
-      "Uptime",
-      "Agent",
-    ]);
-  });
-
-  // A host whose agent reports none of the three is not missing three facts,
-  // it was never given them, and three dashes would say otherwise. Report ANY
-  // of them and the rule flips: a provider with no facility beside it IS a gap
-  // somebody meant to fill, and a labelled strip is where a gap gets marked.
-  it("writes no location facts at all for a host that reports none", () => {
+  it("lists every mount in the Filesystems table", () => {
     renderOverview({
-      host: { ...host, location: null, provider: null, facility: null },
+      filesystems: [{ id: 1, label: "/", mountpoint: "/", device_id: null }],
     });
-    const dl = screen
-      .getByRole("region", { name: "System" })
-      .querySelector("dl")!;
-
-    expect([...dl.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual([
-      "OS",
-      "Kernel",
-      "Architecture",
-      "Processor",
-      "Cores",
-      "Memory",
-      "Uptime",
-      "Agent",
-    ]);
-  });
-
-  // The strip marks the gap where the fleet row would not: an agent that set
-  // a provider and no facility has a field somebody meant to fill, and this
-  // is the labelled place that can say so without spending a fleet row on it.
-  it("dashes a fact the agent left unset once it reports any of them", () => {
-    renderOverview({
-      host: {
-        ...host,
-        location: "Roubaix, France",
-        provider: "OVH",
-        facility: null,
-      },
-    });
-    const dl = screen
-      .getByRole("region", { name: "System" })
-      .querySelector("dl")!;
-    const value = (label: string) =>
-      [...dl.querySelectorAll("dt")].find((dt) => dt.textContent === label)!
-        .nextElementSibling!.textContent;
-
-    expect(value("Location")).toBe("Roubaix, France");
-    expect(value("Provider")).toBe("OVH");
-    expect(value("Facility")).toBe(ABSENT);
-  });
-
-  // The processor model is the one value long enough to be cut off by the
-  // strip's ellipsis, so the full string has to stay reachable.
-  it("carries the full text of a fact as the value's title", () => {
-    renderOverview();
-    const system = screen.getByRole("region", { name: "System" });
-    const processor = [...system.querySelectorAll("dt")].find(
-      (dt) => dt.textContent === "Processor",
-    )!.nextElementSibling!;
-
-    expect(processor.getAttribute("title")).toBe(processor.textContent);
+    const table = screen.getByRole("region", { name: "Filesystems" });
+    // One row for the one mount, its Use% from the window: 40 of 95 GB
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(within(table).getByText("42%")).toBeInTheDocument();
   });
 
   it("says nothing at all when nothing is wrong", () => {
@@ -624,216 +418,85 @@ describe("Overview systemd units", () => {
   });
 });
 
-describe("filesystemRows", () => {
-  it("returns nothing rather than guessing when the tier lacks the columns", () => {
-    expect(filesystemRows(response({ family: "filesystem" }))).toEqual([]);
-    expect(filesystemRows(null)).toEqual([]);
+describe("the Events card", () => {
+  const event = (i: number, severity: Event["severity"]): Event => ({
+    id: `e:${i}`,
+    host_id: host.id,
+    hostname: host.hostname,
+    ts: new Date(Date.parse("2026-08-10T00:00:00Z") + i * 60_000).toISOString(),
+    type: "unit_failed",
+    subject: `svc${i}.service`,
+    detail: null,
+    severity,
   });
 
-  it("keeps used and free as measured, because they do not sum to total", () => {
-    const [row] = filesystemRows(fsMetrics);
-    expect(row).toMatchObject({
-      label: "/",
-      used: 40_000_000_000,
-      free: 55_000_000_000,
-      total: 100_000_000_000,
+  it("lists the window's events newest first, in the log's words", () => {
+    renderOverview({
+      events: [event(1, "info"), event(3, "critical"), event(2, "warning")],
     });
+    const card = screen.getByRole("region", { name: "Events" });
+    const items = within(card).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual([
+      expect.stringMatching(/svc3/),
+      expect.stringMatching(/svc2/),
+      expect.stringMatching(/svc1/),
+    ]);
+    // Severity by shape as well as hue
+    expect(within(items[0]!).getByRole("img", { name: "critical" }));
+    expect(within(items[2]!).getByRole("img", { name: "info" }));
   });
 
-  // A filesystem that stopped being reported has no fullness NOW, and saying
-  // it does is what put one disk on the page twice: /netra/fs/ark frozen at
-  // the moment its agent was upgraded, beside the /mnt/ark that replaced it,
-  // both at 94 %, neither marked as the past.
-  //
-  // read/metrics.go emits only the rows that exist, so the retired series
-  // just ends early -- its last element is a real reading. Only the window's
-  // grid can tell "last thing it said" from "what it says now".
-  it("reports no reading for a filesystem that stopped mid-window", () => {
-    const retired = response({
-      family: "filesystem",
-      key_columns: ["filesystem", "mountpoint"],
-      columns: ["total", "used", "free"],
-      series: [
-        {
-          // The one that stopped: a reading in the first bucket of the
-          // window and nothing after it.
-          key: { filesystem: "/netra/fs/ark" },
-          points: [
-            [
-              Date.parse("2026-08-10T00:00:00Z"),
-              100_000_000_000,
-              94_000_000_000,
-              6_000_000_000,
-            ],
-          ],
-        },
-        {
-          // The one that replaced it, reporting into the final bucket.
-          key: { filesystem: "ark", mountpoint: "/mnt/ark" },
-          points: [
-            [
-              Date.parse("2026-08-10T00:59:00Z"),
-              100_000_000_000,
-              94_000_000_000,
-              6_000_000_000,
-            ],
-          ],
-        },
-      ],
+  it("hands the rest over to the Events tab", () => {
+    renderOverview({
+      events: Array.from({ length: 11 }, (_, i) => event(i, "info")),
     });
+    expect(
+      screen.getByRole("link", { name: "3 more on the Events tab" }),
+    ).toHaveAttribute("href", "/hosts/7/events");
+  });
 
-    const rows = filesystemRows(retired);
-    expect(rows).toHaveLength(2);
-    // Still listed -- the disk existed, and dropping the row would claim it
-    // never did. It is its NUMBERS that stop claiming to be current, which is
-    // what diskWarnings skips on.
-    expect(rows[0]).toMatchObject({
-      label: "/netra/fs/ark",
-      total: null,
-      used: null,
-      free: null,
+  // A full page is the hub's limit, not the window's count.
+  it("does not count past the hub's limit as the window's total", () => {
+    renderOverview({
+      range: "1h",
+      events: Array.from({ length: 500 }, (_, i) => event(i, "info")),
     });
-    expect(rows[1]).toMatchObject({
-      label: "/mnt/ark",
-      used: 94_000_000_000,
-      free: 6_000_000_000,
-    });
+    expect(
+      screen.getByRole("link", { name: "Over 492 more on the Events tab" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says a quiet window was quiet, and an unread one was not read", () => {
+    const { unmount } = renderOverview({ events: [], range: "24h" });
+    expect(screen.getByText(/Nothing happened on this host in the last/));
+    unmount();
+    renderOverview({ events: null });
+    expect(screen.getByText("No events have been read yet."));
   });
 });
 
-// The Traffic card became two tiles and a spec panel. The rules these
-// assertions carry did not change with the shape: the figures are
-// host_current's gauges, blanked when the host stops reporting, and they are
-// bytes per second, never bits.
-describe("Overview network tiles", () => {
-  it("enlarges the traffic chart into the dialog", async () => {
-    renderOverview({ netMetrics });
-    // The chart, not the tiles: the Traffic panel is the host-traffic spec,
-    // drawn here exactly as the Network tab draws it.
-    const traffic = screen.getByRole("region", { name: "Traffic chart" });
+describe("the Docker CPU panel", () => {
+  const containers = (n: number) =>
+    response({
+      family: "container",
+      key_columns: ["container"],
+      columns: ["cpu_pct", "mem_used", "mem_limit"],
+      series: Array.from({ length: n }, (_, i) => ({
+        key: { container: `stack/svc-${i}` },
+        points: [[1_786_323_540_000, i + 1, 10, null]],
+      })),
+    });
 
-    await userEvent.click(
-      within(traffic).getByRole("button", { name: /Enlarge/ }),
-    );
-
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-  });
-
-  // Each tile is a link to the panel that draws the same column in full,
-  // through /hosts/{id}/chart/<slug> -- the URL the router already resolves
-  // to whichever tab owns that panel.
-  it("links a tile to the panel that draws its column", () => {
-    renderOverview({ netMetrics });
-    const network = screen.getByRole("region", { name: "Network" });
-
+  it("draws the heaviest containers on a host that runs any", () => {
+    renderOverview({ containerMetrics: containers(3) });
     expect(
-      within(network).getByRole("link", { name: /Traffic in/ }),
-    ).toHaveAttribute("href", "/hosts/7/chart/host-traffic");
+      screen.getByRole("region", { name: "Docker CPU chart" }),
+    ).toBeInTheDocument();
   });
 
-  it("shows traffic in bytes per second, not bits", () => {
-    renderOverview({
-      netMetrics,
-      host: { ...host, net_rx_bytes: 2_000_000, net_tx_bytes: 500_000 },
-    });
-    const traffic = screen.getByRole("region", { name: "Network" });
-
-    expect(within(traffic).getByText(/2 MB\/s/)).toBeInTheDocument();
-    expect(within(traffic).getByText(/500 kB\/s/)).toBeInTheDocument();
-    expect(traffic.textContent).not.toMatch(/b\/s/);
-  });
-
-  // A host that stopped reporting must read as absent, never as the last
-  // rate it ever sent. This card scanned backwards for the last non-null,
-  // so a dead agent's traffic sat frozen at its final value -- while the
-  // fleet's traffic cell, reading the latest bucket, showed the same host as
-  // absent. "The agent is down" must not render as "traffic is steady".
-  //
-  // The rule survives the move to a gauge: host_current's columns are NULL
-  // for a host that has never reported traffic, and the upsert only ever
-  // writes them from a post that actually carried net samples.
-  it("reads a host that stopped reporting as absent, not as its last known rate", () => {
-    const stale = response({
-      family: "net",
-      key_columns: ["interface"],
-      columns: ["rx_bytes", "tx_bytes"],
-      series: [
-        {
-          key: { interface: "eth0" },
-          // A real reading early in the window and nothing since: every
-          // later bucket grids to null.
-          points: [[1_786_321_800_000, 2_000_000, 500_000]],
-        },
-      ],
-    });
-
-    renderOverview({
-      netMetrics: stale,
-      host: { ...host, net_rx_bytes: null, net_tx_bytes: null },
-    });
-    const traffic = screen.getByRole("region", { name: "Network" });
-
-    expect(traffic.textContent).not.toMatch(/MB\/s/);
-    expect(
-      within(traffic).getAllByText(new RegExp(ABSENT)).length,
-    ).toBeGreaterThan(0);
-  });
-
-  // The reported bug, on this page's copy of the number. The sparkline is
-  // drawn from the series and follows the range; the rates beside it are the
-  // gauge and do not. Reading the series here made "now" mean a different
-  // instant at 1h than at 6h.
-  it("reads the gauge rather than the end of the series", () => {
-    renderOverview({
-      netMetrics,
-      host: { ...host, net_rx_bytes: 9_000_000, net_tx_bytes: 9_000_000 },
-    });
-    const traffic = screen.getByRole("region", { name: "Network" });
-
-    expect(within(traffic).getAllByText(/9 MB\/s/).length).toBe(2);
-  });
-
-  // The same rule as before the move to a gauge, now that the gauge is what
-  // could break it: host_current keeps a dead host's last pair for as long
-  // as the row exists, so the card gates on the host still reporting. A
-  // frozen rate here would sit under a header already saying "offline".
-  it("blanks the rates of a host that stopped reporting, gauge or not", () => {
-    renderOverview({
-      netMetrics,
-      host: {
-        ...host,
-        last_seen: "2026-08-10T00:00:00Z",
-        net_rx_bytes: 9_000_000,
-        net_tx_bytes: 9_000_000,
-      },
-    });
-    const traffic = screen.getByRole("region", { name: "Network" });
-
-    expect(traffic.textContent).not.toMatch(/MB\/s/);
-    expect(
-      within(traffic).getAllByText(new RegExp(ABSENT)).length,
-    ).toBeGreaterThan(0);
-  });
-});
-
-// "0.4.1" does not identify a build -- it is whatever was last tagged, and
-// the agent in front of you may be a rebuild or a patched branch. The commit
-// is what makes the answer exact, and it was collected and served all along
-// while only the version was shown.
-describe("Overview system card", () => {
-  it("identifies the reporting agent by its version", () => {
-    renderOverview();
-    const system = screen.getByRole("region", { name: "System" });
-    expect(within(system).getByText("0.4.1")).toBeInTheDocument();
-  });
-
-  it("reads absent, never empty, when the host reported no agent at all", () => {
-    renderOverview({
-      host: { ...host, agent_version: null },
-    });
-    const system = screen.getByRole("region", { name: "System" });
-    const agent = within(system).getByText("Agent").nextElementSibling;
-    expect(agent?.textContent).toBe(ABSENT);
+  it("draws nothing on a host without containers", () => {
+    renderOverview({ containerMetrics: containers(0) });
+    expect(screen.queryByRole("region", { name: /Docker CPU/ })).toBeNull();
   });
 });
 
@@ -1172,109 +835,5 @@ describe("the attention band and the host's drives", () => {
       now: new Date("2026-08-10T01:00:00Z"),
     });
     expect(testee[0]!.since).toBeNull();
-  });
-});
-
-// The stored gauge, which is what keeps the Disk card readable on a machine
-// that is switched off. Same pair of sources the fleet's fullestFilesystem
-// chooses between, and the same rule for choosing.
-describe("filesystemRows, from the host's stored gauge", () => {
-  const at = "2026-08-10T02:00:00Z";
-  const mount = (label: string, ts: string, used: number) => ({
-    id: 1,
-    label,
-    mountpoint: `/mnt/${label}`,
-    device_id: null,
-    ts,
-    total: 100,
-    used,
-    free: 100 - used,
-  });
-
-  // The card used to print a dash per mount on a host that had stopped
-  // reporting, because every figure came off the window's last bucket. The
-  // disks had not moved a byte; there was a true reading and the page showed
-  // nothing.
-  it("shows the last figures on a host that is switched off", () => {
-    const rows = filesystemRows(null, {
-      last_seen: at,
-      filesystems: [mount("pool", at, 87)],
-    });
-
-    expect(rows).toEqual([
-      { label: "/mnt/pool", total: 100, used: 87, free: 13, asOf: at },
-    ]);
-  });
-
-  // The rule the window's last slot used to enforce, now enforced by date: a
-  // mount the agent has stopped naming while the host keeps talking is
-  // retired, and its 94 % must not sit on the page as a fact about now beside
-  // the mount that replaced it.
-  it("stops a retired mount claiming a reading", () => {
-    const rows = filesystemRows(null, {
-      last_seen: at,
-      filesystems: [
-        mount("ark", at, 20),
-        mount("old", "2026-08-09T02:00:00Z", 94),
-      ],
-    });
-
-    expect(rows[0]).toMatchObject({ label: "/mnt/ark", used: 20 });
-    expect(rows[1]).toMatchObject({ label: "/mnt/old", used: null });
-  });
-
-  // A hub that does not send the gauge yet keeps the window-derived reading,
-  // unchanged -- including its own retired-mount rule.
-  it("falls back to the window when the host carries no gauge", () => {
-    const [row] = filesystemRows(fsMetrics, { last_seen: at });
-    expect(row).toMatchObject({ label: "/", used: 40_000_000_000, asOf: null });
-  });
-});
-
-// A retired mount keeps its ROW and loses its NUMBERS, which is the rule the
-// window branch has always followed. Listing only the measured ones made a
-// live host whose filesystem collector stalls -- a statfs that blocks, a
-// mount namespace that changed -- lose every row three minutes later, and
-// the card then said "No filesystems have been read yet" about disks it had
-// read minutes before.
-describe("filesystemRows keeps a retired mount listed", () => {
-  const at = "2026-08-10T02:00:00Z";
-  const mount = (label: string, ts: string, used: number) => ({
-    id: 1,
-    label,
-    mountpoint: `/mnt/${label}`,
-    device_id: null,
-    ts,
-    total: 100,
-    used,
-    free: 100 - used,
-  });
-
-  it("lists it with no reading rather than dropping it", () => {
-    const rows = filesystemRows(null, {
-      last_seen: at,
-      filesystems: [
-        mount("ark", at, 20),
-        mount("old", "2026-08-09T02:00:00Z", 94),
-      ],
-    });
-
-    expect(rows.map((r) => r.label)).toEqual(["/mnt/ark", "/mnt/old"]);
-    // The numbers are what stop claiming to be current. diskState skips a
-    // null, so the retired mount raises nothing and colours nothing -- the
-    // same outcome the window branch reaches through current().
-    expect(rows[1]).toMatchObject({ total: null, used: null, free: null });
-  });
-
-  // The empty state must mean "never reported", not "not measured this
-  // minute": every mount stale at once is a stalled collector, not a host
-  // without disks.
-  it("does not empty the card when every mount goes stale at once", () => {
-    const rows = filesystemRows(null, {
-      last_seen: at,
-      filesystems: [mount("old", "2026-08-09T02:00:00Z", 94)],
-    });
-
-    expect(rows).toHaveLength(1);
   });
 });
