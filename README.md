@@ -14,6 +14,12 @@ data directory to back up on a monitored host.
 Both images are published on every release:
 `ghcr.io/trick77/netra` and `ghcr.io/trick77/netra-agent`.
 
+![The fleet: every host's CPU, memory, fullest filesystem and traffic, the ones that need attention on top](docs/img/fleet.png)
+
+![One host: what is wrong, the four readings, recent events and every filesystem](docs/img/host.png)
+
+<sub>A simulated fleet (`netra-sim`), not a real one.</sub>
+
 ---
 
 ## Deploy the hub
