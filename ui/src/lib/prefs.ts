@@ -21,7 +21,7 @@
 /** Every key this app writes, in one place so a browser's netra
  * preferences are greppable in devtools as a group. */
 export const RANGE_KEY = "netra.range";
-/** The fleet's host view: "cards" (the default) or "table". This browser's
+/** The fleet's host view: "table" (the default) or "cards". This browser's
  * own choice; no URL parameter and no Settings entry -- a link opens the
  * reader's own view, not the sender's. */
 export const FLEET_VIEW_KEY = "netra.fleet.view";
