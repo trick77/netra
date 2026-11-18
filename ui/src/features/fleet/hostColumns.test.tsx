@@ -4,7 +4,7 @@
 // tests pin the contract it depends on: column order, the disk cell's
 // fullest-mount naming, and the
 // sub-300s uptime severity -- see task-11-brief.md.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { areaPath, linePath } from "../../ui/charts/geometry";
 import {
@@ -14,6 +14,15 @@ import {
 import { hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT, absolute } from "../../lib/format";
 import { SEVERITY_COLOR, STALE_TREND_COLOR } from "../../ui/Meter";
+
+// The table's reading cells are fluid: their trend is as wide as the column
+// gives it, never narrower than READING_SPARK_WIDTH. A path is checked
+// against the width the chart was actually drawn at.
+function drawnWidth(container: HTMLElement): number {
+  const width = Number(container.querySelector("svg")!.getAttribute("width"));
+  expect(width).toBeGreaterThanOrEqual(READING_SPARK_WIDTH);
+  return width;
+}
 
 function makeRow(overrides: Partial<HostRow> = {}): HostRow {
   return {
@@ -85,6 +94,24 @@ describe("hostColumns", () => {
       "Traffic",
       "Last seen",
     ]);
+  });
+
+  // The four readings share the row, so their trends keep close to one time
+  // scale; Traffic alone used to take all the spare width. The shares fill
+  // the row, so the host column (no width, a CSS minimum) and Last seen
+  // (CONTENT_WIDTH) stay at their minimum.
+  it("shares the row between the four readings", () => {
+    const widths = Object.fromEntries(
+      hostColumns("1h").map((c) => [c.header, c.width]),
+    );
+    expect(widths).toEqual({
+      Host: undefined,
+      CPU: "24%",
+      Memory: "24%",
+      Filesystem: "24%",
+      Traffic: "27%",
+      "Last seen": "1%",
+    });
   });
 
   it("consumes the range parameter (build fails silently otherwise via noUnusedParameters)", () => {
@@ -303,7 +330,7 @@ describe("hostColumns", () => {
       );
       const expected = linePath(
         series,
-        READING_SPARK_WIDTH,
+        drawnWidth(container),
         READING_SPARK_HEIGHT,
         0,
         100,
@@ -807,7 +834,7 @@ describe("hostColumns", () => {
       const line = container.querySelector("path[data-line]")!;
       const expected = linePath(
         row.reporting,
-        READING_SPARK_WIDTH,
+        drawnWidth(container),
         READING_SPARK_HEIGHT,
         0,
         100,
@@ -1019,6 +1046,46 @@ describe("hostColumns", () => {
   });
 
   describe("traffic cell", () => {
+    // The row carries the tier's own resolution and the cell folds to the
+    // width it draws at: more points than the old fixed 175-point fold on a
+    // wide column, never one point per raw bucket.
+    it("folds the series to the width it is drawn at", () => {
+      // A column 300px wide: jsdom lays nothing out, so the measurement is
+      // what a real ResizeObserver would report.
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(
+            private readonly cb: (
+              entries: { contentRect: { width: number } }[],
+            ) => void,
+          ) {}
+          observe() {
+            this.cb([{ contentRect: { width: 300 } }]);
+          }
+          disconnect() {}
+        },
+      );
+      try {
+        const trafficCol = hostColumns("24h").find(
+          (c) => c.header === "Traffic",
+        )!;
+        const raw = Array.from({ length: 1000 }, (_, i) => 1e6 + (i % 7) * 1e5);
+        const { container } = render(
+          <>{trafficCol.cell(makeRow({ rx: raw, tx: raw }))}</>,
+        );
+        expect(drawnWidth(container)).toBe(300);
+        const up = container.querySelector("path[data-up]")!.getAttribute("d")!;
+        const vertices = (up.match(/[ML]/g) ?? []).length;
+        // reduceToColumns(1000 -> 300) is 250 points: more than the old
+        // fixed 175-point fold, never one per raw bucket.
+        expect(vertices).toBeGreaterThan(175);
+        expect(vertices).toBeLessThanOrEqual(300 + 4);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it("renders rx and tx in identical typographic weight, distinguished only by direction", () => {
       const cols = hostColumns("1h");
       const trafficCol = cols.find((c) => c.header === "Traffic")!;
@@ -1197,9 +1264,9 @@ describe("hostColumns", () => {
       const line = container.querySelector("path[data-line]")!;
       const expected = linePath(
         row.memUsed!,
-        // The shared sparkline size, not literals: every list chart reads it
-        // from one pair of constants so a row's cells stay the same shape.
-        READING_SPARK_WIDTH,
+        // The width the cell drew at (it grows with its column) and the
+        // shared height, not literals.
+        drawnWidth(container),
         READING_SPARK_HEIGHT,
         // From zero to mem_total plus the headroom that keeps a full host off
         // the border. Free is the gap between the line and the top.
@@ -1210,7 +1277,7 @@ describe("hostColumns", () => {
       expect(line.getAttribute("d")).toBe(expected[0]);
       const area = container.querySelector("path[data-area]")!;
       expect(area.getAttribute("d")).toBe(
-        areaPath(expected, READING_SPARK_WIDTH, READING_SPARK_HEIGHT, 2)[0],
+        areaPath(expected, drawnWidth(container), READING_SPARK_HEIGHT, 2)[0],
       );
       // The stale ink, not a severity: this fixture stopped reporting, so
       // mem_used has no current value to judge. A reporting host draws the

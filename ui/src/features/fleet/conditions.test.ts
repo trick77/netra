@@ -11,7 +11,6 @@ import {
   groupByHost,
   groupByKind,
   hostConditions,
-  hostsNeedingAttention,
   isConditionKind,
   kindLabel,
   kindSeverity,
@@ -267,7 +266,6 @@ describe("fleetConditions", () => {
       NOW,
     );
     expect(conditions.map((c) => c.hostname)).toEqual(["web-01", "db-01"]);
-    expect(hostsNeedingAttention(conditions)).toBe(2);
   });
 
   // The hub deliberately refuses to raise this: a critical condition in the

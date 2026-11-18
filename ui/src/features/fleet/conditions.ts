@@ -929,17 +929,3 @@ export function fleetConditions(
   }
   return out;
 }
-
-/**
- * How many distinct hosts the conditions cover.
- *
- * Exported for the same reason the counts line is built from the same list it
- * renders: the line above the list states a count, and the count has to be
- * derived from the same conditions the list filters by or the two disagree on
- * screen.
- */
-export function hostsNeedingAttention(
-  conditions: readonly Condition[],
-): number {
-  return new Set(conditions.map((c) => c.hostId)).size;
-}

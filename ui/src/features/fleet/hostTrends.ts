@@ -30,7 +30,7 @@ import { containerTrends, type ContainerTrend } from "../../lib/containers";
 import { currentFilesystems } from "../../lib/host";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
-import { SPARK_WIDTH, SWEPT_FILL_OPACITY } from "../../ui/charts/size";
+import { SWEPT_FILL_OPACITY } from "../../ui/charts/size";
 import type { HostRow } from "./hostColumns";
 import { diskState, type DiskThresholds } from "./conditions";
 import type { DiskSeverity } from "./conditions";
@@ -666,9 +666,10 @@ export function hostTrendsFrom(
   // status badge is judged from it; cpuBands() grids it again for the
   // silhouette when the host was too large to fetch per-core.
   const total = griddedValues(host, 0, "cpu_total");
-  // Folded to the cell it will be drawn in, not left at the tier's
-  // resolution: 24 h is 285 buckets and the cell is 150 px.
-  const traffic = trafficSeries(net, SPARK_WIDTH);
+  // Left at the tier's resolution: the cell folds to the width it is drawn
+  // at (TrafficCell), which grows with the column -- a fold here to one fixed
+  // width threw detail away a wide row had the pixels for.
+  const traffic = trafficSeries(net);
 
   return {
     // Whichever family answered. They are all asked for the same window, so
@@ -679,8 +680,9 @@ export function hostTrendsFrom(
     mem: memoryBands(host),
     reporting: total,
     memUsed: griddedValues(host, 0, "mem_used"),
-    // The MEAN of each pixel column, summed across interfaces --
-    // trafficSeries() carries why both halves of that are what RRDtool does.
+    // Summed across interfaces, at the tier's resolution; the cell folds
+    // each to its pixel columns with the MEAN -- trafficSeries() carries why
+    // both halves of that are what RRDtool does.
     // The interface that actually burst is one click away on the host page,
     // where the pairs are drawn per interface.
     rx: traffic.rx,

@@ -23,10 +23,8 @@ import {
   fleetConditions,
   groupByHost,
   groupByKind,
-  hostsNeedingAttention,
   isConditionKind,
   kindLabel,
-  kindSeverity,
   type AttentionFilter,
   type Catalogue,
   type Condition,
@@ -168,9 +166,9 @@ export interface FleetPageProps {
    * severity, or one condition kind.
    *
    * One value rather than a severity and a kind side by side, because they
-   * are one question with one answer -- and because the Segmented that shows
-   * it must always have exactly one option pressed. Picking a kind presses
-   * the severity that kind is at; picking a severity clears the kind.
+   * are one question with one answer. The chips set a kind (or "all"); a
+   * severity arrives only from a URL (?attn=critical), which an older link
+   * or a bookmark still carries.
    */
   attention?: FleetFilter;
   onAttentionChange?: (next: FleetFilter) => void;
@@ -380,7 +378,6 @@ export function FleetPage({
       kindCatalogue,
       now,
     );
-  const troubled = hostsNeedingAttention(shown);
   const groups = groupByHost(shown);
   const byHost = new Map<string, HostGroup>(groups.map((g) => [g.hostId, g]));
   const kinds = groupByKind(shown);
@@ -396,24 +393,13 @@ export function FleetPage({
     severity: group.severity,
     ids: group.hostIds,
   }));
-  // "Has something critical", not "is worst-critical", and the two buckets
-  // therefore OVERLAP -- a host that is both silent and short of disk is in
-  // both. They stop adding up to `troubled` and that is the trade, taken on
-  // purpose: a kind is always a subset of the severity it is at, so picking
-  // "failed units" from the counts line can press the Warning segment without
-  // the two contradicting each other. Partitioned by worst, they could not --
-  // thirty-one warned hosts that are also silent showed "Warning 0" pressed
-  // above thirty-one rows.
-  //
-  // Each count still answers a question a reader actually asks: how many
-  // machines have something critical on them.
+  // The ?attn=critical / ?attn=warning filter: "has something critical", not
+  // "is worst-critical", so a host that is both silent and short of disk is
+  // in both. Warning is everything that is not critical rather than
+  // severity === "warning" exactly: a severity added later that is neither
+  // would otherwise be unreachable from either link.
   const hasSeverity = (group: HostGroup, critical: boolean): boolean =>
     group.conditions.some((c) => (c.severity === "critical") === critical);
-  const criticalHosts = groups.filter((g) => hasSeverity(g, true)).length;
-  // Everything that is not critical rather than severity === "warning"
-  // exactly: a severity added later that is neither would otherwise count a
-  // host in `troubled` and leave it unreachable from either segment.
-  const warningHosts = groups.filter((g) => hasSeverity(g, false)).length;
 
   // One `attn` param, read against the entity on screen. A container kind
   // reaching the host paths would be filterKind()'s problem and a host kind
@@ -603,9 +589,11 @@ export function FleetPage({
           size a second time and then said what the chips below it say. It
           names the LIST now, which is also what makes the two lists two
           pages: each is a title and a URL rather than one route read two
-          ways. */}
+          ways. "Hosts", not "All hosts": the chips and the filter narrow
+          this list in place, and a heading that said "All" stood over a
+          filtered one. */}
       <div className="pagehead">
-        <h1>{entity === "containers" ? "All containers" : "All hosts"}</h1>
+        <h1>{entity === "containers" ? "Containers" : "Hosts"}</h1>
       </div>
 
       {/* The ambient figures, on a rail rather than in cards. They were three
@@ -664,28 +652,6 @@ export function FleetPage({
               themselves going stale, and by a host's own "last seen". */}
       </StatRail>
 
-      {/* One counts line, reading whichever entity is on screen. The host
-          conditions and the container states are different vocabularies over
-          different rows, and a line showing both at once would be counting
-          two things in one row of chips. `as` on the way out: AttentionCounts
-          is structural over any kind, and what comes back is one of the
-          kinds this page just handed it. */}
-      {entity === "hosts" && shown.length > 0 ? (
-        <AttentionCounts
-          kinds={hostTiles}
-          active={activeKind}
-          href={(next) => attentionHref(next as FleetFilter)}
-          onSelect={(next) => setAttention(next as FleetFilter)}
-        />
-      ) : null}
-      {entity === "containers" && containerTiles.length > 0 ? (
-        <AttentionCounts
-          kinds={containerTiles}
-          active={containerKind}
-          href={(next) => attentionHref(next as FleetFilter)}
-          onSelect={(next) => setAttention(next as FleetFilter)}
-        />
-      ) : null}
       {/* What is wrong, in sentences, above the inventory rather than
           distributed through it. The same band the host page's Overview draws
           -- one component, because two renderings of one vocabulary is how
@@ -694,7 +660,7 @@ export function FleetPage({
           Over ALL the container rows, never the filtered ones: the band says
           what is wrong with the fleet, and a reader typing in the search box
           is narrowing what they are LOOKING for, not changing what is true.
-          Same rule the counts line above it already follows.
+          Same rule the chips in the toolbar below it already follow.
 
           Capped, with a linked overflow: a fleet's band is unbounded where a
           host's is not, and one lossy host can put a series-gap row here for
@@ -713,21 +679,27 @@ export function FleetPage({
         />
       ) : null}
 
-      {/* The row of controls that sit over the list: the severity segments on
-          the left, the filter on the right. The filter used to hang off the
-          right end of the title, which put it a block away from the segments
-          it composes with; both narrow the same list, so both belong on the
-          line directly above it, and the field keeps the same right edge it
-          had. The toolbar is drawn whether or not there are segments -- an
-          empty left half is a row with the filter in it, which is the row the
-          list needs, and a control that moves up a block on a healthy fleet
-          is a control the reader has to find twice.
+      {/* The row of controls that sit over the list: the attention chips on
+          the left, the view and the filter on the right. All of them narrow
+          or shape the same list, so they share the line directly above it.
+          The toolbar is drawn whether or not there are chips -- an empty left
+          half is a row with the filter in it, which is the row the list
+          needs, and a control that moves up a block on a healthy fleet is a
+          control the reader has to find twice.
 
-          The segments are hosts only: every condition netra has is
-          host-level, so on the containers list this control would offer three
-          segments that all show the same rows. And only once something is
-          wrong, since three segments reading "All 5 / Critical 0 / Warning 0"
-          offer two choices that lead nowhere.
+          The chips ARE the filter: one per kind, clicking the chosen one
+          again shows everything. An All / Critical / Warning segment sat here
+          too and said the chips' counts a second time, a row of its own on
+          every fleet with a problem. Nothing on the page links to a
+          severity any more; ?attn=critical in a URL (an old link, a
+          bookmark) still filters by it, and the countline below names it.
+
+          One chip row, reading whichever entity is on screen. The host
+          conditions and the container states are different vocabularies over
+          different rows, and a line showing both at once would be counting
+          two things in one row of chips. `as` on the way out: AttentionCounts
+          is structural over any kind, and what comes back is one of the
+          kinds this page just handed it.
 
           The key that focuses the filter is said where the field is. "/" has
           focused it since useSlashToFocus was written and nothing on screen
@@ -736,33 +708,20 @@ export function FleetPage({
           screen-reader user reaching this field has not typed "/" to get
           here. */}
       <div className="toolbar">
-        {entity === "hosts" && troubled > 0 ? (
-          <Segmented
-            options={[
-              { value: "all", label: `All ${hostRows.length}` },
-              { value: "critical", label: `Critical ${criticalHosts}` },
-              { value: "warning", label: `Warning ${warningHosts}` },
-            ]}
-            // A kind is a severity's subset, so the segment that contains it
-            // stays pressed while it is chosen -- Segmented's contract is
-            // exactly one pressed option, and a kind chosen from the counts
-            // line above must not leave all three looking unselected.
-            // A kind is a severity's subset, so the segment that contains it
-            // stays pressed while it is chosen -- Segmented's contract is
-            // exactly one pressed option, and a kind chosen from the counts
-            // line above must not leave all three looking unselected. The
-            // observed severity when the kind is present (disk warns at 90%
-            // and turns critical at 95%), its entry severity when every host
-            // carrying it has recovered.
-            value={
-              activeKind === null
-                ? attention
-                : (kinds.find((k) => k.kind === activeKind)?.severity ??
-                      kindSeverity(kindCatalogue, activeKind)) === "critical"
-                  ? "critical"
-                  : "warning"
-            }
-            onChange={(next) => setAttention(next as AttentionFilter)}
+        {entity === "hosts" && shown.length > 0 ? (
+          <AttentionCounts
+            kinds={hostTiles}
+            active={activeKind}
+            href={(next) => attentionHref(next as FleetFilter)}
+            onSelect={(next) => setAttention(next as FleetFilter)}
+          />
+        ) : null}
+        {entity === "containers" && containerTiles.length > 0 ? (
+          <AttentionCounts
+            kinds={containerTiles}
+            active={containerKind}
+            href={(next) => attentionHref(next as FleetFilter)}
+            onSelect={(next) => setAttention(next as FleetFilter)}
           />
         ) : null}
         <div className="spacer" />

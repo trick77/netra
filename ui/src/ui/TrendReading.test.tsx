@@ -65,6 +65,22 @@ describe("TrendReading", () => {
     expect(Math.min(...widths)).toBeGreaterThanOrEqual(READING_SPARK_WIDTH);
   });
 
+  // A fluid trend starts where the figure ends, so the figure sits in a
+  // floored slot -- present even when there is no figure, or a silent
+  // host's trend would start left of every other row's.
+  it("holds a fluid figure's slot, with or without a figure", () => {
+    const { container, rerender } = render(
+      <TrendReading fluid figure={<Figure pct={6} />} trend={() => null} />,
+    );
+    expect(container.querySelector(".treading-slot .fig")).not.toBeNull();
+
+    rerender(<TrendReading fluid figure={null} trend={() => null} />);
+    expect(container.querySelector(".treading-slot")).not.toBeNull();
+
+    rerender(<TrendReading figure={<Figure pct={6} />} trend={() => null} />);
+    expect(container.querySelector(".treading-slot")).toBeNull();
+  });
+
   it("prints nothing for a reading it does not have", () => {
     const { container } = render(
       <TrendReading figure={null} trend={() => null} />,
