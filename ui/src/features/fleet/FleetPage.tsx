@@ -747,9 +747,10 @@ export function FleetPage({
             ) : null}
             <Segmented
               className="viewpick"
+              // The default first: the table is what a fresh browser shows.
               options={[
-                { value: "cards", label: "Cards" },
                 { value: "table", label: "Table" },
+                { value: "cards", label: "Cards" },
               ]}
               value={view}
               onChange={(next) => setView(next as FleetView)}

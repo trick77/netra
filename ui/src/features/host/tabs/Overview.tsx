@@ -448,7 +448,7 @@ function EventsCard({
         <p className="note">No events have been read yet.</p>
       ) : sorted.length === 0 ? (
         <p className="note">
-          Nothing happened on this host in the last{" "}
+          Nothing happened on this host in the{" "}
           {range ? rangeLabel(range) : "window"}.
         </p>
       ) : (
@@ -601,13 +601,16 @@ export function Overview({
           to the most common thing to go and fix. */}
       <div className="ovgrid">
         <EventsCard events={events} hostId={host.id} range={range} />
-        <FilesystemTable
-          rows={filesystems ?? []}
-          metrics={filesystemMetrics}
-          range={range}
-          lastSeen={host.last_seen}
-          fetchFamily={fetchFamily}
-        />
+        {/* A card like the Events card beside it: one box title style. */}
+        <Panel label="Filesystems" title="Filesystems" className="fstable">
+          <FilesystemTable
+            rows={filesystems ?? null}
+            metrics={filesystemMetrics}
+            range={range}
+            lastSeen={host.last_seen}
+            fetchFamily={fetchFamily}
+          />
+        </Panel>
       </div>
 
       {/* The heaviest containers, the same panel the Containers tab leads

@@ -149,6 +149,19 @@ describe("FilesystemTable", () => {
     expect(old.querySelector(".segbar")).toBeNull();
   });
 
+  // A bare header row says nothing: unread and empty say which they are.
+  it("says why there is no table rather than drawing its header alone", () => {
+    const { rerender } = render(<FilesystemTable rows={null} metrics={null} />);
+    expect(
+      screen.getByText("No filesystems have been read yet."),
+    ).toBeInTheDocument();
+    rerender(<FilesystemTable rows={[]} metrics={null} />);
+    expect(
+      screen.getByText("This host reports no filesystems."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
   // FUSE can report Bfree > Blocks: no Use% exists, so no 200% red bar.
   it("draws no meter for a negative capacity", () => {
     render(

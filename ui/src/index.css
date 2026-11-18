@@ -1293,10 +1293,15 @@ tbody tr:hover .host-cell-name {
   gap: var(--space-2);
   min-width: 0;
 }
-.treading-head .k {
-  font-size: var(--text-micro);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+/* THE box title: a card's header, a chart panel's title, a reading's label.
+   One rule, so the three cannot drift apart again -- the readings once wore
+   spaced capitals, a third style beside the Events card and the chart titles
+   drawn next to them. Each selector's own rule keeps only its layout. */
+.card > header h3,
+.smp .t h4,
+.treading-head > .k {
+  font-size: var(--text-label);
+  font-weight: 500;
   color: var(--muted);
 }
 .treading-head > .u {
@@ -1879,14 +1884,10 @@ tbody tr:hover .host-cell-name {
   gap: var(--space-2);
   margin-bottom: 9px;
 }
+/* Size, weight and --muted come from the box title rule; the reading beside
+   it (.now) keeps --ink -- the figure is what the eye should land on. */
 .smp .t h4 {
   margin: 0;
-  font-size: var(--text-label);
-  font-weight: 500;
-  /* --muted, matching `.card > header h3`: these are both panel titles, and
-     the Overview draws them side by side. The reading beside it (.now) keeps
-     --ink -- the figure is what the eye should land on, not the label. */
-  color: var(--muted);
 }
 .smp .t .now {
   margin-left: auto;
@@ -2520,11 +2521,6 @@ tbody tr:hover .host-cell-name {
   align-items: center;
   gap: var(--space-2);
 }
-.card > header h3 {
-  font-size: var(--text-label);
-  color: var(--muted);
-  font-weight: 500;
-}
 /* Card's action element (see Card.tsx) is always the last child in the
    header and always follows the title, when present — push it to the
    right edge instead of letting it sit against the title. Excluding h3
@@ -2755,7 +2751,7 @@ tbody tr:hover .host-cell-name {
   margin-right: var(--space-2);
 }
 
-/* ── Host cards (HostCards.tsx), the fleet's default view ────────────
+/* ── Host cards (HostCards.tsx), the fleet's second view ─────────────
    One card per host, filling the page's width without holes: as many
    columns as fit at 22rem or more. Each card is the table's own cells in
    their card layout, so the two views say the same thing. */
@@ -2796,6 +2792,12 @@ tbody tr:hover .host-cell-name {
 }
 .hcard-head .fleet-host {
   min-width: 0;
+}
+/* A size above the readings' labels, which share the hostname's 14px/500
+   now that they are box titles: the card's own title has to outrank the
+   titles of its four bands by more than a colour. */
+.hcard .host-cell-name {
+  font-size: var(--text-body);
 }
 .hcard-seen {
   flex: none;
