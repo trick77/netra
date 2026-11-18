@@ -74,6 +74,11 @@ services:
       BACKEND_OIDC_CLIENT_ID: "${BACKEND_OIDC_CLIENT_ID:-}"
       BACKEND_OIDC_CLIENT_SECRET: "${BACKEND_OIDC_CLIENT_SECRET:-}"
 
+      # Notifications. Optional: empty sends nothing. Space-separated
+      # shoutrrr URLs (smtp://, ntfy://, ...); see README.md.
+      BACKEND_NOTIFY_URLS: "${BACKEND_NOTIFY_URLS:-}"
+      BACKEND_NOTIFY_REPEAT: "${BACKEND_NOTIFY_REPEAT:-24h}"
+
     # Liveness: the binary probes its own /healthz (the distroless image has
     # no shell and no wget). Database reachability is /readyz, not this: a
     # restart does not bring Postgres back.

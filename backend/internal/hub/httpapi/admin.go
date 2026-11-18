@@ -23,6 +23,7 @@ type adminHandler struct {
 	// operator, which is honest, where a wrong hostname in a setup command
 	// sends an agent token to whoever owns that name.
 	hubURL string
+	now    func() time.Time
 }
 
 // NewAdminHandler serves ALL of spec 8's /api/v1: the admin operations here,
@@ -35,7 +36,7 @@ type adminHandler struct {
 //
 // It is mounted behind RequireAdmin, never on its own.
 func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time, hubURL string) http.Handler {
-	h := &adminHandler{svc: svc, hubURL: hubURL}
+	h := &adminHandler{svc: svc, hubURL: hubURL, now: now}
 
 	mux := http.NewServeMux()
 	// The SPA cannot know the address agents post to: the browser reaches
@@ -53,6 +54,9 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 	mux.Handle("DELETE /api/v1/hosts/{id}", http.HandlerFunc(h.delete))
 	mux.Handle("DELETE /api/v1/hosts/{id}/containers/{containerID}",
 		http.HandlerFunc(h.deleteContainer))
+	mux.Handle("GET /api/v1/mutes", http.HandlerFunc(h.listMutes))
+	mux.Handle("POST /api/v1/mutes", http.HandlerFunc(h.createMute))
+	mux.Handle("DELETE /api/v1/mutes/{id}", http.HandlerFunc(h.deleteMute))
 
 	(&readHandler{svc: rd, now: now}).register(mux)
 	return mux

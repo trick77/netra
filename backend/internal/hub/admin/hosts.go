@@ -81,6 +81,8 @@ func describeConstraint(pgErr *pgconn.PgError) string {
 		return "a host with that name"
 	case "tokens_token_hash_key":
 		return "that token"
+	case "alert_mutes_host_id_fkey":
+		return "that host"
 	default:
 		return "that record"
 	}

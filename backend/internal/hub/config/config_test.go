@@ -239,3 +239,33 @@ func TestStaleVariablesNamesOldHostnameVariables(t *testing.T) {
 		t.Fatalf("StaleVariables() = %v, want %v", got, want)
 	}
 }
+
+func TestLoadNotify(t *testing.T) {
+	t.Setenv("BACKEND_DB_DSN", "postgres://localhost/netra")
+	t.Setenv("BACKEND_ADMIN_TOKEN", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Notify.Enabled() || cfg.Notify.Repeat != DefaultNotifyRepeat {
+		t.Fatalf("unset = %+v, want off with the default repeat", cfg.Notify)
+	}
+
+	// Spaces and newlines separate; commas belong to the URL.
+	t.Setenv("BACKEND_NOTIFY_URLS", " smtp://m:25/?from=a@x&to=b@x,c@x \n ntfy://ntfy.sh/t ")
+	t.Setenv("BACKEND_NOTIFY_REPEAT", "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"smtp://m:25/?from=a@x&to=b@x,c@x", "ntfy://ntfy.sh/t"}
+	if !slices.Equal(cfg.Notify.URLs, want) || cfg.Notify.Repeat != 0 || !cfg.Notify.Enabled() {
+		t.Fatalf("Notify = %+v", cfg.Notify)
+	}
+
+	t.Setenv("BACKEND_NOTIFY_REPEAT", "-1h")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_NOTIFY_REPEAT") {
+		t.Fatalf("negative repeat: %v", err)
+	}
+}

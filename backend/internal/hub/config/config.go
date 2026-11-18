@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/trick77/ship/kit/env"
 )
@@ -40,7 +41,30 @@ type Config struct {
 	// OIDC is the optional browser login. Zero value means the hub behaves
 	// exactly as it did before: the admin token is the only credential.
 	OIDC OIDCConfig
+
+	// Notify is the optional notification setup. No URLs means no notifier.
+	Notify NotifyConfig
 }
+
+// NotifyConfig holds the notification channels and the reminder interval.
+type NotifyConfig struct {
+	// URLs are shoutrrr service URLs (smtp://, ntfy://, telegram://, ...),
+	// separated by whitespace in BACKEND_NOTIFY_URLS. Not commas: shoutrrr's
+	// own URLs use commas to list recipients (smtp://...?to=a@x,b@x).
+	//
+	// They carry credentials, so nothing ever logs them.
+	URLs []string
+	// Repeat is how often an open condition is brought up again. Zero turns
+	// reminders off.
+	Repeat time.Duration
+}
+
+// Enabled reports whether any channel is configured.
+func (c NotifyConfig) Enabled() bool { return len(c.URLs) > 0 }
+
+// DefaultNotifyRepeat is the reminder interval when BACKEND_NOTIFY_REPEAT is
+// unset: once a day is a nudge, not a feed.
+const DefaultNotifyRepeat = 24 * time.Hour
 
 // OIDCConfig holds the OpenID Connect settings for browser sign-in.
 //
@@ -88,6 +112,14 @@ func Load() (Config, error) {
 			ClientID:     r.String("BACKEND_OIDC_CLIENT_ID", ""),
 			ClientSecret: r.String("BACKEND_OIDC_CLIENT_SECRET", ""),
 		},
+		Notify: NotifyConfig{
+			URLs:   strings.Fields(r.String("BACKEND_NOTIFY_URLS", "")),
+			Repeat: r.Duration("BACKEND_NOTIFY_REPEAT", DefaultNotifyRepeat),
+		},
+	}
+
+	if cfg.Notify.Repeat < 0 {
+		r.Fail("BACKEND_NOTIFY_REPEAT must not be negative (0 turns reminders off)")
 	}
 
 	// A bare hostname only: a scheme, path, port or userinfo here would render

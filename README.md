@@ -191,6 +191,43 @@ A fresh install needs none of this.
 
 ---
 
+## Notifications
+
+Optional. Leave `BACKEND_NOTIFY_URLS` empty and nothing is sent.
+
+| Variable | |
+|---|---|
+| `BACKEND_NOTIFY_URLS` | one or more [shoutrrr](https://containrrr.dev/shoutrrr/v0.8/services/overview/) URLs, separated by spaces |
+| `BACKEND_NOTIFY_REPEAT` | reminder interval for a condition still open, default `24h`; `0` turns reminders off |
+
+```sh
+BACKEND_NOTIFY_URLS=smtp://user:pass@mail.example.com:587/?from=netra@example.com&to=ops@example.com ntfy://ntfy.sh/my-netra
+```
+
+Spaces, not commas: shoutrrr lists recipients with commas (`to=a@x,b@x`). The
+URLs carry credentials and are never logged; a URL that does not parse stops
+the hub at startup. Channels: e-mail, ntfy, Pushover, Gotify, Telegram,
+Discord, Slack, Teams, Matrix and others, plus a generic webhook. SMS has no
+native channel; point the webhook at an SMS provider.
+
+What is sent, one message per host per minute at most:
+
+- **Conditions**: opened, worse (warning to critical), still open every
+  `BACKEND_NOTIFY_REPEAT`, cleared. A send that fails is retried next minute;
+  a restart neither repeats nor drops a message. Conditions already open when
+  notifications are first turned on are announced once.
+- **Critical events** (kernel disk/NVMe/ATA errors, OOM kills, ...): only events
+  at most 15 minutes old, so an agent replaying its buffer after an outage does
+  not resend the past hour. One message per host, type and device per hour.
+
+**Mutes** silence a host, or one kind on a host (`disk`, `disk_error`, ...), for
+a while or until lifted: from the host page in the UI, or
+`POST /api/v1/mutes` with `{"host_id": 3, "kind": "disk", "minutes": 60}`. A
+condition opened under a mute is announced when the mute ends if it is still
+open; an all-clear under a mute is dropped.
+
+---
+
 ## Mint an agent token
 
 Each host gets its own token, prefixed `nta_`. In the UI, add the host; or over

@@ -2,7 +2,7 @@
 
 # Database schema
 
-30 tables, 33 continuous aggregates; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
+31 tables, 33 continuous aggregates; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
 
 ## agent_samples
 
@@ -29,6 +29,29 @@ Foreign keys:
 Indexes:
 
 - `agent_samples_ts_idx` (`ts`)
+
+## alert_mutes
+
+Go types:
+
+- `admin.Mute` (internal/hub/admin): Mute is one notification mute.
+
+| Column | Type | Null | Default | PK |
+| --- | --- | --- | --- | --- |
+| `id` | integer | no | `identity always` | 1 |
+| `host_id` | integer | no |  |  |
+| `kind` | text | no | `''::text` |  |
+| `until_ts` | timestamp with time zone | yes |  |  |
+| `note` | text | no | `''::text` |  |
+| `created_ts` | timestamp with time zone | no | `now()` |  |
+
+Foreign keys:
+
+- `host_id` → `hosts` (`id`), on delete CASCADE
+
+Indexes:
+
+- `alert_mutes_host_idx` (`host_id`)
 
 ## collector_samples
 
@@ -181,6 +204,10 @@ Indexes:
 
 ## events
 
+Go types:
+
+- `notify.Event` (internal/hub/notify): Event is one critical event inside the freshness window.
+
 | Column | Type | Null | Default | PK |
 | --- | --- | --- | --- | --- |
 | `id` | integer | no | `identity always` | 1 |
@@ -299,6 +326,7 @@ Go types:
 
 - `conditions.Key` (internal/hub/conditions): Key identifies one condition: a kind, about one subject, on one host.
 - `conditions.Open` (internal/hub/conditions): Open is a condition currently recorded as open, as read back from the store.
+- `notify.Condition` (internal/hub/notify): Condition is one condition with something to say about it.
 - `read.Condition` (internal/hub/read): Condition is one open condition, as the fleet page reads it.
 
 | Column | Type | Null | Default | PK |
@@ -314,6 +342,9 @@ Go types:
 | `resolved_reason` | text | yes |  |  |
 | `missing_ticks` | integer | no | `0` |  |
 | `detail` | jsonb | no | `'{}'::jsonb` |  |
+| `notified_ts` | timestamp with time zone | yes |  |  |
+| `notified_severity` | text | yes |  |  |
+| `cleared_notified_ts` | timestamp with time zone | yes |  |  |
 
 Foreign keys:
 
@@ -321,6 +352,7 @@ Foreign keys:
 
 Indexes:
 
+- `host_conditions_clear_pending_idx` (`id`) where `resolved_ts IS NOT NULL AND notified_ts IS NOT NULL AND cleared_notified_ts IS NULL`
 - `host_conditions_host_opened_idx` (`host_id`, `opened_ts`)
 - `host_conditions_open_key` (`host_id`, `kind`, `subject`) unique where `resolved_ts IS NULL`
 
@@ -922,6 +954,14 @@ erDiagram
         integer hub_connect_max_us
         bigint hub_connect_failures_total
     }
+    alert_mutes {
+        integer id PK
+        integer host_id FK
+        text kind
+        timestamp_with_time_zone until_ts
+        text note
+        timestamp_with_time_zone created_ts
+    }
     collector_samples {
         integer host_id PK, FK
         timestamp_with_time_zone ts PK
@@ -1054,6 +1094,9 @@ erDiagram
         text resolved_reason
         integer missing_ticks
         jsonb detail
+        timestamp_with_time_zone notified_ts
+        text notified_severity
+        timestamp_with_time_zone cleared_notified_ts
     }
     host_current {
         integer host_id PK, FK
@@ -1360,6 +1403,7 @@ erDiagram
         timestamp_with_time_zone last_used_at
     }
     agent_samples }o--|| hosts : "host_id"
+    alert_mutes }o--|| hosts : "host_id"
     collector_samples }o--|| hosts : "host_id"
     container_samples }o--|| containers : "container_id, host_id"
     container_samples }o--|| hosts : "host_id"

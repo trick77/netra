@@ -22,6 +22,7 @@ import (
 	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
+	"github.com/trick77/netra/internal/hub/notify"
 	"github.com/trick77/netra/internal/hub/store"
 )
 
@@ -135,6 +136,25 @@ func run() error {
 	evalCtx, stopEval := context.WithCancel(ctx)
 	defer stopEval()
 	go conditions.New(s, time.Now()).Run(evalCtx)
+
+	// Notifications, when channels are configured. A bad channel URL stops
+	// the start: finding out at the first disk failure that the mail never
+	// worked is the one outcome this exists to prevent.
+	if cfg.Notify.Enabled() {
+		channels, err := notify.NewChannels(cfg.Notify.URLs)
+		if err != nil {
+			return err
+		}
+		notifier := notify.New(s, channels, cfg.HubURL, cfg.Notify.Repeat)
+		// Before the listener, so events an agent replays after this restart
+		// are not mistaken for ones the previous process announced. A failure
+		// is retried by the notifier's own tick.
+		if err := notifier.Prime(ctx); err != nil {
+			slog.Error("notify: prime", "err", err)
+		}
+		go notifier.Run(evalCtx)
+		slog.Info("notifications enabled", "channels", len(cfg.Notify.URLs), "repeat", cfg.Notify.Repeat.String())
+	}
 
 	srv := httpx.NewServer(cfg.ListenAddr,
 		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg, oidcSvc))
