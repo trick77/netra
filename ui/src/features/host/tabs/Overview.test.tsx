@@ -185,9 +185,21 @@ function facts() {
   return [
     ...screen
       .getByRole("region", { name: "System" })
-      .querySelectorAll(".hostfacts span"),
+      .querySelectorAll(".hostfacts .txt"),
   ].map((s) => s.textContent);
 }
+
+describe("Overview facts line", () => {
+  // Text, not a ::before: a copied line reads as one line, dots included.
+  it("separates the facts with a middot that copies with them", () => {
+    renderOverview();
+    const line = screen
+      .getByRole("region", { name: "System" })
+      .querySelector(".hostfacts")!.textContent!;
+    const en = String.fromCharCode(0x2002);
+    expect(line.split(`${en}·${en}`)).toEqual(facts());
+  });
+});
 
 describe("Overview system facts", () => {
   // GOOS is a build constant, so an agent that could not read /etc/os-release
@@ -217,7 +229,7 @@ describe("Overview system facts", () => {
       "6.8.0-31-generic",
       "amd64",
       "EPYC 7003",
-      "4 cores · 8 threads",
+      "4 cores, 8 threads",
       "7.5 GiB",
       "Roubaix, France",
       "OVH",
