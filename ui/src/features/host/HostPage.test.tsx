@@ -19,6 +19,7 @@ vi.mock("../../lib/api", () => ({
   getEvents: vi.fn(),
   getConditions: vi.fn(),
   getDrives: vi.fn(),
+  getMutes: vi.fn(),
 }));
 
 import * as api from "../../lib/api";
@@ -73,6 +74,7 @@ function metrics(family: string): MetricsResponse {
 }
 
 beforeEach(() => {
+  vi.mocked(api.getMutes).mockResolvedValue([]);
   vi.mocked(api.getHost).mockResolvedValue(host);
   vi.mocked(api.getMetrics).mockImplementation((_id, params) =>
     Promise.resolve(metrics(params.family)),
@@ -141,8 +143,9 @@ describe("HostPage", () => {
       "true",
     );
     // One control, not one per panel: a subject tab draws many charts and
-    // every one of them is driven by the header's range.
-    expect(screen.getAllByRole("group")).toHaveLength(1);
+    // every one of them is driven by the header's range. Counted by what a
+    // range control offers, so other groups (the mutes) do not matter.
+    expect(screen.getAllByRole("button", { name: "24h" })).toHaveLength(1);
   });
 
   it("asks the hub for absolute times only", async () => {

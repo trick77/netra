@@ -6,6 +6,7 @@ import { Input } from "../../ui/Control";
 import { EmptyState } from "../../ui/EmptyState";
 import { Table, type Column } from "../../ui/Table";
 import { When } from "../../ui/When";
+import { MuteList } from "./MuteList";
 import {
   createHost,
   deleteHost,
@@ -235,6 +236,8 @@ export function HostAdminPage() {
   // Delete is two-click rather than window.confirm: a native dialog is not
   // stylable, not testable, and easy to dismiss by reflex on the wrong row.
   const [confirming, setConfirming] = useState<number | null>(null);
+  // Counts host deletes, so the mute list below re-reads after each.
+  const [deleted, setDeleted] = useState(0);
 
   const refresh = useCallback(
     () =>
@@ -314,6 +317,7 @@ export function HostAdminPage() {
     setConfirming(null);
     try {
       await deleteHost(host.id);
+      setDeleted((n) => n + 1);
       await refresh();
     } catch (err) {
       setFormError(message(err));
@@ -427,6 +431,10 @@ export function HostAdminPage() {
             rows={hosts}
             rowKey={(host) => host.id}
           />
+          {/* Re-read on every delete above: it takes that host's mutes with
+              it, and the list should not offer an Unmute that can only
+              answer 404. */}
+          <MuteList version={deleted} />
         </>
       ) : null}
     </>

@@ -541,7 +541,7 @@ function reading(fields: Record<string, unknown>, key: string): string {
 /** The kinds as sentences. Mirrors CONDITION_KIND_INFO in fleet/conditions.ts,
  * which names the same kinds for the attention list -- one vocabulary, so a
  * reader who followed an ?attn= link recognises what the log calls it. */
-const CONDITION_LABELS: Record<string, string> = {
+export const CONDITION_LABELS: Record<string, string> = {
   silent: "Stopped reporting",
   sporadic: "Reporting sporadically",
   disk: "Filesystem nearly full",

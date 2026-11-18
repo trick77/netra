@@ -17,6 +17,7 @@ vi.mock("../../lib/api", async () => {
     createHost: vi.fn(),
     rotateHostToken: vi.fn(),
     deleteHost: vi.fn(),
+    getMutes: vi.fn(),
   };
 });
 
@@ -43,6 +44,7 @@ beforeEach(() => {
   localStorage.clear();
   getHosts.mockResolvedValue([]);
   vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "" });
+  vi.mocked(api.getMutes).mockResolvedValue([]);
 });
 
 describe("HostAdminPage", () => {

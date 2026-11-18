@@ -28,6 +28,7 @@ import {
 } from "../../lib/api";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
+import { MuteControl } from "./MuteControl";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { When } from "../../ui/When";
@@ -662,10 +663,12 @@ export function HostPage({
               retry a reader genuinely has to ask for, and the Containers tab
               calls it after a purge. */}
           </div>
-          {/* Nothing under the title. Where the host is, its OS, kernel and
-            arch are all printed a few centimetres below in the Overview tab's
+          {/* Under the title: only the notification mutes, which belong to the
+            host rather than to any tab. Where the host is, its OS, kernel and
+            arch are printed a few centimetres below in the Overview tab's
             System card, which owns them -- the header was spending a line
             restating the card. */}
+          <MuteControl hostId={host.id} />
         </div>
       </header>
 

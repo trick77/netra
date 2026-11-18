@@ -668,6 +668,44 @@ export function purgeContainer(
   });
 }
 
+// internal/hub/httpapi/mutes.go: muteJSON
+//
+// A mute silences notifications for a host, or for one kind on it: a
+// condition kind (disk, silent, ...) or an event type (disk_error, ...).
+export type Mute = {
+  id: number;
+  host_id: number;
+  hostname: string;
+  // "" mutes the whole host.
+  kind: string;
+  // null lasts until lifted.
+  until: string | null;
+  note: string;
+  created: string;
+};
+
+// Every mute in force, or one host's when hostId is given.
+export function getMutes(hostId?: number): Promise<Mute[]> {
+  return request<Mute[]>(`/api/v1/mutes${toQueryString({ host: hostId })}`);
+}
+
+// minutes 0 mutes until lifted.
+export function createMute(
+  hostId: number,
+  kind: string,
+  minutes: number,
+  note = "",
+): Promise<Mute> {
+  return request<Mute>("/api/v1/mutes", {
+    method: "POST",
+    body: { host_id: hostId, kind, minutes, note },
+  });
+}
+
+export function deleteMute(id: number): Promise<void> {
+  return request<void>(`/api/v1/mutes/${id}`, { method: "DELETE" });
+}
+
 // EventsParams mirrors internal/hub/httpapi/read.go's events() query
 // parsing: host, since, until, type, limit. since/until accept RFC 3339 or
 // unix milliseconds, matching parseTime.

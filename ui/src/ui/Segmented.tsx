@@ -8,6 +8,8 @@ export interface SegmentedProps<T extends string = string> {
   value: T;
   onChange: (value: T) => void;
   className?: string;
+  /** Names the group for a screen reader, when the row's neighbours do not. */
+  label?: string;
 }
 
 /** A row of mutually-exclusive buttons (e.g. a time-range picker). Exactly one
@@ -18,10 +20,11 @@ export function Segmented<T extends string = string>({
   value,
   onChange,
   className,
+  label,
 }: SegmentedProps<T>) {
   const classes = className ? `seg ${className}` : "seg";
   return (
-    <div className={classes} role="group">
+    <div className={classes} role="group" aria-label={label}>
       {options.map((option) => (
         <button
           key={option.value}
