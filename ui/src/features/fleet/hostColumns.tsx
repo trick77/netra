@@ -5,10 +5,10 @@
 //
 // `width` is set for one reason: a table at 100% hands its spare width out
 // across every column, and on a wide page that opened gaps between each
-// figure and the next -- the main reason the list looked loose. The reading
-// columns shrink to their content (CONTENT_WIDTH), the host column gets a fixed
-// width, and Traffic takes what is left: its trend is the one that grows to
-// fill it (TrendReading's `fluid`), so the spare width becomes chart.
+// figure and the next -- the main reason the list looked loose. The host
+// column gets a fixed width, Last seen its content, and the four readings
+// share what is left with their trends growing into it (READING_WIDTH), so
+// the spare width becomes chart rather than gap.
 import { CONTENT_WIDTH, type Column } from "../../ui/Table";
 import { SeverityMark, type MarkKind } from "../../ui/SeverityMark";
 import { AttentionLine } from "../../ui/AttentionBand";
@@ -37,6 +37,7 @@ import { hostStatus, isReporting, type HostStatus } from "../../lib/host";
 import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
 import { filesystemBands, memoryBands } from "../../lib/bands";
+import { reduceToColumns } from "../../lib/metrics";
 import {
   MAX_PER_CORE,
   cpuBands,
@@ -592,6 +593,9 @@ export interface ReadingProps {
   row: HostRow;
   range: Range;
   layout?: ReadingLayout;
+  /** In a table cell, let the trend take the column's width (TrendReading's
+   * `fluid`). */
+  fluid?: boolean;
 }
 
 const none = () => null;
@@ -610,7 +614,12 @@ function coreCount(threads: number | null): string | undefined {
 //
 // The colour is the cell's own severity, not --cpu-1; see trendColor().
 
-export function CpuCell({ row, range, layout = "cell" }: ReadingProps) {
+export function CpuCell({
+  row,
+  range,
+  layout = "cell",
+  fluid = false,
+}: ReadingProps) {
   // The right-hand edge of the silhouette the cell draws, which is also what
   // this column sorts on: the number the cell prints, the shape beside it and
   // the order the column puts its rows in cannot disagree. cpu_total is
@@ -684,6 +693,7 @@ export function CpuCell({ row, range, layout = "cell" }: ReadingProps) {
   return (
     <TrendReading
       layout={layout}
+      fluid={fluid}
       label="CPU"
       figure={busy === null ? null : <Figure pct={busy} label="CPU now" />}
       under={busy === null ? undefined : coreCount(row.threads)}
@@ -724,7 +734,12 @@ const MEM_HEADROOM = 1.08;
 // on, with the bands named -- "which part of memory is growing" is the
 // question someone opens it to ask.
 
-export function MemoryCell({ row, range, layout = "cell" }: ReadingProps) {
+export function MemoryCell({
+  row,
+  range,
+  layout = "cell",
+  fluid = false,
+}: ReadingProps) {
   if (row.mem_total === null) {
     // No known ceiling means no scale to draw the stack against. Drawing one
     // anyway (e.g. falling back to the bands' own auto-scale) would silently
@@ -806,6 +821,7 @@ export function MemoryCell({ row, range, layout = "cell" }: ReadingProps) {
   return (
     <TrendReading
       layout={layout}
+      fluid={fluid}
       label="Memory"
       figure={
         used === null ? null : (
@@ -851,7 +867,7 @@ export function TrafficCell({
   range,
   layout = "cell",
   fluid = false,
-}: ReadingProps & { fluid?: boolean }) {
+}: ReadingProps) {
   const live = isReporting(row);
   const rx = live ? row.net_rx_bytes : null;
   const tx = live ? row.net_tx_bytes : null;
@@ -907,8 +923,11 @@ export function TrafficCell({
             "warning". In and out are told apart by side of the midline and
             by lightness, and the rates beside the chart name them. */}
       <UpDownSparkline
-        up={row.rx}
-        down={row.tx}
+        // Folded here, to the width this trend is drawn at -- the row
+        // carries the tier's own resolution (hostTrendsFrom). The mean for
+        // the line, the max for the envelope: trafficSeries carries why.
+        up={reduceToColumns(row.rx, width, "mean")}
+        down={reduceToColumns(row.tx, width, "mean")}
         upColor={TRAFFIC_IN}
         downColor={TRAFFIC_OUT}
         // The peak envelope, which the row has carried since trafficSeries
@@ -922,8 +941,8 @@ export function TrafficCell({
         // "the sparkline never shows it". The dialog this cell opens into
         // already drew the envelope, so the cell was also disagreeing with
         // its own enlarged view.
-        upBand={row.rxPeak}
-        downBand={row.txPeak}
+        upBand={row.rxPeak && reduceToColumns(row.rxPeak, width, "max")}
+        downBand={row.txPeak && reduceToColumns(row.txPeak, width, "max")}
         // No weight override: a mirror fills solid at this density and
         // that is the mark. It drew as a line over a light fill for a
         // while, to read as one of a row of silhouettes, and what that
@@ -1021,7 +1040,12 @@ const DISK_COLOR = "var(--s6)";
 // growth is what the enlarged chart is for: it free-scales and has an axis.
 const DISK_PERCENT_MAX = 100;
 
-export function DiskCell({ row, range, layout = "cell" }: ReadingProps) {
+export function DiskCell({
+  row,
+  range,
+  layout = "cell",
+  fluid = false,
+}: ReadingProps) {
   if (row.fullest === null) {
     // A host that has reported no filesystems has no fullest one. Drawing a
     // meter anyway would put an empty green bar where "never collected"
@@ -1140,6 +1164,7 @@ export function DiskCell({ row, range, layout = "cell" }: ReadingProps) {
   return (
     <TrendReading
       layout={layout}
+      fluid={fluid}
       label="Filesystem"
       figure={<Figure pct={pct} label={`Filesystem ${mount}`} />}
       under={
@@ -1196,9 +1221,22 @@ export function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
 // (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
 // about one machine can act on it.
 
-// The host column holds a name and two location lines that must not wrap
-// word by word, so it gets a width rather than its min-content.
-const HOST_WIDTH = "15rem";
+// CPU, Memory, Filesystem and Traffic share the row in these shares, and each
+// trend grows into its column (TrendReading's `fluid`), so the four trends in
+// a row stay close to one time scale. Only Traffic used to grow, and it drew
+// the same 24 hours at nearly four times the CPU trend's width.
+//
+// The shares fill the row on purpose: 3 x 24 + 27 + Last seen's 1%
+// (CONTENT_WIDTH) is exactly 100. Under 100%, the auto layout handed the
+// leftover to the host column, the one without a share, and the names
+// drifted away from their readings on a wide screen; over 100%, browsers
+// disagree on which column gives. Host and Last seen take their minimum
+// (td .fleet-host sets the host's in CSS).
+//
+// Traffic's share is larger because its figure is: two stacked rates, about
+// 50px wider than a percentage, and the trend is what is left of the column.
+const READING_WIDTH = "24%";
+const TRAFFIC_WIDTH = "27%";
 
 export function hostColumns(
   range: Range,
@@ -1217,7 +1255,6 @@ export function hostColumns(
     {
       key: "host",
       header: "Host",
-      width: HOST_WIDTH,
       cell: (row) => (
         <HostCell
           row={row}
@@ -1232,8 +1269,8 @@ export function hostColumns(
     {
       key: "cpu",
       header: "CPU",
-      width: CONTENT_WIDTH,
-      cell: (row) => <CpuCell row={row} range={range} />,
+      width: READING_WIDTH,
+      cell: (row) => <CpuCell row={row} range={range} fluid />,
       // Where the silhouette ends -- the figure the cell prints, read
       // through the same guard the cell reads it through, so a host whose
       // last sample is hours old sorts as unknown rather than as busy.
@@ -1248,8 +1285,8 @@ export function hostColumns(
     {
       key: "memory",
       header: "Memory",
-      width: CONTENT_WIDTH,
-      cell: (row) => <MemoryCell row={row} range={range} />,
+      width: READING_WIDTH,
+      cell: (row) => <MemoryCell row={row} range={range} fluid />,
       // The FRACTION the cell prints, off the same gauge: mem_used over
       // mem_total. Ordering on the stack's own height ranked the fleet by how
       // little memory was FREE rather than by how much was in use, so a file
@@ -1274,8 +1311,8 @@ export function hostColumns(
       // cell opens is titled "Filesystem usage", which is also what Observium
       // calls it. Singular: the cell reports the ONE mount worth acting on.
       header: "Filesystem",
-      width: CONTENT_WIDTH,
-      cell: (row) => <DiskCell row={row} range={range} />,
+      width: READING_WIDTH,
+      cell: (row) => <DiskCell row={row} range={range} fluid />,
       // The percentage of the mount the cell NAMES -- sorting on anything the
       // row does not show would order the list by a number nobody can see.
       // Which is why this is no longer strictly "fullest first": the row
@@ -1295,6 +1332,7 @@ export function hostColumns(
     {
       key: "traffic",
       header: "Traffic",
+      width: TRAFFIC_WIDTH,
       cell: (row) => <TrafficCell row={row} range={range} fluid />,
       // The two rates the cell PRINTS, added: the cell shows in and out as a
       // pair and the fleet question is which host is moving the most, not

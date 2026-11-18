@@ -1116,6 +1116,14 @@ a:where(:hover) {
   align-items: center;
   gap: var(--space-3);
 }
+/* In the table the host column's width is its content's minimum: the four
+   readings take the rest of the row in shares (hostColumns' READING_WIDTH),
+   and a column width here would only be squeezed to min-content by them. A
+   name and two location lines must not wrap word by word, so the minimum is
+   set rather than left to the longest word. */
+td .fleet-host {
+  min-width: 15rem;
+}
 /* 22px, against the 14 the same component draws at on the host page. There
    it sits inline before the OS NAME, at the size of the words beside it;
    here it labels two lines and stands in for the words at a glance, which is
@@ -1280,7 +1288,7 @@ tbody tr:hover .host-cell-name {
   column-gap: var(--space-3);
   row-gap: 2px;
 }
-/* The one cell a table hands its spare width to: the trend takes the rest
+/* A cell a table hands its spare width to: the trend takes the rest
    of the column. Its track is minmax(READING_SPARK_WIDTH, 1fr), set inline
    by TrendReading, so the trend's own measured width never feeds back into
    the column's min-content, and a column narrower than the fixed trend
@@ -1288,6 +1296,13 @@ tbody tr:hover .host-cell-name {
 .treading.tr-cell.tr-fluid .treading-trend {
   display: block;
   min-width: 0;
+}
+/* The figure's floor in a fluid cell: as wide as "100 %" at .fig's 20px
+   (52.3px, measured), so every trend in a column starts at one x. See
+   TrendReading. */
+.treading.tr-cell.tr-fluid .treading-slot {
+  display: inline-block;
+  min-width: 53px;
 }
 /* Direct children only: the enlarged chart (Enlargeable renders ChartDetail
    inside the trend, not in a portal) carries a .u of its own in its header,
@@ -2659,6 +2674,10 @@ tbody tr:hover .host-cell-name {
    above the first. The frame is the line. */
 .fleet .toolbar {
   margin-bottom: var(--space-4);
+}
+/* The chips sit in the toolbar's row; the row owns the spacing. */
+.toolbar .atiles {
+  margin: 0;
 }
 /* The card view's order, a labelled select beside the view switch. */
 .sortpick {
@@ -4142,7 +4161,7 @@ svg.spark {
    would absorb the entire squeeze -- at a 390px viewport a CPU sparkline once
    rendered 38x7, which is not a chart. .tablewrap carries overflow-x:auto for
    exactly this, so the row keeps its width and the BOX scrolls instead (the
-   fluid Traffic trend has a READING_SPARK_WIDTH floor for the same reason).
+   fluid fleet trends have a READING_SPARK_WIDTH floor for the same reason).
    The page still never scrolls sideways, which is all the rule above was
    protecting. */
 .tablewrap svg.spark {

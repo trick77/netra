@@ -51,14 +51,20 @@ export function TrendReading({
   trend: TrendAt;
   layout?: ReadingLayout;
   /** In a cell, let the trend take whatever width the column gives it
-   * instead of READING_SPARK_WIDTH -- for the one column a table hands its
-   * spare width to. Never narrower than READING_SPARK_WIDTH. */
+   * instead of READING_SPARK_WIDTH -- for columns a table hands its spare
+   * width to. Never narrower than READING_SPARK_WIDTH. */
   fluid?: boolean;
   /** The quantity's name. Only a card prints it: a table cell has its
    * column header. */
   label?: string;
 }) {
-  const { ref, width } = useMeasuredWidth<HTMLDivElement>(CARD_FALLBACK_WIDTH);
+  // A fluid cell starts at the fixed width, not the card's: its column can
+  // be narrower than 340, and an unshrinkable spark (.tablewrap svg.spark)
+  // drawn wider than its column spills over the next one until the first
+  // measurement lands.
+  const { ref, width } = useMeasuredWidth<HTMLDivElement>(
+    layout === "card" ? CARD_FALLBACK_WIDTH : READING_SPARK_WIDTH,
+  );
   // Classes are tr-card / tr-cell, never card / cell: .card is the app's
   // panel component and would box every reading in its own frame.
   if (layout === "card") {
@@ -90,7 +96,15 @@ export function TrendReading({
           : undefined
       }
     >
-      <span className="treading-fig">{figure}</span>
+      <span className="treading-fig">
+        {/* A fluid trend starts where the figure ends, so the figure gets a
+            floor (.treading-slot): "6 %", "100 %" and a silent host's
+            missing figure all start their trend at one x down a column. A
+            floor on an inner box rather than a min-width on the grid item,
+            which would replace the item's automatic minimum and let wider
+            content (the traffic rates) overflow into the trend. */}
+        {fluid ? <span className="treading-slot">{figure}</span> : figure}
+      </span>
       <span className="treading-trend" ref={fluid ? ref : undefined}>
         {trend(
           fluid ? Math.max(READING_SPARK_WIDTH, width) : READING_SPARK_WIDTH,

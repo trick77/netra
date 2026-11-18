@@ -180,13 +180,13 @@ describe("FleetPage entity tabs", () => {
   it("states the list it is showing", () => {
     const hosts = renderPage();
     expect(
-      screen.getByRole("heading", { level: 1, name: "All hosts" }),
+      screen.getByRole("heading", { level: 1, name: "Hosts" }),
     ).toBeInTheDocument();
     hosts.unmount();
 
     renderPage({ entity: "containers" });
     expect(
-      screen.getByRole("heading", { level: 1, name: "All containers" }),
+      screen.getByRole("heading", { level: 1, name: "Containers" }),
     ).toBeInTheDocument();
   });
 
@@ -201,7 +201,7 @@ describe("FleetPage entity tabs", () => {
     });
 
     expect(
-      screen.getByRole("heading", { level: 1, name: "All hosts" }),
+      screen.getByRole("heading", { level: 1, name: "Hosts" }),
     ).toBeInTheDocument();
   });
 
@@ -848,9 +848,10 @@ describe("FleetPage data fetching", () => {
     expect(screen.getByRole("link", { name: /show all/i })).toBeInTheDocument();
   });
 
-  // Severity is the coarse cut, and the two buckets have to add up to the
-  // count stated above them or the control contradicts the line.
-  it("splits the troubled hosts into critical and warning, and filters by either", async () => {
+  // The chips are the filter, in the toolbar row beside the view switch and
+  // the text field. There is no All / Critical / Warning segment repeating
+  // their counts; a severity cut is still a link (?attn=warning).
+  it("filters by the chips in the toolbar, with no severity segment", async () => {
     const user = userEvent.setup();
     render(
       <FleetPage
@@ -868,13 +869,38 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("button", { name: /critical 1/i }),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /warning 1/i }));
+    expect(screen.queryByRole("button", { name: /critical/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /warning/i })).toBeNull();
+    const chips = screen.getByRole("list", { name: "What is wrong, by kind" });
+    expect(chips.closest(".toolbar")).not.toBeNull();
 
-    expect(screen.getByText("build-01")).toBeInTheDocument();
-    expect(screen.queryByText("db-01")).toBeNull();
+    await user.click(within(chips).getByRole("link", { name: /Failed units/ }));
+    expect(screen.getByRole("link", { name: "build-01" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "db-01" })).toBeNull();
+  });
+
+  it("still filters by severity when a link asks for it", () => {
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01" }),
+          makeRow({ id: 3, hostname: "build-01" }),
+        ]}
+        conditionRows={[
+          fullDisk(2, "db-01"),
+          cond(3, "build-01", { detail: { count: 2 } }),
+        ]}
+        attention="warning"
+        onAttentionChange={() => {}}
+        catalogue={CATALOGUE}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "build-01" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "db-01" })).toBeNull();
+    expect(screen.getByText(/with something warning/i)).toBeInTheDocument();
   });
 
   // Onboarding copy in front of a hundred hosts is the page contradicting
@@ -944,14 +970,14 @@ describe("FleetPage data fetching", () => {
     ).toHaveAttribute("href", "/containers?attn=failed-units");
   });
 
-  // A host with nothing wrong is never in an attention view, whichever way
-  // the reader got there.
-  it("offers no severity control when the whole fleet is healthy", () => {
+  // A healthy fleet draws no chip row at all: an empty attention row IS the
+  // all-clear.
+  it("offers no chips when the whole fleet is healthy", () => {
     render(<FleetPage rows={[makeRow({ id: 1 })]} now={NOW} />);
-    expect(screen.queryByRole("button", { name: /critical/i })).toBeNull();
+    expect(screen.queryByRole("list", { name: /by kind/i })).toBeNull();
   });
 
-  it("counts the troubled hosts, not the conditions, above the band", () => {
+  it("draws one chip per kind, not one per host", () => {
     render(
       <FleetPage
         rows={[
@@ -964,19 +990,11 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    // One host in trouble, two conditions on it -- so the segment says 1,
-    // not 2. The segments count HOSTS; the kind list beside them is what
-    // counts the conditions, and it has a line for each.
-    expect(
-      screen.getByRole("button", { name: "Critical 1" }),
-    ).toBeInTheDocument();
+    // One host in trouble, two kinds of condition on it: a chip for each.
     const counts = screen.getByRole("list", { name: /by kind/i });
     expect(within(counts).getAllByRole("listitem")).toHaveLength(2);
   });
 
-  // A filter is someone looking for one machine. Recomputing the band from
-  // the filtered rows would hide a critical host because its name does not
-  // match what was typed, which is exactly how an overview lies.
   // The counts are computed over every row, never over the visible ones: a
   // filter is someone looking for one machine, and hiding a critical host
   // because its name does not match what was typed is exactly how an overview
@@ -997,10 +1015,10 @@ describe("FleetPage data fetching", () => {
 
     await user.type(screen.getByPlaceholderText(/filter hosts/i), "web");
     const counts = screen.getByRole("list", { name: /by kind/i });
-    // db-01 is filtered out of the list; its failed units are still counted,
-    // and the segment still knows the fleet has two hosts in it.
-    expect(within(counts).getByText(/Failed units/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All 2" })).toBeInTheDocument();
+    // db-01 is filtered out of the list; its failed units are still counted.
+    expect(
+      within(counts).getByRole("link", { name: /Failed units, 1/ }),
+    ).toBeInTheDocument();
   });
 
   // The mark replaces the worst-first ordering: rows stay where the API put

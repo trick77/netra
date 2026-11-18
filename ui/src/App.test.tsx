@@ -146,7 +146,7 @@ describe("App routing", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/containers"));
     expect(window.location.search).toBe("");
     expect(
-      await screen.findByRole("heading", { level: 1, name: "All containers" }),
+      await screen.findByRole("heading", { level: 1, name: "Containers" }),
     ).toBeInTheDocument();
   });
 
