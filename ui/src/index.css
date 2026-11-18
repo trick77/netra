@@ -3196,25 +3196,54 @@ svg.spark {
 }
 
 /* The host's facts, one line under its name: read once when the page opens
-   and then scrolled past, so plain text with no frame. The separator is
-   drawn by the SECOND of a pair, so an omitted fact takes its dot with it. */
+   and then scrolled past, so plain text with no frame.
+
+   Inline, not flex: flex items copy as one per line, and the line is text a
+   reader pastes into a ticket. Each fact is an unbreakable inline-block
+   carrying its own trailing " · ", so the line breaks only BETWEEN facts and
+   a wrapped row opens on a fact. The opposite of the rail (.srail), whose
+   dot leads the figure after it: the rail drops its dots under 640px, this
+   line keeps them and wraps.
+
+   Only the text clips, not the dot: a CPU model too long for the page
+   ellipsizes and keeps its separator. The separator has a FIXED width so the
+   text can reserve exactly that much -- two en spaces are 1em by definition,
+   the dot fits in the rest. Not inline-flex, which would shrink the text
+   for free: flex items copy as one per line, the very thing this undoes. */
 .hostfacts {
-  display: flex;
-  flex-wrap: wrap;
   margin: 0 0 var(--space-4);
   font-size: var(--text-label);
   color: var(--muted);
 }
-.hostfacts span {
+.hostfacts .fact {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
   white-space: nowrap;
+}
+.hostfacts .txt {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
 }
-.hostfacts span + span::before {
-  content: "\00b7";
-  color: var(--border-strong);
-  margin: 0 var(--space-2);
+.hostfacts .fact:not(:last-child) .txt {
+  max-width: calc(100% - var(--fact-sep));
+}
+.hostfacts .sep {
+  display: inline-block;
+  width: var(--fact-sep);
+  vertical-align: top;
+  text-align: center;
+}
+.hostfacts {
+  --fact-sep: 1.5em;
+}
+/* --muted-2, the colour of the rail's middot: --border-strong drew it barely
+   visible. */
+.hostfacts .sep {
+  color: var(--muted-2);
 }
 
 /* The Limits card, at the foot of the System tab.

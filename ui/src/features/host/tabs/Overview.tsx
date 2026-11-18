@@ -354,6 +354,10 @@ function flapping(unit: Unit): boolean {
   return unit.restarts_1h >= FLAP_THRESHOLD;
 }
 
+/** U+2002 around the facts' middot: a plain space reads cramped beside it.
+ * Spelled as a code point because the literal trips no-irregular-whitespace. */
+const EN_SPACE = String.fromCharCode(0x2002);
+
 /**
  * The machine in one line: what it is, where it is, whose it is.
  *
@@ -372,7 +376,9 @@ function factsOf(host: HostDetail): string[] {
   if (host.cores !== null)
     out.push(
       host.threads !== null && host.threads !== host.cores
-        ? `${host.cores} cores · ${host.threads} threads`
+        ? // A comma, not a middot: the dot separates facts on this line,
+          // and cores and threads are one fact.
+          `${host.cores} cores, ${host.threads} threads`
         : `${host.cores} ${host.cores === 1 ? "core" : "cores"}`,
     );
   if (host.memory_total !== null) out.push(binaryBytes(host.memory_total));
@@ -570,10 +576,20 @@ export function Overview({
           Its uptime is in the page's header. */}
       {facts.length > 0 && (
         <section aria-label="System">
+          {/* The dot is text, not a ::before: a copied line then reads
+              "Debian 13 · 6.12 · amd64" rather than a fact per line. It
+              ends the fact before it, like punctuation, and so do both en
+              spaces: a wrapped line ends on a dot and opens on the next
+              fact, never on a dot or an indent. */}
           <p className="hostfacts">
             {facts.map((fact, i) => (
-              <span key={i} title={fact}>
-                {fact}
+              <span key={i} className="fact" title={fact}>
+                <span className="txt">{fact}</span>
+                {i < facts.length - 1 && (
+                  <span className="sep" aria-hidden="true">
+                    {`${EN_SPACE}·${EN_SPACE}`}
+                  </span>
+                )}
               </span>
             ))}
           </p>
