@@ -722,8 +722,38 @@ describe("Units", () => {
   // and an empty table with no copy at all reads as a loading bug.
   it("says a healthy host is healthy, not that it reported no units", () => {
     render(<Units rows={[]} />);
-    expect(screen.getByText(/nothing needs attention/i)).toBeInTheDocument();
+    expect(
+      screen.getByText("No systemd unit has failed or is restarting."),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/reported no units/i)).toBeNull();
+  });
+
+  // One line, not a panel: no filter box over a list with nothing in it.
+  it("offers no filter when there is nothing to filter", () => {
+    render(<Units rows={[]} />);
+    expect(screen.queryByRole("searchbox")).toBeNull();
+  });
+
+  // Unread is not healthy: drawing the all-clear before the answer arrives,
+  // or when the hub could not be asked, would claim what nobody checked.
+  it("gives no all-clear for units it has not read", () => {
+    const { unmount } = render(<Units rows={null} pending />);
+    expect(screen.getByText("Reading units…")).toBeInTheDocument();
+    unmount();
+    render(<Units rows={null} />);
+    expect(screen.getByText("Units could not be read.")).toBeInTheDocument();
+    expect(screen.queryByText(/has failed or is restarting/)).toBeNull();
+  });
+
+  // No systemd, no units: an empty list there is not a healthy one.
+  it("says nothing on a host without systemd", () => {
+    const { container } = render(<Units rows={[]} systemd={false} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("names the list when a unit needs attention", () => {
+    render(<Units rows={units} />);
+    expect(screen.getByRole("heading", { name: "Units" })).toBeInTheDocument();
   });
 
   // A unit that keeps dying and coming back reads active/running at nearly

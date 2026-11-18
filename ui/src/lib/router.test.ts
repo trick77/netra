@@ -154,11 +154,11 @@ describe("the old chart-page route", () => {
       hostId: "3",
       tab: "storage",
     });
-    // Units joined Packages; Collectors became Agent
+    // Units head the System tab; Collectors became Agent
     expect(parseRoute("/hosts/3/units")).toEqual({
       name: "host",
       hostId: "3",
-      tab: "packages",
+      tab: "system",
     });
     expect(parseRoute("/hosts/3/collectors")).toEqual({
       name: "host",

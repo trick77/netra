@@ -108,8 +108,8 @@ export const HOST_TABS: readonly { id: HostTab; label: string }[] = [
   { id: "network", label: "Network" },
   { id: "storage", label: "Storage" },
   { id: "containers", label: "Containers" },
-  // Units joined Packages, the ones needing attention on top: two thin tabs
-  // about what is installed and what is running became one.
+  // What is installed. The units needing attention are not here: what is
+  // running is the System tab's, which they head.
   { id: "packages", label: "Packages" },
   { id: "events", label: "Events" },
   // Last, at the quiet end of the bar: the agent's own health is the tab you
@@ -418,13 +418,20 @@ export function HostPage({
             // sensor joined these two when the Temperature, Fan and Power
             // cards moved here off the Overview: what a chip is measuring is
             // a System fact, and this is the tab that draws it now.
-            const [hostMetrics, coreMetrics, sensorMetrics] = await Promise.all(
-              [metrics("host"), metrics("cpu_core"), metrics("sensor")],
-            );
+            // units: the services systemd runs are the system's, and this is
+            // the tab that says whether one of them is in trouble.
+            const [hostMetrics, coreMetrics, sensorMetrics, units] =
+              await Promise.all([
+                metrics("host"),
+                metrics("cpu_core"),
+                metrics("sensor"),
+                orNull(getUnits(hostId)),
+              ]);
             return {
               hostMetrics,
               coreMetrics,
               sensorMetrics,
+              units,
             };
           }
           case "agent": {
@@ -512,13 +519,8 @@ export function HostPage({
             ]);
             return { containers, containerMetrics };
           }
-          case "packages": {
-            const [packages, units] = await Promise.all([
-              orNull(getPackages(hostId)),
-              orNull(getUnits(hostId)),
-            ]);
-            return { packages, units };
-          }
+          case "packages":
+            return { packages: await orNull(getPackages(hostId)) };
           case "events":
             return { events: await eventLog() };
         }
@@ -797,6 +799,14 @@ export function HostPage({
         )}
         {tab === "system" && (
           <>
+            {/* First: a failed service is the question this tab can answer
+              before any chart. On a healthy host it is one line. */}
+            <Units
+              rows={data.units}
+              pending={pending}
+              // undefined is a hub too old to say: assume systemd, as before.
+              systemd={host.services_total !== null}
+            />
             <SystemGraphs
               host={data.hostMetrics}
               cpuCore={data.coreMetrics}
@@ -913,15 +923,7 @@ export function HostPage({
             />
           </>
         )}
-        {/* The units that need attention -- the only ones the hub lists --
-            above what is installed: a failed service is the question, the
-            package list the reference. */}
-        {tab === "packages" && (
-          <>
-            <Units rows={data.units ?? []} />
-            <Packages rows={data.packages ?? []} />
-          </>
-        )}
+        {tab === "packages" && <Packages rows={data.packages ?? []} />}
         {tab === "events" && <Events events={data.events} />}
       </ChartCursorProvider>
     </div>

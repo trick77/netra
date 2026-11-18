@@ -63,9 +63,10 @@ const HOST_TABS = new Set<HostTab>([
 const RENAMED_TABS: Record<string, HostTab> = {
   graphs: "system",
   filesystems: "storage",
-  // Units joined Packages: the ones needing attention on top, every unit
-  // below the packages. Collectors became Agent, the agent's own health.
-  units: "packages",
+  // The units needing attention head the System tab: services are the
+  // system's, not the package list's. Collectors became Agent, the agent's
+  // own health.
+  units: "system",
   collectors: "agent",
 };
 

@@ -148,7 +148,7 @@ describe("hostConditions", () => {
       names: ["a.service", "b.service"],
       extra: 3,
     });
-    expect(condition!.tab).toBe("packages");
+    expect(condition!.tab).toBe("system");
   });
 
   it("counts one failed unit in the singular", () => {

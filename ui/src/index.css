@@ -4131,6 +4131,22 @@ svg.spark {
   font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
 }
+/* The units line on a healthy host: one quiet sentence (.note) where a failed
+   unit would put a table. Neutral like every ok state here, no green. */
+.note.unitsline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 0;
+  margin-bottom: var(--space-4);
+  min-height: 1.5em;
+}
+.unitsline svg {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
 .note {
   font-size: var(--text-label);
   color: var(--muted);

@@ -3,7 +3,7 @@
 // list shows first_seen/last_seen only where the schema actually has them
 // -- an empty "last seen" column would be a claim netra cannot back.
 import { useMemo, useState, type ReactNode } from "react";
-import { EmptyPage } from "iconoir-react";
+import { CheckCircle, EmptyPage } from "iconoir-react";
 import type {
   Address,
   Container,
@@ -88,11 +88,9 @@ export interface InventoryProps<T> {
    * needs both. */
   notice?: ReactNode;
   /** What an empty list means, for a list where "empty" is not "nothing was
-   * collected". Units is the case: it shows only what needs attention, so an
-   * empty one is a healthy host, and the default copy ("This host has reported
-   * no units") would be a plain falsehood about a host running 400 of them.
-   * Only the no-rows state is overridden -- "nothing matches your filter" says
-   * the same thing for every list. */
+   * collected" (Drive health, on a host without drives). Only the no-rows
+   * state is overridden -- "nothing matches your filter" says the same thing
+   * for every list. */
   emptyTitle?: string;
   emptyBody?: string;
   /** Splits the list into labelled groups. Handed straight to Table -- see
@@ -1600,18 +1598,53 @@ const UNIT_COLUMNS: Column<Unit>[] = [
   },
 ];
 
-export function Units({ rows }: { rows: readonly Unit[] }) {
+/**
+ * The systemd units that need attention: the only ones the hub lists.
+ *
+ * A healthy host is the common case, so it gets one line, not an empty-state
+ * panel with a filter box over nothing. That line is an all-clear, so it is
+ * only drawn when someone checked: never on a host without systemd (an empty
+ * list there is no news), never before the answer, never after a failed read.
+ * The loading and failure states keep the line's place, so the charts below
+ * do not jump when the answer lands.
+ */
+export function Units({
+  rows,
+  pending = false,
+  systemd = true,
+}: {
+  rows: readonly Unit[] | null;
+  /** The tab's first answer has not arrived. */
+  pending?: boolean;
+  /** False on a host whose agent reports no systemd (services_total null). */
+  systemd?: boolean;
+}) {
+  if (rows === null || rows.length === 0) {
+    if (!systemd) return null;
+    if (rows === null) {
+      return (
+        <section aria-label="Units" className="note unitsline">
+          <span>{pending ? "Reading units…" : "Units could not be read."}</span>
+        </section>
+      );
+    }
+    return (
+      <section aria-label="Units" className="note unitsline">
+        <CheckCircle aria-hidden="true" />
+        <span>No systemd unit has failed or is restarting.</span>
+      </section>
+    );
+  }
   return (
     <Inventory
       label="Units"
+      heading
       columns={UNIT_COLUMNS}
       rows={rows}
       rowKey={(row) => String(row.id)}
       searchText={(row) =>
         [row.unit_name, row.state, row.substate].filter(Boolean).join(" ")
       }
-      emptyTitle="Nothing needs attention"
-      emptyBody="Every systemd service on this host is running normally. Units appear here when one fails or falls into a restart loop."
     />
   );
 }

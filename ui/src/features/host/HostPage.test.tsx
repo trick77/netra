@@ -176,6 +176,23 @@ describe("HostPage", () => {
     }
   });
 
+  // Services are the system's; the package list has nothing to do with them.
+  it("puts the units on the System tab, not beside the packages", async () => {
+    const { unmount } = render(
+      <HostPage hostId={7} tab="system" onTabChange={() => {}} />,
+    );
+    expect(
+      await screen.findByText("No systemd unit has failed or is restarting."),
+    ).toBeInTheDocument();
+    unmount();
+
+    vi.mocked(api.getUnits).mockClear();
+    render(<HostPage hostId={7} tab="packages" onTabChange={() => {}} />);
+    await waitFor(() => expect(api.getPackages).toHaveBeenCalled());
+    expect(api.getUnits).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "Units" })).toBeNull();
+  });
+
   it("scopes the events tab to this host", async () => {
     render(<HostPage hostId={7} tab="events" onTabChange={() => {}} />);
     await waitFor(() => expect(api.getEvents).toHaveBeenCalled());
