@@ -52,11 +52,11 @@ import { FLEET_RANGE } from "./ranges";
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
 
-/** How the hosts are drawn: one card each (the default), or the table. */
+/** How the hosts are drawn: the table (the default), or one card each. */
 export type FleetView = "cards" | "table";
 
 function readView(): FleetView {
-  return readPref(FLEET_VIEW_KEY) === "table" ? "table" : "cards";
+  return readPref(FLEET_VIEW_KEY) === "cards" ? "cards" : "table";
 }
 
 /**
@@ -236,7 +236,7 @@ export function FleetPage({
     : localAttention;
   const setAttention = onAttentionChange ?? setLocalAttention;
   const [filter, setFilter] = useState("");
-  // Cards by default; the table one click away, remembered per browser.
+  // The table by default; cards one click away, remembered per browser.
   const [view, setViewState] = useState<FleetView>(readView);
   const setView = (next: FleetView) => {
     setViewState(next);

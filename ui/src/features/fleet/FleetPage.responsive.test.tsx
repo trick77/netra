@@ -52,34 +52,35 @@ afterEach(() => {
 });
 
 describe("FleetPage at any viewport", () => {
-  // The view is the reader's choice and never the viewport's: cards by
-  // default at every width (a card is one column on a phone), the table
-  // when this browser asked for it. No width-dependent branch, so there is
-  // no second rendering that only some screens see.
-  it("renders cards below the mobile breakpoint", () => {
+  // The view is the reader's choice and never the viewport's: the table by
+  // default at every width, cards when this browser asked for them. No
+  // width-dependent branch, so there is no second rendering that only some
+  // screens see.
+  it("renders the table below the mobile breakpoint", () => {
     stubViewport(true);
+
+    render(<FleetPage rows={[row()]} />);
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(document.querySelectorAll(".hcard")).toHaveLength(0);
+  });
+
+  it("renders the table on a wide viewport", () => {
+    stubViewport(false);
+
+    render(<FleetPage rows={[row()]} />);
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+  });
+
+  it("renders cards on any viewport once the reader chose them", () => {
+    stubViewport(true);
+    localStorage.setItem("netra.fleet.view", "cards");
 
     render(<FleetPage rows={[row()]} />);
 
     expect(document.querySelectorAll(".hcard")).toHaveLength(1);
     expect(screen.queryByRole("table")).toBeNull();
-  });
-
-  it("renders cards on a wide viewport", () => {
-    stubViewport(false);
-
-    render(<FleetPage rows={[row()]} />);
-
-    expect(document.querySelectorAll(".hcard")).toHaveLength(1);
-  });
-
-  it("renders the table on any viewport once the reader chose it", () => {
-    stubViewport(true);
-    localStorage.setItem("netra.fleet.view", "table");
-
-    render(<FleetPage rows={[row()]} />);
-
-    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   // jsdom has no matchMedia unless a test installs one, and neither do some
@@ -89,7 +90,7 @@ describe("FleetPage at any viewport", () => {
 
     render(<FleetPage rows={[row()]} />);
 
-    expect(document.querySelectorAll(".hcard")).toHaveLength(1);
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   // The window is fixed, so there is no control to change it -- see
