@@ -100,7 +100,11 @@ export function MuteControl({ hostId }: { hostId: number }) {
   ].filter((e): e is string => e !== null);
 
   return (
-    <div className="mutes" role="group" aria-label="Notification mutes">
+    <div
+      className={open ? "mutes open" : "mutes"}
+      role="group"
+      aria-label="Notification mutes"
+    >
       {mutes.map((m) => (
         <span className="mute" key={m.id}>
           <Badge severity="neutral">Muted: {muteText(m)}</Badge>
