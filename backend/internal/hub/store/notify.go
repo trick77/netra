@@ -11,12 +11,17 @@ import (
 	"github.com/trick77/netra/internal/hub/notify"
 )
 
-// mutedSQL is true when a live mute covers the row's host and kind. $1 is
-// now; the alias of the host and the kind column are formatted in.
+// mutedSQL is true when a live mute covers the row's host, kind and subject.
+// $1 is now; the host, kind, subject and condition id expressions are
+// formatted in (an event passes NULL for the id). A mute bound to a condition
+// covers that row only, not a reopened one with the same subject that a pass
+// reads before the mute is pruned.
 const mutedSQL = `EXISTS (
 	SELECT 1 FROM alert_mutes m
 	 WHERE m.host_id = %[1]s
 	   AND (m.kind = '' OR m.kind = %[2]s)
+	   AND (m.subject IS NULL OR m.subject = %[3]s)
+	   AND (m.condition_id IS NULL OR m.condition_id = %[4]s)
 	   AND (m.until_ts IS NULL OR m.until_ts > $1))`
 
 // PendingConditions returns every condition the notifier owes a message.
@@ -40,7 +45,7 @@ func (s *Store) PendingConditions(ctx context.Context, now time.Time, repeat tim
 		         WHEN c.notified_severity = 'warning' AND c.severity = 'critical' THEN 'escalated'
 		         ELSE 'reminder'
 		       END,
-		       `+fmt.Sprintf(mutedSQL, "c.host_id", "c.kind")+`
+		       `+fmt.Sprintf(mutedSQL, "c.host_id", "c.kind", "c.subject", "c.id")+`
 		  FROM host_conditions c
 		  JOIN hosts h ON h.id = c.host_id
 		 WHERE (c.resolved_ts IS NULL AND (
@@ -108,7 +113,7 @@ func (s *Store) CriticalEventsSince(ctx context.Context, now, since time.Time) (
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, e.host_id, coalesce(h.hostname, 'host ' || h.id), e.ts, e.type,
 		       coalesce(e.subject, ''), e.severity, e.detail,
-		       `+fmt.Sprintf(mutedSQL, "e.host_id", "e.type")+`
+		       `+fmt.Sprintf(mutedSQL, "e.host_id", "e.type", "coalesce(e.subject, '')", "NULL")+`
 		  FROM events e
 		  JOIN hosts h ON h.id = e.host_id
 		 WHERE e.severity = 'critical'
@@ -140,10 +145,21 @@ func (s *Store) CriticalEventsSince(ctx context.Context, now, since time.Time) (
 	return out, nil
 }
 
-// PruneMutes deletes mutes that have run out. See notify.Store.
+// PruneMutes deletes mutes that have run out: past their time, or bound to a
+// condition that has resolved. See notify.Store.
+//
+// A resolved condition whose all-clear is still owed keeps its mute for one
+// more pass, which reads that all-clear as muted and drops it. Pruned first,
+// the all-clear would go out -- the one message the mute was asked to hold.
 func (s *Store) PruneMutes(ctx context.Context, now time.Time) error {
-	if _, err := s.pool.Exec(ctx,
-		`DELETE FROM alert_mutes WHERE until_ts IS NOT NULL AND until_ts <= $1`, now); err != nil {
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM alert_mutes m
+		 WHERE (m.until_ts IS NOT NULL AND m.until_ts <= $1)
+		    OR EXISTS (
+		       SELECT 1 FROM host_conditions c
+		        WHERE c.id = m.condition_id
+		          AND c.resolved_ts IS NOT NULL
+		          AND (c.notified_ts IS NULL OR c.cleared_notified_ts IS NOT NULL))`, now); err != nil {
 		return fmt.Errorf("prune mutes: %w", err)
 	}
 	return nil

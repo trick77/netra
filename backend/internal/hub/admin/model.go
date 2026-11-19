@@ -21,7 +21,11 @@ type Mute struct {
 	Hostname string
 	// Kind is empty when the whole host is muted.
 	Kind string
-	// Until is nil for a mute that lasts until lifted.
+	// Subject is nil for every subject of the kind.
+	Subject *string
+	// ConditionID is set for a mute that lasts until that condition resolves.
+	ConditionID *int32
+	// Until is nil for a mute that lasts until lifted (or until resolved).
 	Until   *time.Time
 	Note    string
 	Created time.Time

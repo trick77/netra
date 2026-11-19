@@ -226,11 +226,15 @@ What is sent, one message per host per minute at most:
   at most 15 minutes old, so an agent replaying its buffer after an outage does
   not resend the past hour. One message per host, type and device per hour.
 
-**Mutes** silence a host, or one kind on a host (`disk`, `disk_error`, ...), for
-a while or until lifted: from the host page in the UI, or
-`POST /api/v1/mutes` with `{"host_id": 3, "kind": "disk", "minutes": 60}`. A
-condition opened under a mute is announced when the mute ends if it is still
-open; an all-clear under a mute is dropped.
+**Mutes** silence one alert: on the host page, each alert line and each
+notifying critical event has a Mute, for 1 h, 24 h, permanently or (for an
+open condition) until it resolves. The same trouble coming back after that is
+a new alert. The API also mutes a whole kind or host:
+`POST /api/v1/mutes` with `{"host_id": 3, "kind": "disk", "subject": "/var",
+"until_resolved": true}`; leave out `subject` for every subject of the kind,
+`kind` for the whole host, `minutes` (0 = permanently) instead of
+`until_resolved`. A condition opened under a mute is announced when the mute
+ends if it is still open; an all-clear under a mute is dropped.
 
 **Settings → Notifications** shows the configured channels (or that there are
 none) and sends a test message through each, reporting per channel whether it

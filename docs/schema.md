@@ -44,13 +44,17 @@ Go types:
 | `until_ts` | timestamp with time zone | yes |  |  |
 | `note` | text | no | `''::text` |  |
 | `created_ts` | timestamp with time zone | no | `now()` |  |
+| `subject` | text | yes |  |  |
+| `condition_id` | integer | yes |  |  |
 
 Foreign keys:
 
+- `condition_id` → `host_conditions` (`id`), on delete CASCADE
 - `host_id` → `hosts` (`id`), on delete CASCADE
 
 Indexes:
 
+- `alert_mutes_condition_idx` (`condition_id`) where `condition_id IS NOT NULL`
 - `alert_mutes_host_idx` (`host_id`)
 
 ## collector_samples
@@ -961,6 +965,8 @@ erDiagram
         timestamp_with_time_zone until_ts
         text note
         timestamp_with_time_zone created_ts
+        text subject
+        integer condition_id FK
     }
     collector_samples {
         integer host_id PK, FK
@@ -1403,6 +1409,7 @@ erDiagram
         timestamp_with_time_zone last_used_at
     }
     agent_samples }o--|| hosts : "host_id"
+    alert_mutes }o--o| host_conditions : "condition_id"
     alert_mutes }o--|| hosts : "host_id"
     collector_samples }o--|| hosts : "host_id"
     container_samples }o--|| containers : "container_id, host_id"

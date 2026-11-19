@@ -34,6 +34,9 @@ import {
   type Range,
 } from "../../../lib/range";
 import { messageOf, NOTIFICATION_EVENT_TYPE } from "../../events/message";
+import { AlertMute } from "../AlertMute";
+import { MUTABLE_EVENT_TYPES, type MuteTarget } from "../mutes";
+import type { Mutes } from "../useMutes";
 import {
   CpuCell,
   DiskCell,
@@ -88,6 +91,13 @@ export interface Attention {
    * of naming a bucket where nothing happened.
    */
   sinceAtLeast?: boolean;
+  /**
+   * The alert a mute on this line silences. Only lines a notification stands
+   * behind carry one: a hub condition, or the line saying the host stopped
+   * reporting (the `silent` condition, which the line itself does not read).
+   * "never reported" and a flapping unit notify nobody, so offer nothing.
+   */
+  mute?: MuteTarget;
 }
 
 // When a host counts as stale rather than merely late. Imported, never
@@ -176,6 +186,7 @@ export function needsAttention(input: {
     severity: severityOf(row),
     since: row.opened_ts,
     sinceAtLeast: row.opened_at_least,
+    mute: { kind: row.kind, subject: row.subject, open: true },
   });
 
   // Whether the host is talking, from last_seen and NOT from the hub's
@@ -201,6 +212,13 @@ export function needsAttention(input: {
       // The onset IS last_seen, which the sentence already names. Printing it
       // twice in one line would read as two different facts.
       since: null,
+      // What notifies about it is the hub's `silent` condition, absent in
+      // its warm-up: muting it then still works, only not until resolved.
+      mute: {
+        kind: "silent",
+        subject: rowsOf("silent")[0]?.subject ?? "",
+        open: rowsOf("silent").length > 0,
+      },
     });
   }
   const sporadic = rowsOf("sporadic")[0];
@@ -284,6 +302,7 @@ export function needsAttention(input: {
   // RESTARTING repeatedly, which is a rate off the event log and not a
   // condition at all. Neither is a threshold anybody could disagree with the
   // hub about, so neither is the duplication this change deleted.
+  const failedUnits = rowsOf("failed-units")[0];
   for (const unit of input.units ?? []) {
     if (unit.state === "failed") {
       out.push({
@@ -292,6 +311,13 @@ export function needsAttention(input: {
         // systemd's own timestamp for entering this state, which is the same
         // source the hub dates its failed-units condition from.
         since: unit.since,
+        // One condition for every failed unit, so one mute for all of them.
+        mute: {
+          kind: "failed-units",
+          subject: failedUnits?.subject ?? "",
+          open: failedUnits !== undefined,
+          reach: "Mutes every failed unit on this host.",
+        },
       });
     } else if (flapping(unit)) {
       out.push({
@@ -424,21 +450,28 @@ export interface OverviewProps {
   containerMetrics?: MetricsResponse | null;
   /** Injected by tests so "last reported" is deterministic. */
   now?: Date;
+  /** The host's mutes. Without them no line offers a mute. */
+  mutes?: Mutes;
 }
 
 /**
  * The window's events, newest first, in the event log's own words: the
  * likely cause of whatever the readings above are showing. The rest are one
  * click away on the Events tab.
+ *
+ * A critical event of a type that notifies carries a mute. It silences the
+ * next ones of that type and subject: this one has been sent already.
  */
 function EventsCard({
   events,
   hostId,
   range,
+  mutes,
 }: {
   events: readonly Event[] | null | undefined;
   hostId: number;
   range?: Range;
+  mutes?: Mutes;
 }) {
   // Notifications are left to the Events tab: each follows the event it
   // reports, and here they would take half the slots meant for causes.
@@ -465,6 +498,19 @@ function EventsCard({
                 <When iso={e.ts} />
                 <EventGlyph severity={e.severity} />
                 <span>{messageOf(e)}</span>
+                {mutes !== undefined &&
+                  e.severity === "critical" &&
+                  MUTABLE_EVENT_TYPES.includes(e.type) && (
+                    <AlertMute
+                      hostId={hostId}
+                      target={{
+                        kind: e.type,
+                        subject: e.subject ?? "",
+                        open: false,
+                      }}
+                      mutes={mutes}
+                    />
+                  )}
               </li>
             ))}
           </ul>
@@ -505,6 +551,7 @@ export function Overview({
   filesystems,
   containerMetrics = null,
   now,
+  mutes,
 }: OverviewProps) {
   const attention = needsAttention({
     host,
@@ -513,7 +560,16 @@ export function Overview({
     catalogue,
     units,
     now,
-  });
+  }).map((row) =>
+    row.mute === undefined || mutes === undefined
+      ? row
+      : {
+          ...row,
+          action: (
+            <AlertMute hostId={host.id} target={row.mute} mutes={mutes} />
+          ),
+        },
+  );
 
   // The host's row from the fleet page, built the way the fleet builds it,
   // so the four readings below are the fleet's own cells: one figure and
@@ -616,7 +672,12 @@ export function Overview({
       {/* What happened, beside where the disks stand: the likely causes next
           to the most common thing to go and fix. */}
       <div className="ovgrid">
-        <EventsCard events={events} hostId={host.id} range={range} />
+        <EventsCard
+          events={events}
+          hostId={host.id}
+          range={range}
+          mutes={mutes}
+        />
         {/* A card like the Events card beside it: one box title style. */}
         <Panel label="Filesystems" title="Filesystems" className="fstable">
           <FilesystemTable

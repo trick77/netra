@@ -718,6 +718,12 @@ describe("the attention band", () => {
         severity: "warning",
         what: "nginx.service failed",
         since: "2026-08-09T22:00:00Z",
+        mute: {
+          kind: "failed-units",
+          subject: "",
+          open: false,
+          reach: "Mutes every failed unit on this host.",
+        },
       },
     ]);
   });
@@ -841,12 +847,14 @@ describe("the attention band and the host's drives", () => {
         what: "sda — 3 pending sectors",
         since: null,
         sinceAtLeast: false,
+        mute: { kind: "drive", subject: "sda", open: true },
       },
       {
         severity: "critical",
         what: "sdb — 12 reallocated sectors",
         since: null,
         sinceAtLeast: false,
+        mute: { kind: "drive", subject: "sdb", open: true },
       },
     ]);
   });
@@ -862,5 +870,155 @@ describe("the attention band and the host's drives", () => {
       now: new Date("2026-08-10T01:00:00Z"),
     });
     expect(testee[0]!.since).toBeNull();
+  });
+});
+
+// A mute is set on the alert it silences, so only a line a notification
+// stands behind offers one.
+describe("muting from the attention band", () => {
+  const quiet = { hostMetrics: null, units: null, catalogue: CATALOGUE };
+  const cond = (over: Partial<ConditionRow>): ConditionRow => ({
+    id: 1,
+    host_id: host.id,
+    hostname: host.hostname,
+    kind: "disk",
+    subject: "pool",
+    severity: "critical",
+    opened_ts: "2026-08-10T00:00:00Z",
+    opened_at_least: false,
+    detail: { pct: 96, mount: "/srv/pool" },
+    measured_ts: "2026-08-10T01:00:00Z",
+    stale: false,
+    ...over,
+  });
+  const unit = (over: Partial<Unit>): Unit => ({
+    id: 1,
+    unit_name: "backup.service",
+    state: "failed",
+    substate: "failed",
+    since: null,
+    restarts_1h: 0,
+    ...over,
+  });
+
+  it("targets the stored subject, not the label the line prints", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [cond({})],
+      now: new Date("2026-08-10T01:00:30Z"),
+    });
+    expect(testee[0]!.mute).toEqual({
+      kind: "disk",
+      subject: "pool",
+      open: true,
+    });
+  });
+
+  // The NAS that is off most days: its line comes from last_seen, and the
+  // hub's `silent` condition may not exist yet (warm-up).
+  it("mutes a host that stopped reporting by its silent condition", () => {
+    const later = new Date("2026-08-13T01:00:00Z");
+    const without = needsAttention({
+      ...quiet,
+      host,
+      conditions: [],
+      now: later,
+    });
+    expect(without[0]!.mute).toEqual({
+      kind: "silent",
+      subject: "",
+      open: false,
+    });
+    const withRow = needsAttention({
+      ...quiet,
+      host,
+      conditions: [cond({ kind: "silent", subject: "", detail: {} })],
+      now: later,
+    });
+    expect(withRow[0]!.mute).toEqual({
+      kind: "silent",
+      subject: "",
+      open: true,
+    });
+  });
+
+  it("offers nothing where nobody is notified, and says a unit's mute covers all", () => {
+    const never = needsAttention({
+      ...quiet,
+      host: { ...host, last_seen: null },
+      conditions: [],
+    });
+    expect(never[0]!.mute).toBeUndefined();
+
+    const units = needsAttention({
+      ...quiet,
+      host,
+      units: [
+        unit({}),
+        unit({
+          id: 2,
+          unit_name: "web.service",
+          state: "active",
+          restarts_1h: 9,
+        }),
+      ],
+      conditions: [cond({ kind: "failed-units", subject: "", detail: {} })],
+      now: new Date("2026-08-10T01:00:30Z"),
+    });
+    const failed = units.find((a) => /backup/.test(String(a.what)))!;
+    expect(failed.mute).toMatchObject({ kind: "failed-units", open: true });
+    expect(failed.mute?.reach).toMatch(/every failed unit/);
+    const flapping = units.find((a) => /web\.service/.test(String(a.what)))!;
+    expect(flapping.mute).toBeUndefined();
+  });
+
+  it("draws a mute on each alert line and on critical events that notify", async () => {
+    const mutes = {
+      mutes: [],
+      loadError: null,
+      liftErrors: [],
+      lifting: new Set<number>(),
+      lift: async () => {},
+      add: () => {},
+      refresh: () => {},
+    };
+    const event = (over: Partial<Event>): Event =>
+      ({
+        id: "e:1",
+        host_id: host.id,
+        hostname: host.hostname,
+        ts: "2026-08-10T00:59:00Z",
+        type: "disk_error",
+        subject: "sda",
+        detail: {},
+        severity: "critical",
+        ...over,
+      }) as Event;
+    renderOverview({
+      conditions: [cond({})],
+      events: [
+        event({}),
+        event({
+          id: "e:2",
+          type: "link_change",
+          subject: "eth0",
+          severity: "warning",
+        }),
+      ],
+      mutes,
+    });
+    const band = screen.getByRole("region", { name: "Needs attention" });
+    expect(
+      within(band).getByRole("button", {
+        name: "Mute Filesystem nearly full — pool",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Mute disk_error — sda" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Mute link_change/ }),
+    ).not.toBeInTheDocument();
   });
 });

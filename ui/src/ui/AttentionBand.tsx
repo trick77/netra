@@ -57,6 +57,9 @@ export interface AttentionRow {
    * naming a bucket where nothing happened.
    */
   sinceAtLeast?: boolean;
+  /** Drawn after the line, e.g. a host page's mute for the alert. The band
+   * knows nothing of what it does. */
+  action?: ReactNode;
 }
 
 /**
@@ -181,6 +184,7 @@ export function AttentionBand({
                   {/* The same line the fleet's host cell prints a finding
                       as: dot, sentence, and how long it has been true. */}
                   <AttentionLine row={row} now={now} />
+                  {row.action}
                 </li>
               ))}
               {hidden > 0 && overflow !== undefined ? (

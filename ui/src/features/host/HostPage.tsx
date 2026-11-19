@@ -28,7 +28,8 @@ import {
 } from "../../lib/api";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
-import { MuteControl } from "./MuteControl";
+import { HostMutes } from "./HostMutes";
+import { useMutes } from "./useMutes";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { When } from "../../ui/When";
@@ -247,6 +248,9 @@ export function HostPage({
   // against a live clock has to move with it.
   const hostPoll = usePoll(() => getHost(hostId), POLL_MS, [hostId]);
   const host = hostPoll.data;
+  // One read for the header's list and every alert line's mute, so a mute
+  // set on a line shows in the header at once and the other way round.
+  const mutes = useMutes(Number(hostId));
   // The time range is shared state across tabs: switching tabs never resets
   // it. It used to be held here and hardcoded to "6h", which meant this page
   // had never heard of the range you picked on the fleet and Settings'
@@ -745,13 +749,11 @@ export function HostPage({
               failed. `refresh` stays -- the load-failure "Try again" is a
               retry a reader genuinely has to ask for, and the Containers tab
               calls it after a purge. */}
-            {/* The notification mutes belong to the host rather than to any
-              tab, so the header -- but on the title's own line, pushed to its
-              right end. On a line of their own under the title they cost a
-              whole row of header for one small button. Where the host is, its
-              OS, kernel and arch are printed in the Overview tab's System
-              card, which owns them. */}
-            <MuteControl hostId={host.id} />
+            {/* The mutes in force, on the title's own line, pushed to its
+              right end. Set on the alert lines of the Overview tab; listed
+              here too, since a permanent mute on an alert not open right now
+              has no line of its own. Nothing at all when nothing is muted. */}
+            <HostMutes mutes={mutes} />
           </div>
         </div>
       </header>
@@ -796,6 +798,7 @@ export function HostPage({
             events={data.events}
             filesystems={data.filesystems}
             containerMetrics={data.containerMetrics}
+            mutes={mutes}
           />
         )}
         {tab === "system" && (
