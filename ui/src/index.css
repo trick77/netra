@@ -3608,7 +3608,8 @@ svg.spark {
 }
 .evlist li {
   display: grid;
-  grid-template-columns: 6.5em 16px minmax(0, 1fr);
+  /* The last track holds a notifying event's Mute, empty on the rest. */
+  grid-template-columns: 6.5em 16px minmax(0, 1fr) auto;
   gap: var(--space-2);
   align-items: baseline;
   padding: 4px 0;
@@ -3762,13 +3763,12 @@ svg.spark {
 .hosthead .meta .age {
   font-size: inherit;
 }
-/* The notification mutes at the right end of the host title's line: each
-   active mute with its own Unmute, then the button or the small form that
-   adds one. Wraps like .hostbar so a narrow screen stacks it instead of
-   scrolling sideways. */
+/* The notification mutes in force, at the right end of the host title's
+   line, each with its own Unmute. Wraps like .hostbar so a narrow screen
+   stacks it instead of scrolling sideways. */
 .mutes,
-.muteform,
-.mutes .mute {
+.mutes .mute,
+.alertmute {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3778,17 +3778,33 @@ svg.spark {
   margin-left: auto;
   justify-content: flex-end;
 }
-/* The open form is five controls wide and only there while someone fills it
-   in: a line of its own under the title then, left-aligned like the form it
-   is, instead of squeezing the title's line or hanging off its right end. */
-.mutes.open {
+.mutes .note,
+.alertmute .note {
+  margin: 0;
+  flex-basis: 100%;
+}
+/* The mute on an alert line: Mute, or what mutes it and Unmute, at the
+   line's right end. Quiet, since the line is what to read. */
+.alertmute {
+  margin-left: auto;
+  color: var(--muted);
+}
+.alertmute .reach {
+  font-size: var(--text-micro);
+}
+/* The open form is four or five controls wide and only there while someone
+   fills it in: a line of its own under the alert, instead of squeezing the
+   sentence beside it. */
+.attn-row:has(.alertmute.open) {
+  flex-wrap: wrap;
+}
+.attn-row .alertmute.open {
   flex-basis: 100%;
   margin-left: 0;
-  justify-content: flex-start;
 }
-.mutes .note {
-  margin-top: 0;
-  flex-basis: 100%;
+.evlist li .alertmute.open {
+  grid-column: 1 / -1;
+  margin-left: 0;
 }
 /* The fleet's mutes on the admin page: host, what and until when, Unmute. */
 .mutelist {

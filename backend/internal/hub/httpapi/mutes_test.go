@@ -9,12 +9,66 @@ import (
 )
 
 type muteWire struct {
-	ID       int32      `json:"id"`
-	HostID   int32      `json:"host_id"`
-	Hostname string     `json:"hostname"`
-	Kind     string     `json:"kind"`
-	Until    *time.Time `json:"until"`
-	Note     string     `json:"note"`
+	ID            int32      `json:"id"`
+	HostID        int32      `json:"host_id"`
+	Hostname      string     `json:"hostname"`
+	Kind          string     `json:"kind"`
+	Subject       *string    `json:"subject"`
+	UntilResolved bool       `json:"until_resolved"`
+	Until         *time.Time `json:"until"`
+	Note          string     `json:"note"`
+}
+
+// One alert muted: by subject, and until its condition resolves.
+func TestMuteOneAlert(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	hostID, _ := createHost(t, srv, "nas")
+	if _, err := s.Pool().Exec(t.Context(), `
+		INSERT INTO host_conditions (host_id, kind, subject, severity, opened_ts, detail)
+		VALUES ($1, 'silent', '', 'critical', now(), '{}')`, hostID); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := doAdmin(t, srv, http.MethodPost, "/api/v1/mutes",
+		fmt.Sprintf(`{"host_id":%d,"kind":"silent","subject":"","until_resolved":true}`, hostID))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("until resolved: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var bound muteWire
+	decodeJSON(t, resp, &bound)
+	if !bound.UntilResolved || bound.Until != nil || bound.Subject == nil || *bound.Subject != "" {
+		t.Errorf("until resolved = %+v", bound)
+	}
+
+	resp = doAdmin(t, srv, http.MethodPost, "/api/v1/mutes",
+		fmt.Sprintf(`{"host_id":%d,"kind":"disk","subject":"/var"}`, hostID))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("by subject: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var bySubject muteWire
+	decodeJSON(t, resp, &bySubject)
+	if bySubject.UntilResolved || bySubject.Subject == nil || *bySubject.Subject != "/var" {
+		t.Errorf("by subject = %+v", bySubject)
+	}
+
+	// Resolved: the bound mute is over and no longer listed.
+	if _, err := s.Pool().Exec(t.Context(),
+		`UPDATE host_conditions SET resolved_ts = now(), resolved_reason = 'cleared'`); err != nil {
+		t.Fatal(err)
+	}
+	resp = doAdmin(t, srv, http.MethodGet, "/api/v1/mutes", "")
+	var list []muteWire
+	decodeJSON(t, resp, &list)
+	if len(list) != 1 || list[0].ID != bySubject.ID {
+		t.Errorf("list after resolve = %+v, want the subject mute alone", list)
+	}
+
+	// Nothing open any more to mute until resolved.
+	resp = doAdmin(t, srv, http.MethodPost, "/api/v1/mutes",
+		fmt.Sprintf(`{"host_id":%d,"kind":"silent","subject":"","until_resolved":true}`, hostID))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("until resolved on nothing open: %d, want 400", resp.StatusCode)
+	}
 }
 
 func TestMutesLifecycle(t *testing.T) {
@@ -107,12 +161,20 @@ func TestMuteRejectsBadInput(t *testing.T) {
 	hostID, _ := createHost(t, srv, "web1")
 
 	for name, body := range map[string]string{
-		"unknown host":   `{"host_id":99999}`,
-		"negative":       fmt.Sprintf(`{"host_id":%d,"minutes":-1}`, hostID),
-		"over a year":    fmt.Sprintf(`{"host_id":%d,"minutes":%d}`, hostID, 367*24*60),
-		"unknown kind":   fmt.Sprintf(`{"host_id":%d,"kind":"disks"}`, hostID),
-		"long note":      fmt.Sprintf(`{"host_id":%d,"note":%q}`, hostID, strings.Repeat("n", 501)),
-		"malformed JSON": `{`,
+		"unknown host":     `{"host_id":99999}`,
+		"negative":         fmt.Sprintf(`{"host_id":%d,"minutes":-1}`, hostID),
+		"over a year":      fmt.Sprintf(`{"host_id":%d,"minutes":%d}`, hostID, 367*24*60),
+		"unknown kind":     fmt.Sprintf(`{"host_id":%d,"kind":"disks"}`, hostID),
+		"long note":        fmt.Sprintf(`{"host_id":%d,"note":%q}`, hostID, strings.Repeat("n", 501)),
+		"malformed JSON":   `{`,
+		"subject, no kind": fmt.Sprintf(`{"host_id":%d,"subject":"/var"}`, hostID),
+		"long subject": fmt.Sprintf(`{"host_id":%d,"kind":"disk","subject":%q}`, hostID,
+			strings.Repeat("s", 1025)),
+		"resolved, event type": fmt.Sprintf(
+			`{"host_id":%d,"kind":"disk_error","subject":"sda","until_resolved":true}`, hostID),
+		"resolved, no subject": fmt.Sprintf(`{"host_id":%d,"kind":"disk","until_resolved":true}`, hostID),
+		"resolved and minutes": fmt.Sprintf(
+			`{"host_id":%d,"kind":"disk","subject":"/var","until_resolved":true,"minutes":60}`, hostID),
 	} {
 		resp := doAdmin(t, srv, http.MethodPost, "/api/v1/mutes", body)
 		if resp.StatusCode != http.StatusBadRequest {

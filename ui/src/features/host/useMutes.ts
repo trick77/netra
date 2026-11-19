@@ -1,6 +1,6 @@
 // The mutes a page shows, polled, with the one action every list of them
-// offers: lift. Shared by the host header and the admin page's fleet list so
-// a fix to either is a fix to both.
+// offers: lift. Shared by the host page and the admin page's fleet list so a
+// fix to either is a fix to both.
 import { useState } from "react";
 
 import {
@@ -24,6 +24,8 @@ export interface Mutes {
   // Every lift in flight, so two clicks in a row each keep their spinner.
   lifting: ReadonlySet<number>;
   lift: (id: number) => Promise<void>;
+  /** A mute just created here: listed at once, then re-read. */
+  add: (m: Mute) => void;
   refresh: () => void;
 }
 
@@ -42,6 +44,12 @@ export function useMutes(
   // second click that can only answer 404.
   const [gone, setGone] = useState<ReadonlySet<number>>(new Set());
   const [errors, setErrors] = useState<ReadonlyMap<number, string>>(new Map());
+  // Created here and not yet read back, each with the read it was added
+  // over. Kept until a newer read lands: the alert line it was set on would
+  // otherwise offer Mute again for the length of a poll.
+  const [added, setAdded] = useState<
+    readonly { mute: Mute; over: Mute[] | null }[]
+  >([]);
 
   function setError(id: number, text: string | null) {
     setErrors((m) => {
@@ -78,7 +86,18 @@ export function useMutes(
     }
   }
 
-  const mutes = (poll.data ?? []).filter((m) => !gone.has(m.id));
+  function add(m: Mute) {
+    setAdded((a) => [...a, { mute: m, over: poll.data }]);
+    poll.refresh();
+  }
+
+  const read = poll.data ?? [];
+  const fresh = added
+    .filter(
+      (a) => a.over === poll.data && !read.some((m) => m.id === a.mute.id),
+    )
+    .map((a) => a.mute);
+  const mutes = [...fresh, ...read].filter((m) => !gone.has(m.id));
   const listed = new Set(mutes.map((m) => m.id));
   const liftErrors = [...errors]
     .filter(([id]) => listed.has(id))
@@ -90,6 +109,7 @@ export function useMutes(
     liftErrors,
     lifting,
     lift,
+    add,
     refresh: poll.refresh,
   };
 }

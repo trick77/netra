@@ -697,18 +697,34 @@ export function purgeContainer(
 
 // internal/hub/httpapi/mutes.go: muteJSON
 //
-// A mute silences notifications for a host, or for one kind on it: a
-// condition kind (disk, silent, ...) or an event type (disk_error, ...).
+// A mute silences notifications for a host, for one kind on it -- a condition
+// kind (disk, silent, ...) or an event type (disk_error, ...) -- or for one
+// subject of that kind: one alert.
 export type Mute = {
   id: number;
   host_id: number;
   hostname: string;
   // "" mutes the whole host.
   kind: string;
-  // null lasts until lifted.
+  // null covers every subject of the kind; "" is the subject a host-wide
+  // condition such as silent has.
+  subject: string | null;
+  // Lasts until the condition open when it was set resolves.
+  until_resolved: boolean;
+  // null lasts until lifted (or until resolved, above).
   until: string | null;
   note: string;
   created: string;
+};
+
+// What createMute sends. minutes 0 without until_resolved mutes until lifted.
+export type NewMute = {
+  host_id: number;
+  kind: string;
+  subject?: string | null;
+  until_resolved?: boolean;
+  minutes: number;
+  note?: string;
 };
 
 // Every mute in force, or one host's when hostId is given.
@@ -716,17 +732,8 @@ export function getMutes(hostId?: number): Promise<Mute[]> {
   return request<Mute[]>(`/api/v1/mutes${toQueryString({ host: hostId })}`);
 }
 
-// minutes 0 mutes until lifted.
-export function createMute(
-  hostId: number,
-  kind: string,
-  minutes: number,
-  note = "",
-): Promise<Mute> {
-  return request<Mute>("/api/v1/mutes", {
-    method: "POST",
-    body: { host_id: hostId, kind, minutes, note },
-  });
+export function createMute(mute: NewMute): Promise<Mute> {
+  return request<Mute>("/api/v1/mutes", { method: "POST", body: mute });
 }
 
 export function deleteMute(id: number): Promise<void> {

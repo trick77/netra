@@ -198,6 +198,138 @@ func TestIntegrationNotifyMutes(t *testing.T) {
 	}
 }
 
+// A mute with a subject covers that subject only; one bound to a condition
+// covers that row only.
+func TestIntegrationNotifyMuteSubject(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(ctx, t, s, "web1")
+	now := time.Now().UTC()
+
+	if err := s.ApplyConditions(ctx, []conditions.Action{
+		{Open: ptr(openFinding(diskKey(host, "/var"), conditions.SeverityCritical, now))},
+		{Open: ptr(openFinding(diskKey(host, "/home"), conditions.SeverityCritical, now))},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := s.Pool().Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO alert_mutes (host_id, kind, subject) VALUES ($1, 'disk', '/var')`, host)
+	muted := map[string]bool{}
+	for _, c := range pending(t, s, now, 24*time.Hour) {
+		muted[c.Subject] = c.Muted
+	}
+	if !muted["/var"] || muted["/home"] {
+		t.Errorf("muted = %v, want /var only", muted)
+	}
+
+	// Bound to /var's condition but naming /home: the id decides, not muted.
+	exec(`
+		INSERT INTO alert_mutes (host_id, kind, subject, condition_id)
+		SELECT host_id, kind, '/home', id FROM host_conditions WHERE subject = '/var'`)
+	for _, c := range pending(t, s, now, 24*time.Hour) {
+		if c.Subject == "/home" && c.Muted {
+			t.Errorf("/home muted by a mute bound to /var's condition")
+		}
+	}
+
+	// Events: the subject is the device, NULL reading as "".
+	exec(`INSERT INTO alert_mutes (host_id, kind, subject) VALUES
+		($1, 'disk_error', 'sda'), ($1, 'oom_kill', '')`, host)
+	exec(`
+		INSERT INTO events (host_id, ts, type, subject, detail, severity) VALUES
+		  ($1, $2, 'disk_error', 'sda', '{}', 'critical'),
+		  ($1, $2, 'disk_error', 'sdb', '{}', 'critical'),
+		  ($1, $2, 'oom_kill', NULL, '{}', 'critical')`, host, now.Add(-time.Minute))
+	events, err := s.CriticalEventsSince(ctx, now, now.Add(-notify.Freshness))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range events {
+		got[e.Type+"/"+e.Subject] = e.Muted
+	}
+	if len(got) != 3 || !got["disk_error/sda"] || got["disk_error/sdb"] || !got["oom_kill/"] {
+		t.Errorf("events muted = %v, want sda and the subject-less oom_kill", got)
+	}
+}
+
+// A mute until resolved holds the all-clear back, then goes; the trouble
+// coming back is a new alert.
+func TestIntegrationNotifyMuteUntilResolved(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(ctx, t, s, "web1")
+	key := diskKey(host, "/var")
+	now := time.Now().UTC()
+
+	if err := s.ApplyConditions(ctx, []conditions.Action{
+		{Open: ptr(openFinding(key, conditions.SeverityCritical, now))},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	mark(t, s, pending(t, s, now, 24*time.Hour), now) // announced before the mute
+	open, err := s.OpenConditions(ctx)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open = %+v, %v", open, err)
+	}
+	if _, err := s.Pool().Exec(ctx, `
+		INSERT INTO alert_mutes (host_id, kind, subject, condition_id) VALUES ($1, 'disk', '/var', $2)`,
+		host, open[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	mutes := func() int {
+		t.Helper()
+		var n int
+		if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM alert_mutes`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	prune := func() {
+		t.Helper()
+		if err := s.PruneMutes(ctx, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prune()
+	if mutes() != 1 {
+		t.Fatalf("an open condition's mute was pruned")
+	}
+
+	if err := s.ApplyConditions(ctx, []conditions.Action{{Resolve: &conditions.Resolution{
+		ID: open[0].ID, Key: key, Reason: conditions.ReasonCleared,
+	}}}, now); err != nil {
+		t.Fatal(err)
+	}
+	// The all-clear is owed, so the mute stays to hold it back.
+	prune()
+	if mutes() != 1 {
+		t.Fatalf("mute pruned while its all-clear is owed")
+	}
+	got := pending(t, s, now, 24*time.Hour)
+	if len(got) != 1 || got[0].What != notify.Cleared || !got[0].Muted {
+		t.Fatalf("pending = %+v, want one muted all-clear", got)
+	}
+	mark(t, s, got, now) // the notifier drops it
+	prune()
+	if mutes() != 0 {
+		t.Fatalf("mute outlived its condition")
+	}
+
+	if err := s.ApplyConditions(ctx, []conditions.Action{
+		{Open: ptr(openFinding(key, conditions.SeverityCritical, now))},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := pending(t, s, now, 24*time.Hour); len(got) != 1 || got[0].Muted {
+		t.Fatalf("reopened = %+v, want one unmuted", got)
+	}
+}
+
 func TestIntegrationCriticalEventsSince(t *testing.T) {
 	ctx, s := condCtx(t)
 	host := newHost(ctx, t, s, "web1")

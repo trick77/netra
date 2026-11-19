@@ -3,7 +3,7 @@
 // when the list could not be read -- an empty card would read as "nothing
 // muted", which is exactly the wrong thing to say about a failed read.
 import { routePath } from "../../lib/router";
-import { muteScope, muteText } from "../host/MuteControl";
+import { muteScope, muteText } from "../host/mutes";
 import { useMutes } from "../host/useMutes";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
@@ -40,7 +40,7 @@ export function MuteList({ version }: { version?: number }) {
               small
               busy={lifting.has(m.id)}
               onClick={() => void lift(m.id)}
-              aria-label={`Unmute ${muteScope(m.kind)} on ${m.hostname}`}
+              aria-label={`Unmute ${muteScope(m.kind, m.subject)} on ${m.hostname}`}
             >
               Unmute
             </Button>
