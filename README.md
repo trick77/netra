@@ -218,10 +218,25 @@ names another service, stops the hub at startup. Channels: `smtp` (e-mail),
 provider. A message gets 45 s over all channels, then what is still out is
 cancelled; a URL's own `timeout=` does not change that.
 
-netra up to 0.1.8 used shoutrrr v0.8; its URLs for these six still parse, but
-Pushover `priority=2` is now emergency, Gotify needs `skiptlsverify=yes` where
-`disabletls=yes` skipped verification, and `generic` without a template sends
-`text/plain`.
+netra up to 0.1.8 used shoutrrr v0.8. What changed for its URLs:
+
+- **Refused at startup** (the hub does not start; the error names the channel
+  and the rule): `smtp` `from=`/`to=` that are not full addresses (`to=root`
+  → `to=root@example.com`); an `ntfy` topic other than up to 64 letters,
+  digits, `_` and `-` (a dot is refused); a `gotify` token that is
+  not an application token (`A` and 14 characters, or `gtfya.…`).
+- **Redirects**: a server answering with a redirect to another host, or from
+  HTTPS to HTTP, fails every send. Point the URL at the final host.
+- **`generic`**: without a template it sends `text/plain` (was
+  `application/json`). Query keys that are its own (`template`, `title`,
+  `titlekey`, `messagekey`, `method`, `contenttype`, `disabletls`,
+  `skiptlsverify`) now configure the request instead of reaching the webhook;
+  `__method=PUT` still forwards `method=PUT`.
+- **`gotify`**: the token travels in the `X-Gotify-Key` header (`useheader=no`
+  puts it back in the query); priority 0 is no longer forced, the
+  application's default applies; `skiptlsverify=yes` skips verification,
+  `disabletls=yes` no longer does.
+- **`pushover`**: `priority=2` is now emergency.
 
 What is sent, one message per host per minute at most:
 
