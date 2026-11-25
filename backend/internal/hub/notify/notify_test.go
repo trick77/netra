@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	tknotify "github.com/trick77/toolkit/notify"
+
 	"github.com/trick77/netra/internal/hub/notify"
 )
 
@@ -94,7 +96,7 @@ func (f *fakeSender) Send(title, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
-		var sendErr *notify.SendError
+		var sendErr *tknotify.SendError
 		if !errors.As(f.err, &sendErr) || !sendErr.Partial {
 			return f.err
 		}
@@ -200,7 +202,7 @@ func TestFailedSendStaysPending(t *testing.T) {
 func TestPartialFailureCountsAsSent(t *testing.T) {
 	now := t0
 	st := &fakeStore{conds: []notify.Condition{disk(1, 1, notify.Opened)}}
-	snd := &fakeSender{err: &notify.SendError{
+	snd := &fakeSender{err: &tknotify.SendError{
 		Failed: []string{"channel 2 (ntfy)"}, Partial: true, Err: errors.New("ntfy down"),
 	}}
 	n := newNotifier(st, snd, &now)
@@ -253,7 +255,7 @@ func TestMessagesAreLogged(t *testing.T) {
 func TestFailuresAreLoggedOncePerOutage(t *testing.T) {
 	now := t0
 	st := &fakeStore{conds: []notify.Condition{disk(1, 1, notify.Opened)}}
-	snd := &fakeSender{err: &notify.SendError{
+	snd := &fakeSender{err: &tknotify.SendError{
 		Failed: []string{"channel 1 (smtp)"}, Err: errors.New("smtp down"),
 	}}
 	n := newNotifier(st, snd, &now)

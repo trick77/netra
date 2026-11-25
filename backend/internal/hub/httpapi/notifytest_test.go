@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,8 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/toolkit/notify"
+
 	"github.com/trick77/netra/internal/hub/httpapi"
-	"github.com/trick77/netra/internal/hub/notify"
 )
 
 type delivery struct {
@@ -110,35 +112,52 @@ func TestNotifyTestReportsEachChannel(t *testing.T) {
 	}
 }
 
-// A second click while a slow channel holds the first is refused, not queued.
-//
-// Refused even after the first has answered "timed out": the abandoned send
-// may still deliver, and stacking another behind it only adds a duplicate.
+// A second click while a slow channel holds the first is refused, not queued;
+// once the first is answered the next one runs.
 func TestNotifyTestOneAtATime(t *testing.T) {
+	arrived := make(chan struct{}, 4)
 	release := make(chan struct{})
-	hang := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		arrived <- struct{}{}
 		<-release
 	}))
-	defer hang.Close()
+	defer slow.Close()
+	defer close(release)
 
-	channels, err := notify.NewChannels([]string{"generic+" + hang.URL + "/hook"})
+	channels, err := notify.NewChannels([]string{"generic+" + slow.URL + "/hook"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	channels.SetTimeoutForTest(200 * time.Millisecond)
 	srv := notifyAPI(t, channels)
 
-	code, body := postEmpty(t, srv.URL+"/api/v1/notify/test")
-	if code != http.StatusOK || !strings.Contains(string(body), "timed out after 200ms") {
-		t.Fatalf("first test: %d %s, want 200 reporting the timeout", code, body)
+	type answer struct {
+		code int
+		body []byte
+		err  error
 	}
-	code, body = postEmpty(t, srv.URL+"/api/v1/notify/test")
+	first := make(chan answer, 1)
+	go func() {
+		resp, err := http.Post(srv.URL+"/api/v1/notify/test", "application/json", nil)
+		if err != nil {
+			first <- answer{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		first <- answer{resp.StatusCode, body, err}
+	}()
+	<-arrived
+
+	code, body := postEmpty(t, srv.URL+"/api/v1/notify/test")
 	if code != http.StatusConflict || !strings.Contains(string(body), "still being sent") {
-		t.Errorf("second test while the first send hangs: %d %s, want 409", code, body)
+		t.Errorf("second test while the first is out: %d %s, want 409", code, body)
 	}
 
-	// The stuck send returns: the next test runs.
-	close(release)
+	release <- struct{}{}
+	if a := <-first; a.err != nil || a.code != http.StatusOK || !strings.Contains(string(a.body), `"ok":true`) {
+		t.Fatalf("first test: %d %s %v, want 200 ok", a.code, a.body, a.err)
+	}
+	go func() { <-arrived; release <- struct{}{} }()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		code, body = postEmpty(t, srv.URL+"/api/v1/notify/test")
@@ -146,33 +165,75 @@ func TestNotifyTestOneAtATime(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("still refused after the send returned: %d %s", code, body)
+			t.Fatalf("still refused after the first was answered: %d %s", code, body)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 }
 
-// A channel that never answers does not lock the button until a restart:
-// past the cap the next test runs (and reports the same timeout).
-func TestNotifyTestStuckSendReleasesAtCap(t *testing.T) {
-	stuck := make(chan struct{})
-	hang := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		<-stuck
+// A channel that never answers is cancelled at the timeout: the server sees
+// the request go away, and the next test runs.
+func TestNotifyTestTimeoutCancelsTheSend(t *testing.T) {
+	cancelled := make(chan struct{}, 4)
+	hang := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// The server notices a client leaving only once the body is read.
+		_, _ = io.ReadAll(r.Body)
+		select {
+		case <-r.Context().Done():
+			cancelled <- struct{}{}
+		case <-time.After(10 * time.Second):
+		}
 	}))
-	// Cleanups run last-first: release the handlers, then close the server,
-	// which waits for them.
-	t.Cleanup(hang.Close)
-	t.Cleanup(func() { close(stuck) })
+	defer hang.Close()
 
 	channels, err := notify.NewChannels([]string{"generic+" + hang.URL + "/hook"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	channels.SetTimeoutForTest(100 * time.Millisecond)
+	channels.SetTimeout(100 * time.Millisecond)
 	srv := notifyAPI(t, channels)
 
+	code, body := postEmpty(t, srv.URL+"/api/v1/notify/test")
+	if code != http.StatusOK || !strings.Contains(string(body), "timed out after 100ms") {
+		t.Fatalf("first test: %d %s, want 200 reporting the timeout", code, body)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the timed-out send was never cancelled")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		code, body := postEmpty(t, srv.URL+"/api/v1/notify/test")
+		if code == http.StatusOK {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("still locked after the send was cancelled: %d %s", code, body)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// stuckChannels answers at once and never reports its sends returned: a
+// service that ignores its cancellation.
+type stuckChannels struct{}
+
+func (stuckChannels) Labels() []string       { return []string{"channel 1 (stuck)"} }
+func (stuckChannels) Timeout() time.Duration { return 250 * time.Millisecond }
+func (stuckChannels) Deliver(context.Context, string, string) ([]notify.Delivery, <-chan struct{}) {
+	return []notify.Delivery{{Channel: "channel 1 (stuck)"}}, make(chan struct{})
+}
+
+// A send that never returns does not lock the button until a restart: past
+// the cap the next test runs.
+func TestNotifyTestStuckSendReleasesAtCap(t *testing.T) {
+	srv := notifyAPI(t, stuckChannels{})
 	if code, body := postEmpty(t, srv.URL+"/api/v1/notify/test"); code != http.StatusOK {
 		t.Fatalf("first test: %d %s", code, body)
+	}
+	if code, _ := postEmpty(t, srv.URL+"/api/v1/notify/test"); code != http.StatusConflict {
+		t.Errorf("second test before the cap: %d, want 409", code)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -183,7 +244,7 @@ func TestNotifyTestStuckSendReleasesAtCap(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("still locked long past the cap: %d %s", code, body)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

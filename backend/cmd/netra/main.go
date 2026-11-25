@@ -17,6 +17,7 @@ import (
 	"github.com/trick77/ship/kit/logging"
 	kitrun "github.com/trick77/ship/kit/run"
 	"github.com/trick77/ship/kit/version"
+	tknotify "github.com/trick77/toolkit/notify"
 
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/conditions"
@@ -144,9 +145,11 @@ func run() error {
 	// off too, its methods are nil-safe).
 	var testChannels httpapi.NotifyChannels
 	if cfg.Notify.Enabled() {
-		channels, err := notify.NewChannels(cfg.Notify.URLs)
+		channels, err := tknotify.NewChannels(cfg.Notify.URLs)
 		if err != nil {
-			return err
+			// The services list: an install upgraded from shoutrrr v0.8 may
+			// name one that is gone (Slack, Discord, ...).
+			return fmt.Errorf("BACKEND_NOTIFY_URLS %w (services: %s)", err, strings.Join(tknotify.Schemes(), ", "))
 		}
 		testChannels = channels
 		notifier := notify.New(s, channels, cfg.HubURL, cfg.Notify.Repeat)

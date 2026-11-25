@@ -48,9 +48,10 @@ type Config struct {
 
 // NotifyConfig holds the notification channels and the reminder interval.
 type NotifyConfig struct {
-	// URLs are shoutrrr service URLs (smtp://, ntfy://, telegram://, ...),
-	// separated by whitespace in BACKEND_NOTIFY_URLS. Not commas: shoutrrr's
-	// own URLs use commas to list recipients (smtp://...?to=a@x,b@x).
+	// URLs are shoutrrr service URLs, the services toolkit/notify supports
+	// (smtp://, ntfy://, telegram://, ...), separated by whitespace in
+	// BACKEND_NOTIFY_URLS. Not commas: shoutrrr's own URLs use commas to list
+	// recipients (smtp://...?to=a@x,b@x).
 	//
 	// They carry credentials, so nothing ever logs them.
 	URLs []string
