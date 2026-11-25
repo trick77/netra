@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -210,6 +211,73 @@ func TestNotifyTestTimeoutCancelsTheSend(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("still locked after the send was cancelled: %d %s", code, body)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A client that goes away mid-test cancels the sends: the receiving server
+// sees the request go away, and the next test is accepted.
+func TestNotifyTestClientGoneCancelsTheSend(t *testing.T) {
+	arrived := make(chan struct{}, 1)
+	cancelled := make(chan struct{}, 1)
+	var calls atomic.Int32
+	hook := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// The server notices a client leaving only once the body is read.
+		_, _ = io.ReadAll(r.Body)
+		if calls.Add(1) > 1 {
+			return
+		}
+		arrived <- struct{}{}
+		select {
+		case <-r.Context().Done():
+			cancelled <- struct{}{}
+		case <-time.After(10 * time.Second):
+		}
+	}))
+	defer hook.Close()
+
+	channels, err := notify.NewChannels([]string{"generic+" + hook.URL + "/hook"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := notifyAPI(t, channels)
+
+	ctx, leave := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/api/v1/notify/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+		gone <- err
+	}()
+	<-arrived
+	leave()
+	if err := <-gone; err == nil {
+		t.Fatal("the request answered although the client left")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the send outlived the client")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		code, body := postEmpty(t, srv.URL+"/api/v1/notify/test")
+		if code == http.StatusOK {
+			if !strings.Contains(string(body), `"ok":true`) {
+				t.Errorf("next test: %s, want ok", body)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("still locked after the client left: %d %s", code, body)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
