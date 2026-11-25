@@ -203,7 +203,7 @@ Optional. Leave `BACKEND_NOTIFY_URLS` empty and nothing is sent.
 
 | Variable | |
 |---|---|
-| `BACKEND_NOTIFY_URLS` | one or more [shoutrrr](https://containrrr.dev/shoutrrr/v0.8/services/overview/) URLs, separated by spaces |
+| `BACKEND_NOTIFY_URLS` | one or more [shoutrrr](https://shoutrrr.nickfedor.com/latest/services/overview/) URLs, separated by spaces |
 | `BACKEND_NOTIFY_REPEAT` | reminder interval for a condition still open, default `24h`; `0` turns reminders off |
 
 ```sh
@@ -211,10 +211,17 @@ BACKEND_NOTIFY_URLS=smtp://user:pass@mail.example.com:587/?from=netra@example.co
 ```
 
 Spaces, not commas: shoutrrr lists recipients with commas (`to=a@x,b@x`). The
-URLs carry credentials and are never logged; a URL that does not parse stops
-the hub at startup. Channels: e-mail, ntfy, Pushover, Gotify, Telegram,
-Discord, Slack, Teams, Matrix and others, plus a generic webhook. SMS has no
-native channel; point the webhook at an SMS provider.
+URLs carry credentials and are never logged; a URL that does not parse, or
+names another service, stops the hub at startup. Channels: `smtp` (e-mail),
+`ntfy`, `pushover`, `gotify`, `telegram` and `generic` (a webhook,
+`generic+https://…`). SMS has no native channel; point the webhook at an SMS
+provider. A message gets 45 s over all channels, then what is still out is
+cancelled; a URL's own `timeout=` does not change that.
+
+netra up to 0.1.8 used shoutrrr v0.8; its URLs for these six still parse, but
+Pushover `priority=2` is now emergency, Gotify needs `skiptlsverify=yes` where
+`disabletls=yes` skipped verification, and `generic` without a template sends
+`text/plain`.
 
 What is sent, one message per host per minute at most:
 
