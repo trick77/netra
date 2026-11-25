@@ -147,9 +147,7 @@ func run() error {
 	if cfg.Notify.Enabled() {
 		channels, err := tknotify.NewChannels(cfg.Notify.URLs)
 		if err != nil {
-			// The services list: an install upgraded from shoutrrr v0.8 may
-			// name one that is gone (Slack, Discord, ...).
-			return fmt.Errorf("BACKEND_NOTIFY_URLS %w (services: %s)", err, strings.Join(tknotify.Schemes(), ", "))
+			return notify.URLError(cfg.Notify.URLs, err)
 		}
 		testChannels = channels
 		notifier := notify.New(s, channels, cfg.HubURL, cfg.Notify.Repeat)
