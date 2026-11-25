@@ -10,8 +10,7 @@ import (
 	"time"
 
 	"github.com/trick77/ship/kit/httpx"
-
-	"github.com/trick77/netra/internal/hub/notify"
+	"github.com/trick77/toolkit/notify"
 )
 
 // NotifyChannels is what the settings page needs from the notification
@@ -43,10 +42,8 @@ type notifyTester struct {
 	hubURL   string
 	now      func() time.Time
 	// busy is held from the click until every send has really returned (or
-	// holdCap), not only until the answer: a send given up on at the timeout
-	// is abandoned and may still deliver, and a second click meanwhile would
-	// stack another stuck connection behind it and, once the server
-	// recovers, a duplicate.
+	// holdCap), not only until the answer: a second click meanwhile would
+	// stack another connection on a server that is already slow.
 	busy sync.Mutex
 }
 
@@ -72,7 +69,7 @@ func (t *notifyTester) timeoutSeconds() int {
 	return int(math.Ceil(t.timeout().Seconds()))
 }
 
-// holdCap bounds how long abandoned sends keep the next test out.
+// holdCap bounds how long sends still out keep the next test out.
 func (t *notifyTester) holdCap() time.Duration {
 	return 4 * t.timeout()
 }
@@ -81,9 +78,9 @@ func (t *notifyTester) holdCap() time.Duration {
 // result, 200 even when every one failed: the failures ARE the answer.
 //
 // It tests the channels, nothing else: no mute applies, no host is involved,
-// and nothing is written to the events log. A client that goes away stops
-// the wait, not the sends. A hub shutting down does not cancel it: the drain
-// waits for the answer, up to its own limit.
+// and nothing is written to the events log. A client that goes away cancels
+// the sends: nobody is left to read the answer. A hub shutting down does not
+// cancel it: the drain waits for the answer, up to its own limit.
 func (t *notifyTester) test(w http.ResponseWriter, r *http.Request) {
 	if len(t.labels()) == 0 {
 		httpx.WriteError(w, http.StatusConflict, notifyOff)
@@ -102,9 +99,9 @@ func (t *notifyTester) test(w http.ResponseWriter, r *http.Request) {
 		body += "\n\n" + t.hubURL
 	}
 	deliveries, done := t.channels.Deliver(r.Context(), "[netra] test notification", body)
-	// Released when the sends return, or at holdCap if one never does:
-	// shoutrrr sets no client timeouts, so a server that accepts the
-	// connection and then says nothing holds a send forever, and the button
+	// Released when the sends return, which is right after the timeout:
+	// Deliver cancels what is still out. holdCap only guards a send that
+	// ignores its cancellation (a service without a context): the button
 	// must not stay locked until the hub restarts.
 	go func() {
 		select {

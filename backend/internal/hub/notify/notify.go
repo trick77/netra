@@ -26,6 +26,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	tknotify "github.com/trick77/toolkit/notify"
 )
 
 // Interval is how often the notifier looks. The evaluator's own tick: nothing
@@ -52,9 +54,9 @@ const Freshness = 15 * time.Minute
 const Cooldown = time.Hour
 
 // parallelSends bounds how many hosts' messages are in flight at once. A
-// channel that hangs costs SendTimeout per message; one after another, a
-// fleet-wide outage (every host silent) would stretch a pass far past its
-// minute and age events out of Freshness before they were sent.
+// channel that hangs costs tknotify.SendTimeout per message; one after
+// another, a fleet-wide outage (every host silent) would stretch a pass far
+// past its minute and age events out of Freshness before they were sent.
 const parallelSends = 8
 
 // What is the reason a condition is in a message.
@@ -86,7 +88,8 @@ type Store interface {
 	RecordNotification(ctx context.Context, hostID int32, ts time.Time, severity string, n Notification) error
 }
 
-// Sender delivers one message to every configured channel.
+// Sender delivers one message to every configured channel: a
+// *tknotify.Channels. A *tknotify.SendError with Partial set counts as sent.
 type Sender interface {
 	Send(title, body string) error
 }
@@ -314,7 +317,7 @@ func (n *Notifier) send(batches []*hostBatch, now time.Time) {
 			defer wg.Done()
 			defer func() { <-slots }()
 			err := n.sender.Send(title, body)
-			var sendErr *SendError
+			var sendErr *tknotify.SendError
 			if errors.As(err, &sendErr) {
 				b.failed = sendErr.Failed
 			}
