@@ -285,6 +285,10 @@ The response is the only place the plaintext token ever appears: the hub stores
 a SHA-256 of it and nothing else. A lost token is replaced
 (`POST /api/v1/hosts/{id}/token`), not recovered.
 
+A misspelt host is renamed in place (Rename on the Agents page, or
+`PATCH /api/v1/hosts/{id}` with `{"hostname":"…"}`), not deleted and
+recreated: history and token stay, the agent keeps running untouched.
+
 ---
 
 ## Deploy an agent

@@ -55,6 +55,7 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 	// once, and the resulting command was complete, runnable and wrong.
 	mux.Handle("GET /api/v1/config", http.HandlerFunc(h.config))
 	mux.Handle("POST /api/v1/hosts", http.HandlerFunc(h.create))
+	mux.Handle("PATCH /api/v1/hosts/{id}", http.HandlerFunc(h.rename))
 	mux.Handle("POST /api/v1/hosts/{id}/token", http.HandlerFunc(h.rotate))
 	mux.Handle("DELETE /api/v1/hosts/{id}", http.HandlerFunc(h.delete))
 	mux.Handle("DELETE /api/v1/hosts/{id}/containers/{containerID}",
@@ -102,6 +103,34 @@ func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {
 		hostJSON: hostJSON{ID: host.ID, Hostname: host.Hostname},
 		Token:    token,
 	})
+}
+
+func (h *adminHandler) rename(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Hostname string `json:"hostname"`
+	}
+	if !httpx.DecodeJSONWith(w, r, &req, maxAdminBodyBytes,
+		httpx.DecodeOptions{BadRequest: "malformed JSON body"}) {
+		return
+	}
+
+	host, err := h.svc.RenameHost(r.Context(), id, req.Hostname)
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+
+	// Not hostJSON: its last_seen would always be null here, which reads as a
+	// host that never reported.
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		ID       int32  `json:"id"`
+		Hostname string `json:"hostname"`
+	}{host.ID, host.Hostname})
 }
 
 func (h *adminHandler) rotate(w http.ResponseWriter, r *http.Request) {

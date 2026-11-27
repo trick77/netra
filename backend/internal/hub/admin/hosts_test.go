@@ -161,6 +161,79 @@ func TestDeleteHostCascadesItsTokens(t *testing.T) {
 	}
 }
 
+// The token names the host by id, so a rename must not lock the agent out.
+func TestRenameHostKeepsItsToken(t *testing.T) {
+	svc, s := newService(t)
+	ctx := context.Background()
+
+	host, plain, err := svc.CreateHost(ctx, "flwo")
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+
+	renamed, err := svc.RenameHost(ctx, host.ID, "  flow ")
+	if err != nil {
+		t.Fatalf("RenameHost: %v", err)
+	}
+	if renamed.Hostname != "flow" {
+		t.Errorf("Hostname = %q, want %q", renamed.Hostname, "flow")
+	}
+
+	hosts, err := svc.ListHosts(ctx)
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	if len(hosts) != 1 || hosts[0].Hostname != "flow" {
+		t.Errorf("hosts = %+v, want one host named flow", hosts)
+	}
+
+	gotID, err := auth.NewAuthenticator(s.Pool()).Authenticate(ctx, plain)
+	if err != nil {
+		t.Fatalf("the token stopped working after a rename: %v", err)
+	}
+	if gotID != host.ID {
+		t.Errorf("token resolves to host %d, want %d", gotID, host.ID)
+	}
+}
+
+func TestRenameHostRejectsAnEmptyHostname(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+
+	host, _, err := svc.CreateHost(ctx, "web01")
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+	if _, err := svc.RenameHost(ctx, host.ID, " "); !errors.Is(err, admin.ErrInvalid) {
+		t.Errorf("err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestRenameHostToATakenNameIsAConflict(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+
+	if _, _, err := svc.CreateHost(ctx, "web01"); err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+	other, _, err := svc.CreateHost(ctx, "web02")
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+
+	if _, err := svc.RenameHost(ctx, other.ID, "web01"); !errors.Is(err, admin.ErrConflict) {
+		t.Errorf("err = %v, want ErrConflict", err)
+	}
+}
+
+func TestRenameUnknownHostIsNotFound(t *testing.T) {
+	svc, _ := newService(t)
+
+	if _, err := svc.RenameHost(context.Background(), 4242, "web01"); !errors.Is(err, admin.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeleteUnknownHostIsNotFound(t *testing.T) {
 	svc, _ := newService(t)
 

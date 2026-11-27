@@ -17,6 +17,7 @@ vi.mock("../../lib/api", async () => {
     createHost: vi.fn(),
     rotateHostToken: vi.fn(),
     deleteHost: vi.fn(),
+    renameHost: vi.fn(),
     getMutes: vi.fn(),
   };
 });
@@ -25,6 +26,7 @@ const getHosts = vi.mocked(api.getHosts);
 const createHost = vi.mocked(api.createHost);
 const rotateHostToken = vi.mocked(api.rotateHostToken);
 const deleteHost = vi.mocked(api.deleteHost);
+const renameHost = vi.mocked(api.renameHost);
 
 const host: api.Host = {
   id: 7,
@@ -181,6 +183,119 @@ describe("HostAdminPage", () => {
     await user.click(screen.getByRole("button", { name: "Confirm delete" }));
     expect(deleteHost).toHaveBeenCalledWith(7);
     expect(await screen.findByText("No hosts yet")).toBeInTheDocument();
+  });
+
+  it("renames a host in place and shows the new name", async () => {
+    const user = userEvent.setup();
+    getHosts.mockResolvedValue([host]);
+    renameHost.mockResolvedValue({ id: 7, hostname: "flow" });
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Rename" }));
+    const field = screen.getByLabelText("New name for web-01");
+    expect(field).toHaveValue("web-01");
+
+    getHosts.mockResolvedValue([{ ...host, hostname: "flow" }]);
+    await user.clear(field);
+    await user.type(field, " flow {Enter}");
+
+    expect(renameHost).toHaveBeenCalledWith(7, "flow");
+    expect(await screen.findByText("flow")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/New name for/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the rename field open with the hub's message when the name is taken", async () => {
+    const user = userEvent.setup();
+    getHosts.mockResolvedValue([host]);
+    renameHost.mockRejectedValue(
+      new api.ApiError(409, "conflict: a host with that name already exists"),
+    );
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Rename" }));
+    const field = screen.getByLabelText("New name for web-01");
+    await user.clear(field);
+    await user.type(field, "db-01");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText("conflict: a host with that name already exists"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("New name for web-01")).toHaveValue("db-01");
+
+    // Cancelling the failed rename takes its error with it.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("locks Cancel while a rename is saving", async () => {
+    const user = userEvent.setup();
+    getHosts.mockResolvedValue([host]);
+    renameHost.mockReturnValue(new Promise(() => {}));
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Rename" }));
+    await user.type(screen.getByLabelText("New name for web-01"), "x{Enter}");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByLabelText("New name for web-01")).toHaveValue("web-01x");
+  });
+
+  it("follows a rename in the open token panel", async () => {
+    const user = userEvent.setup();
+    getHosts.mockResolvedValue([host]);
+    rotateHostToken.mockResolvedValue({ id: 7, token: "nta_x" });
+    renameHost.mockResolvedValue({ id: 7, hostname: "flow" });
+    render(<HostAdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Rotate token" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "web-01" }),
+    ).toBeInTheDocument();
+
+    getHosts.mockResolvedValue([{ ...host, hostname: "flow" }]);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const field = screen.getByLabelText("New name for web-01");
+    await user.clear(field);
+    await user.type(field, "flow{Enter}");
+
+    expect(
+      await screen.findByRole("heading", { name: "flow" }),
+    ).toBeInTheDocument();
+  });
+
+  it("drops an open rename when its host disappears from the list", async () => {
+    const user = userEvent.setup();
+    const other = { ...host, id: 8, hostname: "db-01" };
+    getHosts.mockResolvedValue([host, other]);
+    render(<HostAdminPage />);
+
+    const renames = await screen.findAllByRole("button", { name: "Rename" });
+    await user.click(renames[0]);
+
+    // web-01 is deleted elsewhere; deleting db-01 here re-reads the list.
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    getHosts.mockResolvedValue([{ ...other, id: 9, hostname: "new" }]);
+    await user.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    expect(await screen.findByRole("button", { name: "Rename" })).toBeEnabled();
+    expect(screen.queryByLabelText(/New name for/)).not.toBeInTheDocument();
+  });
+
+  it("cancels a rename without calling the hub", async () => {
+    const user = userEvent.setup();
+    getHosts.mockResolvedValue([host]);
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Rename" }));
+    await user.clear(screen.getByLabelText("New name for web-01"));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(renameHost).not.toHaveBeenCalled();
+    expect(screen.getByText("web-01")).toBeInTheDocument();
   });
 
   it("surfaces the hub's own message when a create is refused", async () => {

@@ -331,6 +331,49 @@ func TestIntegrationAdminDeleteHostIs204ThenGone(t *testing.T) {
 	}
 }
 
+func TestIntegrationAdminRenameHost(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	id, _ := createHost(t, srv, "flwo")
+	createHost(t, srv, "taken")
+	path := fmt.Sprintf("/api/v1/hosts/%d", id)
+
+	resp := doAdmin(t, srv, http.MethodPatch, path, `{"hostname":"flow"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var renamed struct {
+		ID       int32  `json:"id"`
+		Hostname string `json:"hostname"`
+	}
+	decodeJSON(t, resp, &renamed)
+	if renamed.ID != id || renamed.Hostname != "flow" {
+		t.Errorf("got %+v, want id %d named flow", renamed, id)
+	}
+
+	// The conflict text is shown to the operator as-is: no Go call-site
+	// prefix in front of it.
+	conflict := readBody(t, doAdmin(t, srv, http.MethodPatch, path, `{"hostname":"taken"}`))
+	if !strings.Contains(conflict, `"conflict: a host with that name already exists"`) {
+		t.Errorf("conflict body = %s", conflict)
+	}
+
+	cases := []struct {
+		path, body string
+		want       int
+	}{
+		{path, `{"hostname":"  "}`, http.StatusBadRequest},
+		{path, `{`, http.StatusBadRequest},
+		{"/api/v1/hosts/4242", `{"hostname":"x"}`, http.StatusNotFound},
+		{"/api/v1/hosts/abc", `{"hostname":"x"}`, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		got := doAdmin(t, srv, http.MethodPatch, c.path, c.body)
+		if got.StatusCode != c.want {
+			t.Errorf("PATCH %s %s: status = %d, want %d", c.path, c.body, got.StatusCode, c.want)
+		}
+	}
+}
+
 func TestIntegrationAdminDeleteRejectsANonNumericID(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 
