@@ -11,6 +11,7 @@ import {
   createHost,
   deleteHost,
   getHosts,
+  renameHost,
   rotateHostToken,
   type Host,
   getConfig,
@@ -43,6 +44,8 @@ export const HUB_URL_EXAMPLE = "https://netra.example.com";
 
 /** A token that exists in this component's state and nowhere else. */
 type Minted = {
+  // The id, so a rename while the panel is open can follow it.
+  hostId: number;
   hostname: string;
   token: string;
   rotated: boolean;
@@ -136,6 +139,9 @@ function TokenPanel({
   );
 }
 
+/** A rename in progress: which host, and what the field holds right now. */
+type Renaming = { id: number; value: string };
+
 /**
  * The host list's columns.
  *
@@ -144,27 +150,56 @@ function TokenPanel({
  * one is a registry row with a token to rotate. They answer different
  * questions about the same machine.
  *
- * Bundled into one options object rather than five positional parameters,
- * which past two or three is a call nobody can read at the call site.
+ * Bundled into one options object rather than positional parameters, which
+ * past two or three is a call nobody can read at the call site.
  */
 function hostColumns({
   rotating,
   confirming,
+  renaming,
+  savingName,
   onRotate,
   onDelete,
+  onRename,
+  onCancelRename,
   setConfirming,
+  setRenaming,
 }: {
   rotating: number | null;
   confirming: number | null;
+  renaming: Renaming | null;
+  savingName: boolean;
   onRotate: (host: Host) => Promise<void>;
   onDelete: (host: Host) => Promise<void>;
+  onRename: () => Promise<void>;
+  onCancelRename: () => void;
   setConfirming: (id: number | null) => void;
+  setRenaming: (renaming: Renaming | null) => void;
 }): Column<Host>[] {
   return [
     {
       key: "hostname",
       header: "Host",
-      cell: (host) => host.hostname,
+      cell: (host) =>
+        renaming?.id === host.id ? (
+          <Input
+            aria-label={`New name for ${host.hostname}`}
+            value={renaming.value}
+            onChange={(e) =>
+              setRenaming({ id: host.id, value: e.target.value })
+            }
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && renaming.value.trim() !== "") {
+                void onRename();
+              } else if (e.key === "Escape") {
+                onCancelRename();
+              }
+            }}
+            autoFocus
+          />
+        ) : (
+          host.hostname
+        ),
       sortValue: (host) => host.hostname,
     },
     {
@@ -184,27 +219,57 @@ function hostColumns({
     {
       key: "actions",
       header: "Actions",
-      cell: (host) => (
-        <div className="toolbar">
-          <Button
-            small
-            busy={rotating === host.id}
-            disabled={rotating !== null}
-            onClick={() => void onRotate(host)}
-          >
-            Rotate token
-          </Button>
-          {confirming === host.id ? (
-            <Button small variant="danger" onClick={() => void onDelete(host)}>
-              Confirm delete
+      cell: (host) =>
+        renaming?.id === host.id ? (
+          <div className="toolbar">
+            <Button
+              small
+              variant="primary"
+              busy={savingName}
+              disabled={renaming.value.trim() === ""}
+              onClick={() => void onRename()}
+            >
+              Save
             </Button>
-          ) : (
-            <Button small onClick={() => setConfirming(host.id)}>
-              Delete
+            <Button small disabled={savingName} onClick={onCancelRename}>
+              Cancel
             </Button>
-          )}
-        </div>
-      ),
+          </div>
+        ) : (
+          <div className="toolbar">
+            <Button
+              small
+              disabled={renaming !== null}
+              onClick={() => {
+                setConfirming(null);
+                setRenaming({ id: host.id, value: host.hostname });
+              }}
+            >
+              Rename
+            </Button>
+            <Button
+              small
+              busy={rotating === host.id}
+              disabled={rotating !== null}
+              onClick={() => void onRotate(host)}
+            >
+              Rotate token
+            </Button>
+            {confirming === host.id ? (
+              <Button
+                small
+                variant="danger"
+                onClick={() => void onDelete(host)}
+              >
+                Confirm delete
+              </Button>
+            ) : (
+              <Button small onClick={() => setConfirming(host.id)}>
+                Delete
+              </Button>
+            )}
+          </div>
+        ),
     },
   ];
 }
@@ -236,8 +301,11 @@ export function HostAdminPage() {
   // Delete is two-click rather than window.confirm: a native dialog is not
   // stylable, not testable, and easy to dismiss by reflex on the wrong row.
   const [confirming, setConfirming] = useState<number | null>(null);
-  // Counts host deletes, so the mute list below re-reads after each.
-  const [deleted, setDeleted] = useState(0);
+  const [renaming, setRenaming] = useState<Renaming | null>(null);
+  const [savingName, setSavingName] = useState(false);
+  // Counts host deletes and renames, so the mute list below re-reads after
+  // each: it shows the hostname too.
+  const [hostEdits, setHostEdits] = useState(0);
 
   const refresh = useCallback(
     () =>
@@ -245,6 +313,12 @@ export function HostAdminPage() {
         (next) => {
           setHosts(next);
           setLoadError(null);
+          // A row that is gone (deleted elsewhere) takes its open rename or
+          // delete confirmation with it; left set, a vanished rename would
+          // disable every Rename button with no Cancel anywhere to clear it.
+          const present = (id: number) => next.some((h) => h.id === id);
+          setRenaming((r) => (r !== null && present(r.id) ? r : null));
+          setConfirming((c) => (c !== null && present(c) ? c : null));
         },
         (err: unknown) => {
           // hosts stays null so the empty state -- which is the onboarding, and
@@ -279,6 +353,7 @@ export function HostAdminPage() {
     try {
       const created = await createHost(hostname.trim());
       setMinted({
+        hostId: created.id,
         hostname: created.hostname,
         token: created.token,
         rotated: false,
@@ -304,7 +379,12 @@ export function HostAdminPage() {
     setRotating(host.id);
     try {
       const { token } = await rotateHostToken(host.id);
-      setMinted({ hostname: host.hostname, token, rotated: true });
+      setMinted({
+        hostId: host.id,
+        hostname: host.hostname,
+        token,
+        rotated: true,
+      });
     } catch (err) {
       setFormError(message(err));
     } finally {
@@ -312,12 +392,43 @@ export function HostAdminPage() {
     }
   }
 
+  async function onRename() {
+    if (renaming === null || savingName) return;
+    setFormError(null);
+    setSavingName(true);
+    const { id } = renaming;
+    try {
+      const { hostname } = await renameHost(id, renaming.value.trim());
+      setRenaming(null);
+      // An open token panel names the host in its "Run this on" line.
+      setMinted((m) =>
+        m !== null && m.hostId === id ? { ...m, hostname } : m,
+      );
+      setHostEdits((n) => n + 1);
+      await refresh();
+    } catch (err) {
+      // The field stays open with the operator's value, so a taken name is
+      // corrected in place rather than retyped.
+      setFormError(message(err));
+    } finally {
+      setSavingName(false);
+    }
+  }
+
+  // Locked while a save is in flight: closing the field then would drop the
+  // operator's value just before a 409 asks them to correct it.
+  function onCancelRename() {
+    if (savingName) return;
+    setRenaming(null);
+    setFormError(null);
+  }
+
   async function onDelete(host: Host) {
     setFormError(null);
     setConfirming(null);
     try {
       await deleteHost(host.id);
-      setDeleted((n) => n + 1);
+      setHostEdits((n) => n + 1);
       await refresh();
     } catch (err) {
       setFormError(message(err));
@@ -424,17 +535,23 @@ export function HostAdminPage() {
             columns={hostColumns({
               rotating,
               confirming,
+              renaming,
+              savingName,
               onRotate,
               onDelete,
+              onRename,
+              onCancelRename,
               setConfirming,
+              setRenaming,
             })}
             rows={hosts}
             rowKey={(host) => host.id}
           />
           {/* Re-read on every delete above: it takes that host's mutes with
               it, and the list should not offer an Unmute that can only
-              answer 404. */}
-          <MuteList version={deleted} />
+              answer 404. And on every rename, which changes the name the
+              list shows. */}
+          <MuteList version={hostEdits} />
         </>
       ) : null}
     </>

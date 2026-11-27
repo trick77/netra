@@ -1,5 +1,5 @@
 // Package admin holds the operations behind the hub's admin API: creating,
-// listing and deleting hosts, minting and rotating their agent tokens, and
+// listing, renaming and deleting hosts, minting and rotating their agent tokens, and
 // deleting containers.
 //
 // The logic lives here rather than in the HTTP handlers so it can be tested
@@ -137,6 +137,31 @@ func (s *Service) CreateHost(ctx context.Context, hostname string) (Host, string
 	}
 
 	return Host{ID: id, Hostname: hostname}, plain, nil
+}
+
+// RenameHost changes a host's name. Everything else is keyed by host id, so
+// the samples, tokens, mutes and events stay with the host; the running agent
+// needs no change, since its token names the host, not its hostname.
+func (s *Service) RenameHost(ctx context.Context, hostID int32, hostname string) (Host, error) {
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return Host{}, fmt.Errorf("%w: hostname is required", ErrInvalid)
+	}
+
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE hosts SET hostname = $2 WHERE id = $1`, hostID, hostname)
+	if err != nil {
+		// A classified error goes out bare: its text is what the operator
+		// reads, and "rename host: " in front of it is noise there.
+		if c := classify(err); errors.Is(c, ErrConflict) || errors.Is(c, ErrInvalid) {
+			return Host{}, c
+		}
+		return Host{}, fmt.Errorf("rename host: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return Host{}, ErrNotFound
+	}
+	return Host{ID: hostID, Hostname: hostname}, nil
 }
 
 // RotateToken mints a replacement token for a host and revokes every previous

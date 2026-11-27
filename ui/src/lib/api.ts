@@ -665,6 +665,18 @@ export function createHost(hostname: string): Promise<CreatedHost> {
   });
 }
 
+// Only the name: a rename changes nothing else, and the full Host shape here
+// would read as a live host's gauges that the response does not carry.
+export function renameHost(
+  id: number | string,
+  hostname: string,
+): Promise<{ id: number; hostname: string }> {
+  return request<{ id: number; hostname: string }>(`/api/v1/hosts/${id}`, {
+    method: "PATCH",
+    body: { hostname },
+  });
+}
+
 export function rotateHostToken(
   id: number | string,
 ): Promise<{ id: number; token: string }> {
