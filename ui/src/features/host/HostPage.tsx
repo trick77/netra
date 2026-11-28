@@ -166,6 +166,77 @@ interface TabData {
   markerEvents: Event[] | null;
 }
 
+/**
+ * The families drawn over the page's window: every metric family, the log
+ * and the markers. They are held per range, apart from the inventories,
+ * because one answer is only true of the range it was asked for.
+ *
+ * One store for all of them used to merge each answer over the last, so a
+ * tab last opened at 7d drew its 7d charts after a switch to 12mo, until the
+ * 12mo answer landed and the picture jumped. Keyed by range, a tab shows the
+ * range on screen or its loading state, never another range's chart.
+ */
+const WINDOWED = new Set<keyof TabData>([
+  "hostMetrics",
+  "hostSnmpMetrics",
+  "hostProtoMetrics",
+  "filesystemMetrics",
+  "agentMetrics",
+  "sensorMetrics",
+  "netMetrics",
+  "diskIoMetrics",
+  "smartMetrics",
+  "collectorMetrics",
+  "coreMetrics",
+  "containerMetrics",
+  "events",
+  "markerEvents",
+]);
+
+/**
+ * How many ranges' families stay cached: the one on screen and the one
+ * before it, so going back is instant. A 30d tab is ~4 MB of JSON; every
+ * range on the picker cached would hold that seven times for nothing.
+ */
+const CACHED_RANGES = 2;
+
+/** One range's cached families, and the tabs whose answer they hold. */
+export interface WindowedEntry {
+  families: Partial<TabData>;
+  tabs: readonly HostTab[];
+}
+
+export type WindowedCache = Partial<Record<Range, WindowedEntry>>;
+
+/**
+ * One tab's answer, its windowed families merged into the cache under its
+ * range, which becomes the newest entry. Older ranges past CACHED_RANGES drop
+ * out (string keys keep insertion order, and none of these is an integer).
+ */
+export function mergeWindowed(
+  cache: WindowedCache,
+  range: Range,
+  tab: HostTab,
+  families: Partial<TabData>,
+): WindowedCache {
+  const prev = cache[range];
+  const merged: Partial<TabData> = { ...prev?.families };
+  for (const [family, value] of Object.entries(families)) {
+    if (value !== undefined && WINDOWED.has(family as keyof TabData)) {
+      (merged as Record<string, unknown>)[family] = value;
+    }
+  }
+  const tabs = prev?.tabs.includes(tab)
+    ? prev.tabs
+    : [...(prev?.tabs ?? []), tab];
+  const order = (Object.keys(cache) as Range[]).filter((r) => r !== range);
+  const kept = CACHED_RANGES > 1 ? order.slice(-(CACHED_RANGES - 1)) : [];
+  const next: WindowedCache = {};
+  for (const r of kept) next[r] = cache[r];
+  next[range] = { families: merged, tabs };
+  return next;
+}
+
 const NO_DATA: TabData = {
   hostMetrics: null,
   hostSnmpMetrics: null,
@@ -280,7 +351,11 @@ export function HostPage({
   );
   const range = onRangeChange ? (controlledRange ?? localRange) : localRange;
   const setRange = onRangeChange ?? setLocalRange;
-  const [data, setData] = useState<TabData>(NO_DATA);
+  // The inventories (no window), and the windowed families per range: see
+  // WINDOWED. `data` further down is the two read together for the range the
+  // tab is drawn at.
+  const [inventory, setInventory] = useState<TabData>(NO_DATA);
+  const [windowed, setWindowed] = useState<WindowedCache>({});
 
   // One family at one range, for an enlarged chart that wants a different
   // window from the page's. It resolves the window exactly the way the tab
@@ -330,6 +405,9 @@ export function HostPage({
       series: { key: string; at: number } | null;
       /** Which host, tab and range this answer is for. */
       key: string;
+      /** The range and the tab alone, which file its windowed families. */
+      range: Range;
+      tab: HostTab;
     }> => {
       const window = rangeWindow(range);
       // The SERIES, and only the series, slow down with the range.
@@ -573,6 +651,8 @@ export function HostPage({
           markerEvents === undefined ? families : { ...families, markerEvents },
         series: due ? { key, at } : null,
         key,
+        range,
+        tab,
       };
     },
     POLL_MS,
@@ -597,17 +677,43 @@ export function HostPage({
   if (loaded !== mergedFrom) {
     setMergedFrom(loaded);
     if (loaded !== null) {
-      setData((prev) => {
+      setInventory((prev) => {
         const next = { ...prev };
         for (const [family, value] of Object.entries(loaded.families)) {
-          if (value !== undefined) {
+          if (value !== undefined && !WINDOWED.has(family as keyof TabData)) {
             (next as Record<string, unknown>)[family] = value;
           }
         }
         return next;
       });
+      setWindowed((prev) =>
+        mergeWindowed(prev, loaded.range, loaded.tab, loaded.families),
+      );
     }
   }
+
+  // The range the tab is DRAWN at, which trails the picked one while the
+  // picked one has nothing to draw for this tab yet.
+  //
+  // Switching to a range the cache has not seen used to blank every view
+  // that cannot say "loading" -- the Events tab claimed nothing had been
+  // collected, the sensor cards vanished and popped back. Drawing the old
+  // range's families beside the new one's was the original fault. So the tab
+  // keeps its WHOLE previous picture, one range, until the new range's answer
+  // for this tab lands, and then swaps in one go; the picker already shows
+  // the new choice, with a note that it is loading.
+  const asked = windowed[range]?.tabs.includes(tab) ?? false;
+  const [shownRange, setShownRange] = useState(range);
+  if (shownRange !== range && (asked || windowed[shownRange] === undefined)) {
+    setShownRange(range);
+  }
+  const drawn =
+    asked || windowed[shownRange] === undefined ? range : shownRange;
+  const data = useMemo<TabData>(
+    () => ({ ...inventory, ...windowed[drawn]?.families }),
+    [inventory, windowed, drawn],
+  );
+
   // The window's events as chart markers, for the lead charts of a tab.
   const markers = useMemo(
     () => timedEvents(data.markerEvents),
@@ -617,8 +723,11 @@ export function HostPage({
   // Whether the tab in front of the reader has had its first answer yet.
   // Until it has, a family with nothing in it is loading -- not "not
   // collected", which is a statement about the host this page cannot make
-  // before the hub has been asked.
-  const pending = loaded?.key !== `${hostId}:${tab}:${range}`;
+  // before the hub has been asked. Never while an older range is drawn in
+  // full: that picture is complete, only not the one picked.
+  const pending =
+    drawn === range && loaded?.key !== `${hostId}:${tab}:${range}`;
+  const switching = drawn !== range;
 
   // After commit, so only an answer usePoll accepted counts as fetched.
   useEffect(() => {
@@ -758,6 +867,13 @@ export function HostPage({
               value={range}
               onChange={(value) => setRange(value)}
             />
+            {/* While the tab still shows the previous range in full: says
+              so, rather than let an old axis pass for the picked range. */}
+            {switching && (
+              <span className="meta" role="status">
+                loading {range}…
+              </span>
+            )}
             {/* No Refresh button beside it. Both halves of the page poll every
               POLL_MS, which is the agent's own reporting interval, so the button
               asked the hub for numbers that could not have changed yet and its
@@ -813,7 +929,7 @@ export function HostPage({
                 ? catalogueOf(data.conditions.kinds)
                 : EMPTY_CATALOGUE
             }
-            range={range}
+            range={drawn}
             fetchFamily={fetchFamily}
             events={data.events}
             filesystems={data.filesystems}
@@ -834,7 +950,7 @@ export function HostPage({
             <SystemGraphs
               host={data.hostMetrics}
               cpuCore={data.coreMetrics}
-              range={range}
+              range={drawn}
               fetchFamily={fetchFamily}
               events={markers}
               threads={host.threads}
@@ -846,7 +962,7 @@ export function HostPage({
               sensors, which is most of a cloud fleet. */}
             <Sensors
               sensorMetrics={data.sensorMetrics}
-              range={range}
+              range={drawn}
               fetchFamily={fetchFamily}
             />
             {/* At the FOOT of the tab, below the charts. Four bars that do not
@@ -864,7 +980,7 @@ export function HostPage({
             sources={{
               collector: data.collectorMetrics,
               agent: data.agentMetrics,
-              range,
+              range: drawn,
               fetchFamily,
               events: markers,
               pending,
@@ -896,7 +1012,7 @@ export function HostPage({
               mem_total: host.memory_total,
             }}
             metrics={data.containerMetrics ?? null}
-            range={range}
+            range={drawn}
             // A purged container is gone from the inventory, so the page
             // refetches rather than editing a copy of the list it does not own.
             onPurged={refresh}
@@ -915,7 +1031,7 @@ export function HostPage({
               hostSnmp={data.hostSnmpMetrics}
               hostProto={data.hostProtoMetrics}
               net={data.netMetrics}
-              range={range}
+              range={drawn}
               fetchFamily={fetchFamily}
               events={markers}
               pending={pending}
@@ -935,14 +1051,14 @@ export function HostPage({
               filesystems={data.filesystems}
               lastSeen={host.last_seen}
               pending={pending}
-              range={range}
+              range={drawn}
               fetchFamily={fetchFamily}
             />
             <Drives
               rows={data.drives ?? []}
               capabilities={host.capabilities}
               metrics={data.smartMetrics}
-              range={range}
+              range={drawn}
               fetchFamily={fetchFamily}
             />
           </>

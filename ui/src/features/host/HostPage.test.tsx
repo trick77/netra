@@ -24,7 +24,13 @@ vi.mock("../../lib/api", () => ({
 }));
 
 import * as api from "../../lib/api";
-import { familyStep, HostPage, HOST_TABS, hostTabHref } from "./HostPage";
+import {
+  familyStep,
+  HostPage,
+  HOST_TABS,
+  hostTabHref,
+  mergeWindowed,
+} from "./HostPage";
 
 const host: HostDetail = {
   id: 7,
@@ -105,6 +111,124 @@ describe("familyStep", () => {
     expect(familyStep("smart", "7d", "1h")).toBe("1h");
     expect(familyStep("smart", "3mo", "24h")).toBe("24h");
     expect(familyStep("host", "30d", "1h")).toBe("1h");
+  });
+});
+
+// The windowed families are filed by the range they were asked for, so a
+// tab can never draw another range's chart while its own answer is out.
+describe("mergeWindowed", () => {
+  const at = (n: number) => ({ family: `f${n}` }) as unknown as MetricsResponse;
+
+  it("files windowed families under their range and leaves inventories out", () => {
+    const next = mergeWindowed({}, "7d", "system", {
+      hostMetrics: at(1),
+      units: [],
+      netMetrics: undefined,
+    });
+    expect(next).toEqual({
+      "7d": { families: { hostMetrics: at(1) }, tabs: ["system"] },
+    });
+  });
+
+  it("never shows one range's family under another", () => {
+    const next = mergeWindowed(
+      mergeWindowed({}, "7d", "network", {
+        hostMetrics: at(1),
+        netMetrics: at(2),
+      }),
+      "12mo",
+      "system",
+      { hostMetrics: at(3) },
+    );
+    expect(next["12mo"]?.families).toEqual({ hostMetrics: at(3) });
+    expect(next["7d"]?.families).toEqual({
+      hostMetrics: at(1),
+      netMetrics: at(2),
+    });
+  });
+
+  it("merges a later answer of the same range, and records which tabs answered", () => {
+    const next = mergeWindowed(
+      mergeWindowed({}, "30d", "network", {
+        hostMetrics: at(1),
+        netMetrics: at(2),
+      }),
+      "30d",
+      "system",
+      { hostMetrics: at(3) },
+    );
+    expect(next["30d"]).toEqual({
+      families: { hostMetrics: at(3), netMetrics: at(2) },
+      tabs: ["network", "system"],
+    });
+  });
+
+  it("keeps the range on screen and the one before it, and no more", () => {
+    let cache = mergeWindowed({}, "7d", "system", { hostMetrics: at(1) });
+    cache = mergeWindowed(cache, "30d", "system", { hostMetrics: at(2) });
+    cache = mergeWindowed(cache, "12mo", "system", { hostMetrics: at(3) });
+    expect(Object.keys(cache)).toEqual(["30d", "12mo"]);
+    // Going back to 30d makes it the newest, and 12mo the one kept.
+    cache = mergeWindowed(cache, "30d", "network", { netMetrics: at(4) });
+    expect(Object.keys(cache)).toEqual(["12mo", "30d"]);
+    expect(cache["30d"]?.families).toEqual({
+      hostMetrics: at(2),
+      netMetrics: at(4),
+    });
+  });
+});
+
+describe("HostPage range switch", () => {
+  // A range the cache has not seen: the tab keeps its whole previous
+  // picture, says it is loading, and swaps when the answer lands -- never
+  // an empty "nothing collected", never the two ranges mixed.
+  it("keeps the previous range drawn until the new one lands", async () => {
+    const event = {
+      id: "e:1",
+      host_id: 7,
+      hostname: "kessel",
+      ts: "2026-08-10T00:00:00Z",
+      type: "package",
+      subject: "openssl",
+      detail: {},
+      severity: "info" as const,
+    };
+    vi.mocked(api.getEvents).mockResolvedValue([event]);
+    const { rerender } = render(
+      <HostPage
+        hostId={7}
+        tab="events"
+        onTabChange={() => {}}
+        range="7d"
+        onRangeChange={() => {}}
+      />,
+    );
+    await screen.findByRole("row", { name: /openssl/ });
+
+    let land: (events: (typeof event)[]) => void = () => {};
+    vi.mocked(api.getEvents).mockReturnValue(
+      new Promise((resolve) => {
+        land = resolve;
+      }),
+    );
+    rerender(
+      <HostPage
+        hostId={7}
+        tab="events"
+        onTabChange={() => {}}
+        range="30d"
+        onRangeChange={() => {}}
+      />,
+    );
+    expect(await screen.findByText("loading 30d…")).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /openssl/ })).toBeInTheDocument();
+
+    await act(async () => {
+      land([{ ...event, id: "e:2", subject: "curl" }]);
+    });
+    await screen.findByRole("row", { name: /curl/ });
+    expect(screen.queryByRole("row", { name: /openssl/ })).toBeNull();
+    expect(screen.queryByText("loading 30d…")).toBeNull();
   });
 });
 
