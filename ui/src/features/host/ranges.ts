@@ -12,6 +12,12 @@ export const RANGE_OPTIONS: { value: Range; label: string }[] = [
   { value: "6h", label: "6h" },
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },
+  // Past a week the step widens with the window (lib/range SPEC): 30d reads
+  // the hourly aggregate (720 points), 3mo and 12mo the daily one (90, 365),
+  // so a wider button never means a heavier chart than the 30d rail tile.
+  { value: "30d", label: "30d" },
+  { value: "3mo", label: "3mo" },
+  { value: "12mo", label: "12mo" },
 ];
 
 /** The same set as the bare values clampRange takes. */

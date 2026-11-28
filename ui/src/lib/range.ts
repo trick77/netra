@@ -29,13 +29,14 @@ export const RANGES: readonly Range[] = [
 ];
 
 /**
- * The ranges a PAGE can be set to, in ascending order.
+ * The ranges Settings offers as the stored default, in ascending order.
  *
- * Everything past 30d belongs to one enlarged chart and not to a page: a
- * fleet list drawn over a year is twenty rows of the same flat smear, and no
- * page offers a window that wide in its own picker. Offering one as the
- * stored default would put two buttons in Settings that every page then
- * widens back down -- a setting that reads as ignored.
+ * The host page offers 3mo and 12mo too, and a pick there IS stored (the
+ * shared range preference), so loadRange() can return either: this list is
+ * what Settings shows, not a bound on the stored value. They are not offered
+ * as a default because every other page narrows them back down -- the fleet
+ * list over a year is twenty rows of the same flat smear -- and a default
+ * nearly every page ignores reads as a broken setting.
  */
 export const PAGE_RANGES: readonly Range[] = [
   "1h",

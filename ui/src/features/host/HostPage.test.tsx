@@ -24,7 +24,7 @@ vi.mock("../../lib/api", () => ({
 }));
 
 import * as api from "../../lib/api";
-import { HostPage, HOST_TABS, hostTabHref } from "./HostPage";
+import { familyStep, HostPage, HOST_TABS, hostTabHref } from "./HostPage";
 
 const host: HostDetail = {
   id: 7,
@@ -94,6 +94,17 @@ describe("hostTabHref", () => {
   it("is the URL contract Wave 5's router has to honour", () => {
     expect(hostTabHref(7, "system")).toBe("/hosts/7/system");
     expect(hostTabHref("7", "overview")).toBe("/hosts/7/overview");
+  });
+});
+
+// SMART at 30d asks 6h so the hub buckets it; everything else keeps the
+// range's own step.
+describe("familyStep", () => {
+  it("coarsens only SMART at 30d", () => {
+    expect(familyStep("smart", "30d", "1h")).toBe("6h");
+    expect(familyStep("smart", "7d", "1h")).toBe("1h");
+    expect(familyStep("smart", "3mo", "24h")).toBe("24h");
+    expect(familyStep("host", "30d", "1h")).toBe("1h");
   });
 });
 

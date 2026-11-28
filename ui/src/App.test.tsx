@@ -298,19 +298,32 @@ describe("the range sticks", () => {
     expect(pressed("6h")).toBe("false");
   });
 
-  // The events page offers 30d and the host page does not. The host page has
-  // to show something it can press, but the CHOICE is not overwritten --
-  // coming back to a page that offers 30d shows 30d again, not the narrowed
+  // Settings offers 12h and the host page does not. The host page has to
+  // show something it can press, but the CHOICE is not overwritten --
+  // coming back to a page that offers 12h shows 12h again, not the widened
   // version some other page had to display.
-  it("shows a wider choice clamped without forgetting it", async () => {
-    localStorage.setItem("netra.range", "30d");
+  it("shows an unoffered choice clamped without forgetting it", async () => {
+    localStorage.setItem("netra.range", "12h");
     goTo("/hosts/3/graphs");
 
     render(<App />);
-    await screen.findByRole("button", { name: "7d" });
+    await screen.findByRole("button", { name: "24h" });
 
-    expect(pressed("7d")).toBe("true");
-    expect(localStorage.getItem("netra.range")).toBe("30d");
+    expect(pressed("24h")).toBe("true");
+    expect(localStorage.getItem("netra.range")).toBe("12h");
+  });
+
+  // The host page goes to 12mo; Settings stops at 30d. A 12mo picked there
+  // shows Settings' widest, pressed, and stays stored as 12mo.
+  it("shows a host-page range in Settings at its widest", async () => {
+    localStorage.setItem("netra.range", "12mo");
+    goTo("/settings");
+
+    render(<App />);
+    await screen.findByRole("button", { name: "30 d" });
+
+    expect(pressed("30 d")).toBe("true");
+    expect(localStorage.getItem("netra.range")).toBe("12mo");
   });
 
   // A link is the one thing that must beat the preference: it exists to show

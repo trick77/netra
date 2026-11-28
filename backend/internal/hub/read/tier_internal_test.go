@@ -225,6 +225,82 @@ func TestTierSelectionForRawOnlyFamilies(t *testing.T) {
 
 }
 
+// A raw-only family asked for a step coarser than it stores is bucketed at
+// query time, and its window then follows the bucket rules: both edges on a
+// boundary, the open bucket left out. Without it the 3mo storage tab asked for
+// 2160 hourly SMART points per attribute per drive.
+func TestTierSelectionResamplesARawOnlyFamilyToACoarserStep(t *testing.T) {
+	p := mustPlan(t, "smart", testNow.Add(-30*day), testNow, day, true)
+
+	if p.Tier != TierRaw {
+		t.Errorf("tier = %q, want %q", p.Tier, TierRaw)
+	}
+	if !p.spec.resampled {
+		t.Fatal("spec not resampled")
+	}
+	if p.Step != day {
+		t.Errorf("step = %v, want the asked 24h", p.Step)
+	}
+	// testNow is 12:00, so today is open and yesterday's bucket is the last.
+	wantTo := testNow.Truncate(day).Add(-day)
+	if !p.Window.To.Equal(wantTo) {
+		t.Errorf("window.to = %v, want %v", p.Window.To, wantTo)
+	}
+	if want := testNow.Add(-30 * day).Truncate(day); !p.Window.From.Equal(want) {
+		t.Errorf("window.from = %v, want %v", p.Window.From, want)
+	}
+
+	// Never an aggregate and never a family with a coarser tier above: a
+	// step past 1d on host stays the daily tier, unresampled.
+	if h := mustPlan(t, "host", testNow.Add(-30*day), testNow, 7*day, true); h.spec.resampled || h.Tier != Tier1d {
+		t.Errorf("host at step=7d: tier %q resampled=%v, want 1d unresampled", h.Tier, h.spec.resampled)
+	}
+	// A step that does not divide a day is answered unbucketed: Go's
+	// Truncate and time_bucket would put its buckets on different grids.
+	for _, s := range []time.Duration{48 * time.Hour, 5 * time.Hour, time.Hour + 500*time.Millisecond} {
+		if p := mustPlan(t, "smart", testNow.Add(-30*day), testNow, s, true); p.spec.resampled {
+			t.Errorf("smart at step=%v resampled", s)
+		}
+	}
+	// 6h divides a day: the 30d storage tab asks for it.
+	if p := mustPlan(t, "smart", testNow.Add(-30*day), testNow, 6*time.Hour, true); !p.spec.resampled {
+		t.Error("smart at step=6h not resampled")
+	}
+	// No step, no resampling: the default plan is unchanged.
+	if n := mustPlan(t, "smart", testNow.Add(-30*day), testNow, 0, false); n.spec.resampled {
+		t.Error("smart without a step was resampled")
+	}
+}
+
+// The resampled SQL groups by the keys and the bucket, takes last() per
+// column, and bounds `to` at the END of the last bucket.
+func TestResampledSQL(t *testing.T) {
+	f, err := lookupFamily("smart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := resample(f, f.tiers[0], day, true)
+	cols := []column{{name: "raw"}}
+
+	host := buildSQL(f, spec, cols)
+	for _, want := range []string{
+		"time_bucket(make_interval(secs => 86400), s.ts)",
+		"last(s.raw, s.ts) FILTER (WHERE s.raw IS NOT NULL)",
+		"s.ts < $3::timestamptz + make_interval(secs => 86400)",
+		"GROUP BY 1, 2, 3",
+	} {
+		if !strings.Contains(host, want) {
+			t.Errorf("host SQL lacks %q:\n%s", want, host)
+		}
+	}
+	if fleet := buildFleetSQL(f, spec, cols); !strings.Contains(fleet, "GROUP BY 1, 2, 3, 4") {
+		t.Errorf("fleet SQL lacks the host-level GROUP BY:\n%s", fleet)
+	}
+	if plain := buildSQL(f, f.tiers[0], cols); strings.Contains(plain, "GROUP BY") {
+		t.Errorf("unresampled SQL grouped:\n%s", plain)
+	}
+}
+
 // An explicit step is total: every duration resolves to a tier rather than
 // 400ing on a value that is not itself one.
 func TestTierSelectionWithAnExplicitStep(t *testing.T) {
