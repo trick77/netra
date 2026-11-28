@@ -134,6 +134,11 @@ type Client struct {
 	//
 	// Cleared only once the hub acks, so a failed POST re-sends it.
 	pendingSnapshot *netrav1.SystemdSnapshot
+	// pendingMdSnapshot is pendingSnapshot for md arrays: a statement about
+	// the present, superseded by each newer one and cleared on ack. Every
+	// scrape makes one while the host has arrays, so riding the ring would
+	// buffer a copy per minute of an outage to send only the last.
+	pendingMdSnapshot *netrav1.MdSnapshot
 	// replaying stays true for the WHOLE of a replay, not just its first
 	// batch. It was cleared on the first successful partial drain, so
 	// recovering 7200 buffered samples flagged batch 1 as backfill and the
@@ -621,6 +626,9 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 			// this bypasses the ring entirely.
 			c.pendingSnapshot = res.SystemdSnapshot
 		}
+		if res.MdSnapshot != nil {
+			c.pendingMdSnapshot = res.MdSnapshot
+		}
 		appendFamilies(scrape, res)
 	}
 	elapsed := time.Since(start)
@@ -802,7 +810,7 @@ func (c *Client) Flush(ctx context.Context) error {
 	// meaningful share of maxBatchRows, and a bound that does not know about
 	// them is a bound that stops holding on exactly the large hosts it exists
 	// for.
-	rows := len(c.pendingSnapshot.GetUnits())
+	rows := len(c.pendingSnapshot.GetUnits()) + len(c.pendingMdSnapshot.GetArrays())
 	for i, e := range pending {
 		next := countRows(e.Scrape)
 		// The i > 0 guard lets a single oversized scrape through on its own.
@@ -874,6 +882,7 @@ func (c *Client) Flush(ctx context.Context) error {
 	// scrape of its own -- which is the point: the repair must not be gated on
 	// the same delivery path whose failure created the divergence.
 	req.SystemdSnapshot = c.pendingSnapshot
+	req.MdSnapshot = c.pendingMdSnapshot
 	// Anything sent after a failed flush is replayed history, and the hub
 	// needs to know so it can invalidate the affected aggregate ranges.
 	req.Backfill = c.replaying
@@ -1031,6 +1040,7 @@ func (c *Client) Flush(ctx context.Context) error {
 	// was refused re-sends it. collect and Flush run on the same goroutine, so
 	// nothing can have replaced it since it went out.
 	c.pendingSnapshot = nil
+	c.pendingMdSnapshot = nil
 	c.sendMetadata = resp.GetRequestMetadata()
 	// Cleared only once the ring is actually EMPTY. A partial drain means
 	// there is still buffered history behind this batch, and every batch of it

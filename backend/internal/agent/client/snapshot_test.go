@@ -110,3 +110,48 @@ func TestSystemdSnapshotSurvivesAFailedPost(t *testing.T) {
 			"carried is exactly what the outage kept from arriving")
 	}
 }
+
+// mdCollector emits one md snapshot per scrape, its ts numbered.
+type mdCollector struct{ n int64 }
+
+func (*mdCollector) Name() string { return "md" }
+
+func (m *mdCollector) Collect(context.Context) (*collector.Result, error) {
+	m.n++
+	return &collector.Result{
+		MdSnapshot: &netrav1.MdSnapshot{
+			TsMs:   m.n,
+			Arrays: []*netrav1.MdArray{{Name: "md2", SyncAction: "check"}},
+		},
+	}, nil
+}
+
+// The md snapshot rides outside the ring like the systemd one: the newest
+// reaches the hub, older ones are superseded rather than queued, and an acked
+// one is not sent again.
+func TestMdSnapshotSendsTheNewestAndClearsOnAck(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	c := newSnapshotClient(t, srv.URL, &mdCollector{})
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	got := rec.last().GetMdSnapshot()
+	if got.GetTsMs() != 2 || len(got.GetArrays()) != 1 {
+		t.Fatalf("md snapshot = %v, want the second scrape's", got)
+	}
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if got := rec.last().GetMdSnapshot(); got.GetTsMs() != 3 {
+		t.Errorf("after the ack, md snapshot = %v, want the third scrape's", got)
+	}
+}

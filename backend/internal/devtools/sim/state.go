@@ -57,7 +57,9 @@ func newSchedule(p *Profile, s signal, from, to time.Time) *schedule {
 			UnitName: unit, State: "active", Substate: "running",
 		}})
 	}
-	if p.Mdraid != "" {
+	incidents := mdraidTrouble(p, s, from, to)
+	checks := mdraidChecks(p, from, to, incidents)
+	if p.Mdraid != "" && (len(checks) == 0 || !checks[0].ts.Equal(from)) {
 		evs = append(evs, timedEvent{ts: from, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    p.Mdraid,
@@ -68,7 +70,8 @@ func newSchedule(p *Profile, s signal, from, to time.Time) *schedule {
 
 	evs = append(evs, unitFailures(p, s, from, to)...)
 	evs = append(evs, packageChanges(p, s, from, to)...)
-	evs = append(evs, mdraidTrouble(p, s, from, to)...)
+	evs = append(evs, incidents...)
+	evs = append(evs, checks...)
 	evs = append(evs, kernelTrouble(p, s, from, to)...)
 
 	sort.SliceStable(evs, func(i, j int) bool { return evs[i].ts.Before(evs[j].ts) })
@@ -346,7 +349,7 @@ func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 			// agent/collector/mdraid.go calls that critical, and the sim must
 			// state what the real collector would.
 			Severity:   eventSeverity("critical"),
-			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"idle"}`,
+			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"idle","prev_sync_action":"idle"}`,
 		}},
 		// Well clear of the degrade rather than 90 seconds after it: on the
 		// coarse grid both would come due in the same slot, get the same
@@ -357,15 +360,79 @@ func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 			Subject: array,
 			// Still degraded, but the kernel is rebuilding it: a warning.
 			Severity:   eventSeverity("warning"),
-			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"recover"}`,
+			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"recover","prev_sync_action":"idle"}`,
 		}},
 		{ts: rebuilt, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    array,
 			Severity:   eventSeverity("info"),
-			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle"}`,
+			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle","prev_sync_action":"recover"}`,
 		}},
 	}
+}
+
+// mdraidCheckEvery and mdraidCheckFor are the scheduled scrub: a check every
+// four days, fourteen hours long. Far more often than the monthly checkarray
+// a real host runs, so a day's backfill usually holds one in progress and the
+// Storage tab's progress bar has something to draw.
+const (
+	mdraidCheckEvery = 4 * 24 * time.Hour
+	mdraidCheckFor   = 14 * time.Hour
+)
+
+// mdraidCheckStart is when the scheduled check covering t began: 06:00 UTC on
+// a four-day grid. The grid is time.Time's own (Truncate counts from year 1),
+// not the Unix epoch's; all that matters is that every run uses the same one.
+func mdraidCheckStart(t time.Time) time.Time {
+	return t.Add(-6 * time.Hour).Truncate(mdraidCheckEvery).Add(6 * time.Hour)
+}
+
+// mdraidChecks schedules the scrub's start and finish on mdraidCheckStart's
+// grid, so a backfill and a live run agree. A check overlapping an incident is
+// skipped: md does not scrub a degraded array.
+func mdraidChecks(p *Profile, from, to time.Time, incidents []timedEvent) []timedEvent {
+	if p.Mdraid == "" {
+		return nil
+	}
+	busy := func(start, end time.Time) bool {
+		for i := 0; i+2 < len(incidents); i += 3 {
+			if start.Before(incidents[i+2].ts) && incidents[i].ts.Before(end) {
+				return true
+			}
+		}
+		return false
+	}
+	var evs []timedEvent
+	first := mdraidCheckStart(from.Add(-mdraidCheckFor))
+	for start := first; start.Before(to); start = start.Add(mdraidCheckEvery) {
+		end := start.Add(mdraidCheckFor)
+		if busy(start, end) {
+			continue
+		}
+		switch {
+		case start.After(from):
+			evs = append(evs, timedEvent{ts: start, event: &netrav1.Event{
+				Type: "mdraid", Subject: p.Mdraid, Severity: eventSeverity("info"),
+				DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"check","prev_sync_action":"idle"}`,
+			}})
+		case end.After(from):
+			// Running when the window opens, or starting with it: this IS
+			// the baseline,
+			// a first sighting with no before, and newSchedule sends no
+			// other one.
+			evs = append(evs, timedEvent{ts: from, event: &netrav1.Event{
+				Type: "mdraid", Subject: p.Mdraid, Severity: eventSeverity("info"),
+				DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"check"}`,
+			}})
+		}
+		if end.After(from) && end.Before(to) {
+			evs = append(evs, timedEvent{ts: end, event: &netrav1.Event{
+				Type: "mdraid", Subject: p.Mdraid, Severity: eventSeverity("info"),
+				DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle","prev_sync_action":"check","mismatch_cnt":0}`,
+			}})
+		}
+	}
+	return evs
 }
 
 // kernelInterval is how often the failing drive throws a burst. Far shorter

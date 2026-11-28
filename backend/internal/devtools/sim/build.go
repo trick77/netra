@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -40,6 +41,9 @@ type Scrape struct {
 	// fix -- units pinned at "failed" with nothing able to clear them -- and
 	// the local hub could not be used to check that it is gone.
 	SystemdSnapshot *netrav1.SystemdSnapshot
+
+	// MdSnapshot is the array as the agent reports it every scrape.
+	MdSnapshot *netrav1.MdSnapshot
 }
 
 // Rows counts what this scrape will insert. The batcher bounds a POST by rows
@@ -52,7 +56,7 @@ func (s *Scrape) Rows() int {
 		len(s.Filesystems) + len(s.Smart) +
 		len(s.SystemdEvents) + len(s.PackageEvents) +
 		len(s.Addresses) + len(s.Interfaces) + len(s.Packages) +
-		len(s.SystemdSnapshot.GetUnits())
+		len(s.SystemdSnapshot.GetUnits()) + len(s.MdSnapshot.GetArrays())
 	if s.Host != nil {
 		n++
 	}
@@ -91,7 +95,75 @@ type Generator struct {
 	// oomKills is cumulative for the same reason hubFailures is: the kernel
 	// counter counts since boot and never decreases.
 	oomKills uint64
+
+	// md is the array as the last mdraid event left it, and since when, which
+	// is all the snapshot needs: the events already carry every transition.
+	md      simArray
+	mdSince time.Time
 }
+
+// simArray is the part of an mdraid event's detail the snapshot repeats.
+type simArray struct {
+	State      string `json:"state"`
+	Level      string `json:"level"`
+	RaidDisks  uint32 `json:"raid_disks"`
+	Degraded   uint32 `json:"degraded"`
+	SyncAction string `json:"sync_action"`
+}
+
+// simSyncFor is how long each kind of sync takes on the simulated array, for
+// its progress: the check as scheduled, a rebuild as mdraidIncident runs it.
+var simSyncFor = map[string]time.Duration{
+	"check":   mdraidCheckFor,
+	"recover": 11*time.Hour - 25*time.Minute,
+}
+
+// simMdSpeedKiB is the simulated array's sync speed, a spinning disk's.
+const simMdSpeedKiB = 150_000
+
+// mdSnapshot is the array as a real agent would report it at ts: its members,
+// and while it syncs, how far along.
+func (g *Generator) mdSnapshot(ts time.Time) *netrav1.MdSnapshot {
+	if g.p.Mdraid == "" || g.md.Level == "" {
+		return nil
+	}
+	a := &netrav1.MdArray{
+		Name: g.p.Mdraid, Level: g.md.Level, RaidDisks: g.md.RaidDisks,
+		Degraded: g.md.Degraded, State: g.md.State, SyncAction: g.md.SyncAction,
+	}
+	for i, dev := range []string{"sda1", "sdb1", "sdc1", "sdd1"} {
+		slot := uint32(i) //nolint:gosec // four members
+		m := &netrav1.MdMember{Device: dev, State: "in_sync", Slot: &slot}
+		if i == 3 && g.md.Degraded > 0 {
+			// The member that failed: gone while degraded, a spare taking
+			// its slot back while it rebuilds.
+			m.State, m.Slot = "faulty", nil
+			if g.md.SyncAction == "recover" {
+				m.State = "spare"
+			}
+		}
+		a.Members = append(a.Members, m)
+	}
+	if took, ok := simSyncFor[g.md.SyncAction]; ok {
+		// 4 TB members, the sync walking one of them end to end.
+		const total = uint64(4_000_000_000_000 / 512)
+		since := g.mdSince
+		if g.md.SyncAction == "check" {
+			// A check already running when the window opened was first seen
+			// at the window's start, not begun there.
+			since = mdraidCheckStart(ts)
+		}
+		frac := min(max(float64(ts.Sub(since))/float64(took), 0), 0.999)
+		done := uint64(frac * float64(total))
+		speed := uint64(simMdSpeedKiB)
+		a.SyncDoneSectors, a.SyncTotalSectors, a.SyncSpeedKibs = &done, ptrU64(total), &speed
+	}
+	mismatches := uint64(0)
+	a.MismatchCnt = &mismatches
+	return &netrav1.MdSnapshot{TsMs: ts.UnixMilli(), Arrays: []*netrav1.MdArray{a}}
+}
+
+func ptrU64(v uint64) *uint64 { return &v }
 
 // liveHorizon is how far past the backfill window discrete events are
 // scheduled.
@@ -168,11 +240,18 @@ func (g *Generator) Scrape(ts time.Time, opt Options) *Scrape {
 		case e.event != nil:
 			ev := proto.Clone(e.event).(*netrav1.Event)
 			ev.TsMs = ts.UnixMilli()
+			if ev.GetType() == "mdraid" {
+				var a simArray
+				if json.Unmarshal([]byte(ev.GetDetailJson()), &a) == nil {
+					g.md, g.mdSince = a, ts
+				}
+			}
 			s.Events = append(s.Events, ev)
 		}
 	}
 
 	s.SystemdSnapshot = g.systemdSnapshot(ts)
+	s.MdSnapshot = g.mdSnapshot(ts)
 	return s
 }
 
