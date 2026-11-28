@@ -109,6 +109,100 @@ describe("Enlargeable", () => {
     ]);
   });
 
+  // The enlarged view drew no events at all; it draws the panel's at the
+  // page's range and asks for the rail range's own once it moves.
+  describe("event markers", () => {
+    const pageWindow = {
+      from: "2026-08-10T00:00:00Z",
+      to: "2026-08-10T01:00:00Z",
+    };
+    const sixWindow = {
+      from: "2026-08-09T19:00:00Z",
+      to: "2026-08-10T01:00:00Z",
+    };
+    const pageEvents = [
+      {
+        at: Date.parse("2026-08-10T00:30:00Z"),
+        severity: "critical" as const,
+        label: "host down",
+      },
+    ];
+    const sixEvents = [
+      {
+        at: Date.parse("2026-08-09T20:00:00Z"),
+        severity: "warning" as const,
+        label: "disk filling",
+      },
+    ];
+
+    function dialogMarks() {
+      return [
+        ...screen.getByRole("dialog").querySelectorAll("[data-marker]"),
+      ].map((m) => m.getAttribute("data-marker"));
+    }
+
+    it("draws the panel's events, then the events of the rail's range", async () => {
+      const fetchSeries = vi.fn().mockResolvedValue({
+        series: [{ name: "temp", color: "var(--s7)", values: [50, 51] }],
+        window: sixWindow,
+      });
+      const fetchEvents = vi.fn().mockResolvedValue(sixEvents);
+      render(
+        <Enlargeable
+          title="Package"
+          series={series}
+          window={pageWindow}
+          range="1h"
+          ranges={["1h", "6h"]}
+          fetchSeries={fetchSeries}
+          events={pageEvents}
+          fetchEvents={fetchEvents}
+        >
+          <svg />
+        </Enlargeable>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
+      expect(dialogMarks()).toEqual(["critical"]);
+      expect(fetchEvents).not.toHaveBeenCalled();
+
+      await userEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: /last 6h$/,
+        }),
+      );
+      await waitFor(() => expect(dialogMarks()).toEqual(["warning"]));
+      expect(fetchEvents).toHaveBeenCalledTimes(1);
+      expect(fetchEvents).toHaveBeenCalledWith("6h");
+    });
+
+    it("marks nothing on another range without a fetcher", async () => {
+      const fetchSeries = vi.fn().mockResolvedValue({
+        series: [{ name: "temp", color: "var(--s7)", values: [50, 51] }],
+        window: sixWindow,
+      });
+      render(
+        <Enlargeable
+          title="Package"
+          series={series}
+          window={pageWindow}
+          range="1h"
+          ranges={["1h", "6h"]}
+          fetchSeries={fetchSeries}
+          events={pageEvents}
+        >
+          <svg />
+        </Enlargeable>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
+      await userEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: /last 6h$/,
+        }),
+      );
+      await waitFor(() => expect(dialogMarks()).toEqual([]));
+    });
+  });
+
   // The fleet list mounts one of these per chart cell -- twenty hosts is
   // sixty. A gate that only held while closed would turn one page render
   // into sixty requests.

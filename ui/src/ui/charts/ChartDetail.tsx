@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useRef } from "react";
 import type { OverlaySeries } from "./Overlay";
 import { ChartFigure } from "./ChartFigure";
+import type { ChartMarker } from "./Chart";
 import { RangeRail, type RailEntry } from "./RangeRail";
 import { InfoTip } from "../InfoTip";
 import { ABSENT } from "../../lib/format";
@@ -37,6 +38,8 @@ export interface ChartDetailProps {
    * rather than guessed -- a chart with invented times is worse than one
    * with none. */
   window?: { from: string; to: string } | null;
+  /** Events on `window`, already placed. */
+  markers?: readonly ChartMarker[];
   /** THIS DIALOG's range and its setter, owned by the panel that opened it.
    * Given both, the dialog carries the rail, so a reader can widen the
    * window without closing what they opened to look at -- and without
@@ -107,6 +110,7 @@ export function ChartDetail({
   min = 0,
   fmt,
   window: answered = null,
+  markers,
   range,
   onRangeChange,
   ranges = RAIL_RANGES,
@@ -226,6 +230,7 @@ export function ChartDetail({
             format={format}
             tickBase={tickBase}
             window={answered}
+            markers={markers}
             label={`${title}, enlarged`}
           />
         </div>
