@@ -197,6 +197,20 @@ const NO_DATA: TabData = {
  * what it means. A failure of the host detail itself is different: that
  * one is surfaced as an error, because without it there is no page.
  */
+/**
+ * The step one family is asked for over a range: the range's own, except
+ * SMART at 30d.
+ *
+ * SMART is stored hourly with no aggregate, and the family returns every
+ * attribute of every drive. 30d's hourly step is 720 points per attribute,
+ * which a ten-disk NAS (~28 attributes each) takes past the hub's 200k cap.
+ * At 6h the hub buckets it (read.resample), 120 points each, still four a
+ * day for a temperature curve. 3mo and 12mo already ask 24h.
+ */
+export function familyStep(family: string, range: Range, step: string): string {
+  return family === "smart" && range === "30d" ? "6h" : step;
+}
+
 function orNull<T>(p: Promise<T>): Promise<T | null> {
   return p.then(
     (v) => v,
@@ -283,7 +297,7 @@ export function HostPage({
         family,
         from: window.from,
         to: window.to,
-        step: window.step,
+        step: familyStep(family, next, window.step),
       });
     },
     [hostId],
@@ -348,7 +362,7 @@ export function HostPage({
                 family,
                 from: window.from,
                 to: window.to,
-                step: window.step,
+                step: familyStep(family, range, window.step),
               }),
             )
           : Promise.resolve(undefined);
@@ -503,7 +517,9 @@ export function HostPage({
               // table's temperature from a number into a movement. The family
               // carries every attribute of every drive -- the read API takes no
               // key filter -- but at an hourly cadence that is a few hundred
-              // points, and it is the only route to this history.
+              // points, and it is the only route to this history. From 30d
+              // on the hub buckets it to a coarser step (familyStep), or a
+              // month of every attribute ran into maxPoints.
               metrics("smart"),
             ]);
             return {

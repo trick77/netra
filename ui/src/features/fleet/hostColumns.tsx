@@ -619,13 +619,25 @@ export function CpuCell({
   range,
   layout = "cell",
   fluid = false,
-}: ReadingProps) {
+  current = false,
+}: ReadingProps & {
+  /** Print host_current's cpu_total rather than the series' last bucket.
+   * The host Overview's range goes to 12mo, whose last bucket is yesterday's
+   * daily mean; a figure labelled "CPU now" cannot be that. The fleet list
+   * stays on the series: its window is fixed, and there the number, the
+   * shape's edge and the sort order have to agree. */
+  current?: boolean;
+}) {
   // The right-hand edge of the silhouette the cell draws, which is also what
   // this column sorts on: the number the cell prints, the shape beside it and
   // the order the column puts its rows in cannot disagree. cpu_total is
   // already percent of THIS host, so a 32-core box does not outrank a busy
   // 4-core one.
-  const busy = isReporting(row) ? lastReported(row.reporting) : null;
+  const busy = !isReporting(row)
+    ? null
+    : current
+      ? row.cpu_total
+      : lastReported(row.reporting);
   // The page keeps the cell's normalisation and its 0-100 ceiling, which is
   // why the link goes to host-cpu and not to the Graphs tab's "CPU cores":
   // normalised, the per-core stack tops out at cpu_total, so 100 is a real

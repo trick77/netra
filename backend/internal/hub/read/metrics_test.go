@@ -1135,3 +1135,73 @@ func TestIntegrationFleetMetricsRejectsBadRequests(t *testing.T) {
 		}
 	})
 }
+
+// SMART at step=24h: hourly readings come back one per day, each the NEWEST
+// raw of that day (raw values are packed, a mean would be a value no drive
+// reported), on the host route and the fleet route alike.
+func TestIntegrationMetricsResamplesSMARTToTheAskedStep(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "smart-days")
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+	start := today.Add(-3 * 24 * time.Hour)
+
+	exec(t, pool, `
+		INSERT INTO devices (host_id, device, first_seen, last_seen)
+		VALUES ($1, 'sda', now(), now())`, id)
+	// Three closed days, 24 hourly readings each, raw counting up so a day's
+	// last reading differs from every other. Today's readings too: the open
+	// bucket must not appear. The first day's last reading is NULL (a failed
+	// read): that day answers its last real one, hour 22, not a gap.
+	exec(t, pool, `
+		INSERT INTO smart_attributes (host_id, ts, device_id, attr_id, raw, normalized)
+		SELECT $1, $2::timestamptz + make_interval(hours => h), d.id, 194,
+		       CASE WHEN h = 23 THEN NULL ELSE h END, 100
+		  FROM devices d, generate_series(0, 4*24 - 1) AS h
+		 WHERE d.host_id = $1 AND d.device = 'sda'
+		   AND $2::timestamptz + make_interval(hours => h) < now()`, id, start)
+
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "smart", From: start, To: now,
+		Step: 24 * time.Hour, StepSet: true, Columns: []string{"raw"},
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+	if res.StepS != 86400 {
+		t.Errorf("step_s = %d, want 86400", res.StepS)
+	}
+	if len(res.Series) != 1 {
+		t.Fatalf("got %d series, want 1", len(res.Series))
+	}
+	pts := res.Series[0].Points
+	if len(pts) != 3 {
+		t.Fatalf("got %d points, want 3 closed days: %v", len(pts), pts)
+	}
+	for i, p := range pts {
+		if want := start.Add(time.Duration(i) * 24 * time.Hour).UnixMilli(); p[0] != want {
+			t.Errorf("point %d ts = %v, want %d", i, p[0], want)
+		}
+		// Hour 23 of day i is h = 24*i + 23; day 0's is NULL, so hour 22.
+		want := int64(24*i + 23)
+		if i == 0 {
+			want = 22
+		}
+		if got := p[1]; got != want {
+			t.Errorf("point %d raw = %v (%T), want %d -- the day's last reading", i, got, got, want)
+		}
+	}
+
+	fleet, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+		HostIDs: []int32{id}, Family: "smart", From: start, To: now,
+		Step: 24 * time.Hour, StepSet: true, Columns: []string{"raw"},
+	}, now)
+	if err != nil {
+		t.Fatalf("FleetMetrics: %v", err)
+	}
+	if len(fleet.Hosts) != 1 || len(fleet.Hosts[0].Series) != 1 ||
+		len(fleet.Hosts[0].Series[0].Points) != 3 {
+		t.Errorf("fleet = %+v, want one host, one series, three daily points", fleet.Hosts)
+	}
+}

@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
-import { isRange, PAGE_RANGES, type Range } from "../../lib/range";
+import {
+  clampRange,
+  isRange,
+  PAGE_RANGES,
+  type Range,
+} from "../../lib/range";
 import { RANGE_KEY, readPref, writePref } from "../../lib/prefs";
 import { NotificationsCard } from "./NotificationsCard";
 
@@ -107,7 +112,11 @@ export function SettingsPage({
               value: r,
               label: RANGE_LABELS[r] ?? r,
             }))}
-            value={range}
+            // The host page offers 3mo and 12mo and stores them here too; a
+            // Segmented handed a value outside its options presses nothing.
+            // Shown narrowed to this control's widest (clampRange), kept as
+            // stored.
+            value={clampRange(range, PAGE_RANGES)}
             onChange={chooseRange}
           />
         </Setting>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type {
   Event,
@@ -310,6 +310,32 @@ describe("Overview", () => {
     expect(
       [...readings].map((r) => r.querySelector(".k")?.textContent),
     ).toEqual(["CPU", "Memory", "Filesystem", "Traffic"]);
+  });
+
+  // The CPU figure is the host's current reading (12), not the series' last
+  // bucket (77): at 12mo that bucket is yesterday's daily mean.
+  it("prints the current CPU, not the series' last bucket", () => {
+    // isReporting reads the wall clock; the fixture host last reported at
+    // 01:00 on its own day.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-10T01:00:30Z"));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    renderOverview({
+      netMetrics,
+      hostMetrics: response({
+        family: "host",
+        columns: ["cpu_total", "mem_total", "mem_used"],
+        series: [
+          {
+            key: {},
+            points: [[1_786_323_540_000, 77, 8_000_000_000, 4_000_000_000]],
+          },
+        ],
+      }),
+    });
+    expect(screen.getByRole("img", { name: "CPU now 12 %" })).toBeTruthy();
   });
 
   // The band is read first: above the facts and the readings, never among

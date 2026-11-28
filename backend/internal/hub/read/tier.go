@@ -67,6 +67,51 @@ type tierSpec struct {
 	// GUARANTEED window rather than the observed one -- promising the
 	// overshoot would make the response's window depend on chunk boundaries.
 	retention time.Duration
+	// resampled marks a raw spec the query buckets on the fly to step, which
+	// is then the caller's step rather than the table's. Never set on the
+	// tables below; planQuery sets it on its own copy (see resample).
+	resampled bool
+}
+
+// bucketed reports whether this spec answers in whole buckets: a continuous
+// aggregate, or a raw table resampled at query time. Those get the bucket
+// alignment and the open-bucket floor; plain raw samples get neither.
+func (t tierSpec) bucketed() bool {
+	return t.tsColumn == "bucket" || t.resampled
+}
+
+// resample turns a raw tier into one bucketed at query time, when the caller
+// asked for a coarser step than the family's coarsest tier stores.
+//
+// The raw-only SMART family is the case: read hourly, no aggregates, so a
+// three-month window at step=24h was 2160 points per attribute per drive --
+// every attribute of every drive, since the API takes no key filter -- and a
+// four-disk host ran into maxPoints. Bucketed to the asked step it is one
+// point per day, the same budget the daily tier gives every other family.
+//
+// last() per bucket, never avg(): SMART raw values are packed (an ATA
+// temperature's current reading sits in the low byte, min and max above it),
+// so a mean of two raws is a number no drive ever reported. The newest
+// reading of a day is a real one.
+//
+// Only a raw relation, and only the coarsest tier of its family: an aggregate
+// stores avg/max/min columns that last() would silently re-aggregate wrongly,
+// and a family with a coarser tier above has selectTier pick it instead.
+//
+// Only a step that divides a day. planQuery aligns the window with Go's
+// Truncate, counted from year 1; time_bucket counts from 2000-01-03. Both
+// origins are UTC midnights, so they agree for every divisor of 24h and for
+// nothing else: at 48h the buckets sit a day off the window and the last
+// one is still open. Any other step is answered unbucketed, as before.
+func resample(fam *family, spec tierSpec, step time.Duration, stepSet bool) tierSpec {
+	coarsest := fam.tiers[len(fam.tiers)-1]
+	if !stepSet || spec.tsColumn != "ts" || step <= spec.step || spec.name != coarsest.name ||
+		step%time.Second != 0 || (24*time.Hour)%step != 0 {
+		return spec
+	}
+	spec.step = step
+	spec.resampled = true
+	return spec
 }
 
 // The four resolutions every rolled-up family carries, fine to coarse.
@@ -148,8 +193,9 @@ type Plan struct {
 	// construction, so busy at raw becomes busy_avg and busy_max at 5m -- but
 	// it is what a chart legend should say.
 	Tier string
-	// Step is the distance between points at the chosen tier. It is always
-	// the tier's real step, never the step the caller asked for.
+	// Step is the distance between points at the chosen tier: the tier's real
+	// step, never the step the caller asked for -- except a resampled raw
+	// tier (see resample), whose buckets are the asked step by construction.
 	Step time.Duration
 	// Window is what the response ACTUALLY covers, clamped by retention on
 	// the leading edge and by the open bucket on the trailing one. The SQL is
@@ -216,7 +262,7 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 		}
 	}
 
-	p.spec = selectTier(fam.tiers, from, step, stepSet, now)
+	p.spec = resample(fam, selectTier(fam.tiers, from, step, stepSet, now), step, stepSet)
 	p.Tier = p.spec.name
 	p.Step = p.spec.step
 
@@ -272,7 +318,7 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 	// Written as a floor on `to` rather than as an unconditional step back,
 	// because a request for a window that ENDED hours ago is asking about
 	// closed buckets already and must not lose its last one.
-	if p.spec.tsColumn == "bucket" {
+	if p.spec.bucketed() {
 		if lastClosed := now.Truncate(p.spec.step).Add(-p.spec.step); to.After(lastClosed) {
 			to = lastClosed
 		}
@@ -296,7 +342,7 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 	// Raw is excluded by construction: it stores samples at their own
 	// timestamps rather than in buckets, so there are no boundaries to align
 	// to and the caller's window is already exactly what it asked for.
-	if p.spec.tsColumn == "bucket" {
+	if p.spec.bucketed() {
 		from = from.Truncate(p.spec.step)
 		to = to.Truncate(p.spec.step)
 	}

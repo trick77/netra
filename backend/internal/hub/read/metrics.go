@@ -532,11 +532,58 @@ func seriesExprs(fam *family, spec tierSpec, cols []column) []string {
 	for _, k := range fam.keys {
 		out = append(out, k.expr)
 	}
-	out = append(out, "s."+spec.tsColumn)
+	out = append(out, timeExpr(spec))
 	for _, c := range cols {
+		if spec.resampled {
+			// The newest reading of each bucket; see resample for why not
+			// a mean. The newest NON-NULL one: last() takes the row with the
+			// greatest ts, null included, so one failed read at 23:00 would
+			// blank a day that has 23 good readings.
+			out = append(out, fmt.Sprintf("last(%s, s.ts) FILTER (WHERE s.%s IS NOT NULL)",
+				c.selectExpr(), c.name))
+			continue
+		}
 		out = append(out, c.selectExpr())
 	}
 	return out
+}
+
+// timeExpr is the time column as selected: the stored one, or the bucket a
+// resampled raw row falls into. The interval is the plan's own step, an
+// integer of seconds, so interpolating it carries no caller text.
+func timeExpr(spec tierSpec) string {
+	if spec.resampled {
+		return fmt.Sprintf("time_bucket(make_interval(secs => %d), s.ts)", int64(spec.step/time.Second))
+	}
+	return "s." + spec.tsColumn
+}
+
+// windowCond bounds the time column by $2 and $3.
+//
+// A resampled query's window is in bucket starts, like an aggregate's, so
+// `to` is the START of the last closed bucket: the raw rows inside that
+// bucket lie after it, up to one step later. `ts <= to` would drop the whole
+// bucket, which is why the bound moves to the end of it.
+func windowCond(spec tierSpec) string {
+	if spec.resampled {
+		return fmt.Sprintf("s.ts >= $2 AND s.ts < $3::timestamptz + make_interval(secs => %d)",
+			int64(spec.step/time.Second))
+	}
+	return fmt.Sprintf("s.%s >= $2 AND s.%s <= $3", spec.tsColumn, spec.tsColumn)
+}
+
+// groupBy is the GROUP BY a resampled query needs over its leading n select
+// items (keys and bucket, host_id too in the fleet shape), and nothing for
+// every other query.
+func groupBy(spec tierSpec, n int) string {
+	if !spec.resampled {
+		return ""
+	}
+	ords := make([]string, 0, n)
+	for i := range n {
+		ords = append(ords, fmt.Sprintf("%d", i+1))
+	}
+	return " GROUP BY " + strings.Join(ords, ", ") + "\n"
 }
 
 // hostSQL is the single-host query: one flat select, ordered key then time,
@@ -557,7 +604,8 @@ func hostSQL(fam *family, spec tierSpec, cols []column) string {
 	if fam.join != "" {
 		fmt.Fprintf(&b, "  %s\n", fam.join)
 	}
-	fmt.Fprintf(&b, " WHERE s.host_id = $1 AND s.%s >= $2 AND s.%s <= $3\n", spec.tsColumn, spec.tsColumn)
+	fmt.Fprintf(&b, " WHERE s.host_id = $1 AND %s\n", windowCond(spec))
+	b.WriteString(groupBy(spec, len(fam.keys)+1))
 	fmt.Fprintf(&b, " ORDER BY %s\n LIMIT $4", strings.Join(orders, ", "))
 	return b.String()
 }
@@ -597,7 +645,7 @@ func fleetSQL(fam *family, spec tierSpec, cols []column) string {
 	for _, k := range fam.keys {
 		within = append(within, k.expr)
 	}
-	within = append(within, "s."+spec.tsColumn)
+	within = append(within, timeExpr(spec))
 
 	inner = append(inner, fmt.Sprintf(
 		"row_number() OVER (PARTITION BY s.host_id ORDER BY %s) AS rn",
@@ -615,8 +663,11 @@ func fleetSQL(fam *family, spec tierSpec, cols []column) string {
 	if fam.join != "" {
 		fmt.Fprintf(&b, "      %s\n", fam.join)
 	}
-	fmt.Fprintf(&b, "     WHERE s.host_id = ANY($1) AND s.%s >= $2 AND s.%s <= $3\n",
-		spec.tsColumn, spec.tsColumn)
+	fmt.Fprintf(&b, "     WHERE s.host_id = ANY($1) AND %s\n", windowCond(spec))
+	// host_id, the keys and the bucket: the inner select's leading items.
+	if g := groupBy(spec, len(fam.keys)+2); g != "" {
+		b.WriteString("    " + g)
+	}
 	fmt.Fprintf(&b, "  ) t\n WHERE rn <= $4\n ORDER BY %s", strings.Join(orders, ", "))
 	return b.String()
 }

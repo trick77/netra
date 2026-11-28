@@ -656,7 +656,7 @@ export function Overview({
           the same cells: CPU, memory, the fullest filesystem and traffic. */}
       <div className="readings">
         <div className="reading">
-          <CpuCell row={row} range={at} layout="card" />
+          <CpuCell row={row} range={at} layout="card" current />
         </div>
         <div className="reading">
           <MemoryCell row={row} range={at} layout="card" />
