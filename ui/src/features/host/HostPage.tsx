@@ -10,6 +10,7 @@ import {
   getEvents,
   getFilesystems,
   getDrives,
+  getArrays,
   getHost,
   getInterfaces,
   getMetrics,
@@ -19,6 +20,7 @@ import {
   type ConditionsResponse,
   type Container,
   type Drive,
+  type MdArray,
   type Event,
   type Filesystem,
   type Iface,
@@ -87,6 +89,8 @@ const MARKED_TABS: ReadonlySet<HostTab> = new Set([
   "system",
   "network",
   "agent",
+  // The drive rows draw only the md events of the arrays on each drive.
+  "storage",
 ]);
 
 /** The bar is built to take a tenth tab (Alerts, with the Stage 2 engine)
@@ -149,6 +153,8 @@ interface TabData {
   containers: Container[] | null;
   filesystems: Filesystem[] | null;
   drives: Drive[] | null;
+  /** The md arrays: Storage's Arrays section, the Overview's sync line. */
+  arrays: MdArray[] | null;
   /** Everything the hub says is wrong, fleet-wide -- narrowed to this host
    * where the band reads it. One endpoint answers for the whole fleet, so
    * there is nothing per-host to ask for. null when the call failed, which
@@ -253,6 +259,7 @@ const NO_DATA: TabData = {
   containers: null,
   filesystems: null,
   drives: null,
+  arrays: null,
   conditions: null,
   addresses: null,
   interfaces: null,
@@ -502,6 +509,7 @@ export function HostPage({
               units,
               conditions,
               events,
+              arrays,
             ] = await Promise.all([
               metrics("host"),
               metrics("filesystem"),
@@ -511,6 +519,9 @@ export function HostPage({
               orNull(getUnits(hostId)),
               orNull(getConditions()),
               eventLog(),
+              // For the one line saying an array is being checked or
+              // rebuilt, which is what keeps a host's disks busy for hours.
+              orNull(getArrays(hostId)),
             ]);
             return {
               hostMetrics,
@@ -521,6 +532,7 @@ export function HostPage({
               units,
               conditions,
               events,
+              arrays,
             };
           }
           // Each subject tab fetches the families ITS panels draw, rather than
@@ -601,6 +613,7 @@ export function HostPage({
             const [
               filesystems,
               drives,
+              arrays,
               filesystemMetrics,
               diskIoMetrics,
               smartMetrics,
@@ -610,6 +623,9 @@ export function HostPage({
               // other family: a hub too old to serve the route leaves the
               // table empty and the rest of the tab intact.
               orNull(getDrives(hostId)),
+              // The md arrays over those drives. orNull: a hub too old to
+              // serve the route draws no Arrays section.
+              orNull(getArrays(hostId)),
               metrics("filesystem"),
               metrics("disk_io"),
               // The SMART readings over time, which is what turns the Drives
@@ -624,6 +640,7 @@ export function HostPage({
             return {
               filesystems,
               drives,
+              arrays,
               filesystemMetrics,
               diskIoMetrics,
               smartMetrics,
@@ -951,6 +968,7 @@ export function HostPage({
             events={data.events}
             filesystems={data.filesystems}
             containerMetrics={data.containerMetrics}
+            arrays={data.arrays}
             mutes={mutes}
           />
         )}
@@ -1073,6 +1091,8 @@ export function HostPage({
               pending={pending}
               range={drawn}
               fetchFamily={fetchFamily}
+              arrays={data.arrays}
+              events={markers}
             />
             <Drives
               rows={data.drives ?? []}

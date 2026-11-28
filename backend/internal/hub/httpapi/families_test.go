@@ -759,3 +759,36 @@ func TestIntegrationImplausibleSystemdSnapshotIsDroppedWhole(t *testing.T) {
 			"until real time caught up, freezing this host's units", stateTs)
 	}
 }
+
+// The md snapshot lands in md_arrays, and one stamped in the future is dropped
+// whole for the reason the systemd one is: its ts guards every later write.
+func TestIntegrationMdSnapshotIsStoredAndAPoisonOneDropped(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	req := fullRequest(1, ts)
+	req.MdSnapshot = &netrav1.MdSnapshot{TsMs: ts, Arrays: []*netrav1.MdArray{
+		{Name: "md2", Level: "raid1", RaidDisks: 2, State: "clean", SyncAction: "check"},
+	}}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	req = fullRequest(2, time.Now().UnixMilli())
+	req.MdSnapshot = &netrav1.MdSnapshot{
+		TsMs: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(),
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 -- a poison snapshot must not 503 the batch", resp.StatusCode)
+	}
+
+	var sync string
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT sync_action FROM md_arrays WHERE name = 'md2'`).Scan(&sync); err != nil {
+		t.Fatalf("read md2: %v -- the future snapshot deleted it", err)
+	}
+	if sync != "check" {
+		t.Errorf("md2 sync_action = %q, want check", sync)
+	}
+}

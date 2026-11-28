@@ -105,6 +105,25 @@ describe("messageOf, deviation conditions", () => {
     ).toBe("Load above normal cleared after 41 m");
   });
 
+  // md_sync is what deviationscan.go adds while md arrays are at work: a scrub
+  // waits on disks, and the wait counts as load.
+  it("names the md arrays at work beside a load condition", () => {
+    expect(
+      messageOf(
+        deviation("load", {
+          transition: "escalated",
+          from: "warning",
+          md_sync: ["md1 check", "md2 check"],
+        }),
+      ),
+    ).toBe(
+      "Load above normal (md1 check, md2 check running) worsened from warning",
+    );
+    expect(
+      messageOf(deviation("load", { transition: "opened", md_sync: [] })),
+    ).toBe("Load above normal");
+  });
+
   // A transition carrying no figures falls back to the bare label rather than
   // printing an empty clause after a dash.
   it("falls back to the label when the detail carried no reading", () => {

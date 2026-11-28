@@ -2,7 +2,7 @@
 
 # Database schema
 
-31 tables, 33 continuous aggregates; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
+32 tables, 33 continuous aggregates; the diagram is at the end. Go types are the `model.go` structs whose rows they hold.
 
 ## agent_samples
 
@@ -662,6 +662,32 @@ Indexes:
 
 - `hosts_hostname_key` (`hostname`) unique
 
+## md_arrays
+
+Go types:
+
+- `read.MdArray` (internal/hub/read): MdArray is one row of /hosts/{id}/arrays: an md array as its agent last reported it (md_arrays).
+
+| Column | Type | Null | Default | PK |
+| --- | --- | --- | --- | --- |
+| `host_id` | integer | no |  | 1 |
+| `name` | text | no |  | 2 |
+| `ts` | timestamp with time zone | no |  |  |
+| `level` | text | no |  |  |
+| `raid_disks` | integer | no |  |  |
+| `degraded` | integer | no |  |  |
+| `state` | text | no |  |  |
+| `sync_action` | text | no |  |  |
+| `sync_done` | bigint | yes |  |  |
+| `sync_total` | bigint | yes |  |  |
+| `sync_speed_kib` | bigint | yes |  |  |
+| `mismatch_cnt` | bigint | yes |  |  |
+| `members` | jsonb | no | `'[]'::jsonb` |  |
+
+Foreign keys:
+
+- `host_id` → `hosts` (`id`), on delete CASCADE
+
 ## metric_ewma
 
 Go types:
@@ -923,6 +949,16 @@ In `internal/hub/read`. Event is one row of /api/v1/events.
 | `Subject` | `*string` | Subject is the thing the event is about -- an array name, a device, an interface -- and is null for events about the host as a whole, such as an agent upgrade. |
 | `Detail` | `json.RawMessage` | Detail is the event's payload, passed through as stored. Its shape is the emitting collector's, not this API's. |
 | `Severity` | `string` | Severity is "info", "warning" or "critical", and every branch of the union answers it.<br>It is a column on `events` and a derivation on the other two, which is deliberate rather than an inconsistency. A unit's severity is a pure function of its state -- systemdstate.NotableSQL, one definition -- so storing it would duplicate a derived value AND let it drift, since ApplySystemdSnapshot rewrites unit state and a stored severity would not follow. A package upgrade is a fact, not an emergency, and is always info.<br>This field is the only channel for severity. It was duplicated into the detail JSON while the UI read it from there; both event views take it from here now and ignore the key. The agent's producers have stopped writing it; the hub's condition events still carry it in their detail. |
+
+### read.MdMember
+
+In `internal/hub/read`. MdMember is one device in an array, an element of md_arrays.members.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Device` | `string` |  |
+| `State` | `string` |  |
+| `Slot` | `*int` |  |
 
 ### read.driveRow
 
@@ -1325,6 +1361,21 @@ erDiagram
         text provider
         text facility
     }
+    md_arrays {
+        integer host_id PK, FK
+        text name PK
+        timestamp_with_time_zone ts
+        text level
+        integer raid_disks
+        integer degraded
+        text state
+        text sync_action
+        bigint sync_done
+        bigint sync_total
+        bigint sync_speed_kib
+        bigint mismatch_cnt
+        jsonb members
+    }
     metric_ewma {
         integer host_id PK, FK
         text kind PK
@@ -1432,6 +1483,7 @@ erDiagram
     host_proto_samples }o--|| hosts : "host_id"
     host_samples }o--|| hosts : "host_id"
     host_snmp_samples }o--|| hosts : "host_id"
+    md_arrays }o--|| hosts : "host_id"
     metric_ewma }o--|| hosts : "host_id"
     metric_ewma_hour }o--|| hosts : "host_id"
     net_samples }o--|| hosts : "host_id"

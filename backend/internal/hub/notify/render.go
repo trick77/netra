@@ -144,14 +144,40 @@ func detailNote(kind string, d map[string]any) string {
 			return truncate(t, 200)
 		}
 	case conditions.KindTemperature, conditions.KindProcesses, conditions.KindLoad:
+		note := ""
 		if v, ok := number(d["value"]); ok {
+			note = trim(v)
 			if normal, ok := number(d["normal"]); ok {
-				return fmt.Sprintf("%s, normal under %s", trim(v), trim(normal))
+				note = fmt.Sprintf("%s, normal under %s", trim(v), trim(normal))
 			}
-			return trim(v)
 		}
+		// The md arrays at work while the load is high (store/deviationscan.go):
+		// a scrub waits on disks, and the wait counts as load.
+		if syncing := mdSync(d); syncing != "" {
+			if note != "" {
+				note += "; "
+			}
+			note += syncing + " running"
+		}
+		return note
 	}
 	return ""
+}
+
+// mdSync is a detail's md_sync list as one phrase, "md1 check, md2 check", or
+// "" when it carries none.
+func mdSync(d map[string]any) string {
+	if names, ok := d["md_sync"].([]string); ok {
+		return strings.Join(names, ", ")
+	}
+	list, _ := d["md_sync"].([]any)
+	names := make([]string, 0, len(list))
+	for _, v := range list {
+		if s, ok := v.(string); ok && s != "" {
+			names = append(names, s)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 func number(v any) (float64, bool) {

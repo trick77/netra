@@ -91,6 +91,20 @@ describe("the deviation conditions", () => {
     ).toBe("is 1842 — normally under 1210");
   });
 
+  // Load raised while a scrub runs says so: the I/O wait is the load.
+  it("names the md arrays at work beside the load", () => {
+    expect(
+      sentence([
+        deviationRow("load", {
+          value: 9,
+          normal: 1.5,
+          source: "baseline",
+          md_sync: ["md1 check"],
+        }),
+      ]),
+    ).toBe("is 9 — normally under 1.5; md1 check running");
+  });
+
   it("names the hardware's own limit when that is what fired", () => {
     expect(
       sentence([

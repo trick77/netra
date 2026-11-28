@@ -1775,6 +1775,83 @@ tbody tr:hover .host-cell-name {
 .drivename {
   display: block;
 }
+/* The md arrays a drive serves, a fact about it rather than a link. */
+.drivearrays {
+  display: block;
+  font-size: var(--text-micro);
+  color: var(--muted);
+}
+.mdarrays ul {
+  list-style: none;
+  margin: 0 0 var(--space-5);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+}
+.mdarrays li {
+  padding: var(--space-3) var(--space-4);
+}
+.mdarrays li + li {
+  border-top: 1px solid var(--border);
+}
+.mdhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+.mdname {
+  color: var(--ink);
+  font-weight: 600;
+}
+.mdmeta {
+  color: var(--muted);
+  font-size: var(--text-ui);
+}
+.mdslots {
+  font-family: var(--font-mono);
+  font-size: var(--text-ui);
+  color: var(--ink-2);
+}
+.mdslots.down {
+  color: var(--st-crit-text);
+}
+.mdsync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+}
+.mdbar {
+  flex: 1 1 160px;
+  max-width: 360px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--track);
+  overflow: hidden;
+}
+.mdbar > span {
+  display: block;
+  height: 100%;
+  background: var(--ink-2);
+}
+.mdsynctext {
+  font-size: var(--text-ui);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.mdmismatch {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-ui);
+  color: var(--st-warn-text);
+}
+/* One line on the Overview while an array is at work. */
+.mdsyncnote {
+  margin: 0 0 var(--space-4);
+  color: var(--ink-2);
+  font-size: var(--text-ui);
+}
 /* Fixed layout: the three chart columns come out the same width whatever
    their figures say, so the one width DriveRows measures (in the first
    throughput cell) is every cell's width. Auto layout sized each column by

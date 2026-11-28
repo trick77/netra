@@ -9,7 +9,12 @@
 // There is no Graphs tab now: "Graphs" named a rendering format rather than a
 // subject. See GROUP_SLUGS in ../chartSpecs for the grouping.
 import { useMemo, type ReactNode } from "react";
-import type { Event, Filesystem, MetricsResponse } from "../../../lib/api";
+import type {
+  Event,
+  Filesystem,
+  MdArray,
+  MetricsResponse,
+} from "../../../lib/api";
 import type { TimedEvent } from "../../../ui/charts/cursor";
 import { messageOf, NOTIFICATION_EVENT_TYPE } from "../../events/message";
 import type { Range } from "../../../lib/range";
@@ -30,7 +35,7 @@ import {
 } from "../chartSpecs";
 import { Ledger } from "./Ledger";
 import { PairRows } from "./PairRows";
-import { DriveRows, FilesystemTable } from "./Storage";
+import { DriveRows, FilesystemTable, MdArrays } from "./Storage";
 import { resolveSpec } from "./resolveSpec";
 
 export interface GraphsProps {
@@ -59,6 +64,9 @@ export interface GraphsProps {
   fetchEvents?: (range: Range) => Promise<readonly TimedEvent[]>;
   /** The host's thread count, for the specs that rule against it. */
   threads?: number | null;
+  /** The host's md arrays, for the Storage tab's Arrays section and the
+   * array each drive row names. */
+  arrays?: readonly MdArray[] | null;
   /** The mount inventory, for the Storage tab's Filesystems table. */
   filesystems?: readonly Filesystem[] | null;
   /** The host's last_seen, dating each mount's stored gauge. */
@@ -85,7 +93,13 @@ export function timedEvents(
     if (e.type === NOTIFICATION_EVENT_TYPE) continue;
     const at = Date.parse(e.ts);
     if (Number.isFinite(at))
-      out.push({ at, severity: e.severity, label: messageOf(e) });
+      out.push({
+        at,
+        severity: e.severity,
+        label: messageOf(e),
+        type: e.type,
+        subject: e.subject ?? undefined,
+      });
   }
   return out;
 }
@@ -296,12 +310,11 @@ export function PanelGroups({
             />
           </section>
         ) : block.form === "drives" ? (
-          <DriveRows
-            key={block.title}
-            group={block}
-            sources={sources}
-            range={sources.range}
-          />
+          <div key={block.title}>
+            {/* The arrays over the drives they keep busy. */}
+            <MdArrays rows={sources.arrays ?? null} />
+            <DriveRows group={block} sources={sources} range={sources.range} />
+          </div>
         ) : (
           <div key={block.title}>
             <Group group={block} sources={sources} />

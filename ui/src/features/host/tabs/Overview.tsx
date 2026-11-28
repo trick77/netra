@@ -14,9 +14,11 @@ import type {
   Event,
   Filesystem,
   HostDetail,
+  MdArray,
   MetricsResponse,
   Unit,
 } from "../../../lib/api";
+import { syncLine, syncing } from "../arrays";
 import { binaryBytes, bytes, percent, relative } from "../../../lib/format";
 import { FLAP_THRESHOLD, isReporting, osLabel } from "../../../lib/host";
 import type { Severity } from "../../../ui/Badge";
@@ -452,6 +454,8 @@ export interface OverviewProps {
   now?: Date;
   /** The host's mutes. Without them no line offers a mute. */
   mutes?: Mutes;
+  /** The md arrays, for the line naming the ones md is working on. */
+  arrays?: readonly MdArray[] | null;
 }
 
 /**
@@ -552,7 +556,11 @@ export function Overview({
   containerMetrics = null,
   now,
   mutes,
+  arrays,
 }: OverviewProps) {
+  // A stale row is a host that stopped reporting mid-sync: its progress is
+  // frozen, not live, and this line claims the work is happening now.
+  const working = (arrays ?? []).filter((a) => syncing(a) && !a.stale);
   const attention = needsAttention({
     host,
     hostMetrics,
@@ -628,6 +636,14 @@ export function Overview({
           one vocabulary is how this page and the fleet came to disagree about
           a single host (#92). */}
       <AttentionBand rows={attention} now={now ?? new Date()} />
+      {/* A check or a rebuild keeps the disks busy and the load up for
+          hours, and nothing else on this tab says so. Only while one runs:
+          an idle array has nothing to tell the Overview. */}
+      {working.length > 0 && (
+        <p className="mdsyncnote" aria-label="Arrays at work">
+          {working.map(syncLine).join(" · ")}
+        </p>
+      )}
       {/* The machine in one line, under the name: what it is, where it is.
           Its uptime is in the page's header. */}
       {facts.length > 0 && (

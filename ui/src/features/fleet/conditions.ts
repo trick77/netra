@@ -34,6 +34,7 @@ import type { Severity } from "../../ui/Badge";
 import type { HostTab } from "../host/HostPage";
 import { percent, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
+import { mdSyncNote } from "../events/message";
 
 /**
  * Every kind of thing netra says about a host.
@@ -534,7 +535,10 @@ export function deviationReading(row: ConditionRow): string | null {
       : normally === null
         ? ""
         : `normally under ${deviationValue(normally, unit)}${hourly}`;
-  return `${deviationValue(value, unit)}${because === "" ? "" : ` — ${because}`}`;
+  // The md arrays at work while the load is high: the reason a quiet CPU can
+  // carry a high load average, said where the number is.
+  const md = mdSyncNote(detail);
+  return `${deviationValue(value, unit)}${because === "" ? "" : ` — ${because}`}${md === "" ? "" : `; ${md}`}`;
 }
 
 function names(v: unknown): string[] {

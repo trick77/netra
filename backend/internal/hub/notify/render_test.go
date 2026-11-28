@@ -49,6 +49,26 @@ func TestRenderLines(t *testing.T) {
 	}
 }
 
+// A load condition raised while md arrays were at work says so, whether the
+// detail came straight from the scan ([]string) or back from JSON ([]any).
+func TestRenderNamesTheArraysAtWorkBesideTheLoad(t *testing.T) {
+	conds := []notify.Condition{
+		{Kind: "load", Severity: "warning", OpenedTS: t0, What: notify.Opened,
+			Detail: map[string]any{"value": 9.0, "normal": 1.5, "md_sync": []any{"md1 check", "md2 check"}}},
+		{Kind: "load", Subject: "x", Severity: "critical", OpenedTS: t0, What: notify.Escalated,
+			Detail: map[string]any{"md_sync": []string{"md0 resync"}}},
+	}
+	_, body := notify.Render("nas", 7, conds, nil, "", t0)
+	for _, want := range []string{
+		"Load above normal (9, normal under 1.5; md1 check, md2 check running)",
+		"Load above normal x (md0 resync running)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
+
 // Kernel text reaches the title, and the title is a mail header: a CR/LF in
 // a process name must not start a new header line.
 func TestRenderStripsControlCharacters(t *testing.T) {
