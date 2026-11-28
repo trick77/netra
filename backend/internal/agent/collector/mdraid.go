@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,34 @@ type arrayState struct {
 	RaidDisks  int    `json:"raid_disks"`
 	Degraded   int    `json:"degraded"`
 	SyncAction string `json:"sync_action"`
+}
+
+// arrayProgress is the part of an array that moves while it syncs, and its
+// members. Kept apart from arrayState because none of it may make an event:
+// sync_completed changes every scrape of a check, and compareKey works on
+// arrayState alone. It travels in the snapshot instead.
+type arrayProgress struct {
+	syncDone, syncTotal *uint64
+	speedKiBs           *uint64
+	mismatches          *uint64
+	members             []*netrav1.MdMember
+}
+
+// arrayRead is one array as read from sysfs.
+type arrayRead struct {
+	state    arrayState
+	progress arrayProgress
+}
+
+// eventDetail is what an mdraid event's detail_json carries: the array's state,
+// plus what it was doing before, so a reader can tell a check starting from one
+// finishing without the previous event at hand. prev_sync_action is absent on
+// a first sighting, where there is no before; mismatch_cnt rides only the
+// event of a sync ending, the one moment the count is a result.
+type eventDetail struct {
+	arrayState
+	PrevSyncAction *string `json:"prev_sync_action,omitempty"`
+	MismatchCnt    *uint64 `json:"mismatch_cnt,omitempty"`
 }
 
 // healthyStates are the md/array_state values that all mean "nothing is wrong
@@ -119,15 +148,26 @@ func (a arrayState) compareKey() arrayState {
 // The collector therefore holds the last known state per array and emits only
 // when it changes. A first sighting emits one event to establish the baseline,
 // so the hub knows the array exists and what state it started in.
+//
+// Beside the events it sends a snapshot of every array each scrape (see
+// MdSnapshot): where a sync stands is a level, not a transition.
 type Mdraid struct {
 	sysRoot string
 
 	prev map[string]arrayState
+
+	// hadArrays is whether the last snapshot listed any array. A host that
+	// lost its last one sends one empty snapshot, which is how the hub learns
+	// to drop the rows, and then nothing, like a host that never had one.
+	hadArrays bool
 }
 
 // NewMdraid builds an Mdraid collector reading from sysRoot (normally "/sys").
 func NewMdraid(sysRoot string) *Mdraid {
-	return &Mdraid{sysRoot: sysRoot}
+	// hadArrays starts true: the hub may still hold arrays this host lost
+	// while the agent was down, so the first scrape always says what is there,
+	// even nothing. One empty snapshot per start on a host without arrays.
+	return &Mdraid{sysRoot: sysRoot, hadArrays: true}
 }
 
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
@@ -151,11 +191,15 @@ func (m *Mdraid) ResendInventory() { m.prev = nil }
 
 // Collect implements Collector.
 func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
-	cur, err := m.read()
+	read, err := m.read()
 	if err != nil {
 		return nil, err
 	}
 
+	cur := make(map[string]arrayState, len(read))
+	for name, r := range read {
+		cur[name] = r.state
+	}
 	prev := m.prev
 	m.prev = cur
 
@@ -172,7 +216,8 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 
 	for _, name := range names {
 		state := cur[name]
-		if p, seen := prev[name]; seen && p.compareKey() == state.compareKey() {
+		p, seen := prev[name]
+		if seen && p.compareKey() == state.compareKey() {
 			// Unchanged, as compareKey defines it. Emitting anyway would
 			// turn `events` into the 60s series this collector exists to
 			// avoid, and bury the transitions that matter under weeks of
@@ -180,8 +225,20 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 			continue
 		}
 
+		d := eventDetail{arrayState: state}
+		if seen {
+			d.PrevSyncAction = &p.SyncAction
+			// Only a check or a repair counts mismatches, and only its end
+			// has a result: the kernel leaves the count alone across a
+			// rebuild, so a recover ending would claim the last check's
+			// figure, and a check frozen halfway has counted half the array.
+			if scrubs(p.SyncAction) && state.SyncAction == "idle" {
+				d.MismatchCnt = read[name].progress.mismatches
+			}
+		}
+
 		severity := state.severityOf()
-		detail, err := json.Marshal(state)
+		detail, err := json.Marshal(d)
 		if err != nil {
 			// Marshalling a struct of strings and ints cannot fail in
 			// practice; if it somehow does, the array's state change is worth
@@ -198,23 +255,63 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 		})
 	}
 
-	return &Result{Events: events}, nil
+	return &Result{Events: events, MdSnapshot: m.snapshot(ts, names, read)}, nil
+}
+
+// snapshot is every array as read this scrape, or nil when there is nothing
+// the hub needs to hear: no array now and none in the last snapshot either.
+func (m *Mdraid) snapshot(ts int64, names []string, read map[string]arrayRead) *netrav1.MdSnapshot {
+	if len(names) == 0 && !m.hadArrays {
+		return nil
+	}
+	m.hadArrays = len(names) > 0
+
+	arrays := make([]*netrav1.MdArray, 0, len(names))
+	for _, name := range names {
+		r := read[name]
+		arrays = append(arrays, &netrav1.MdArray{
+			Name:             name,
+			Level:            r.state.Level,
+			RaidDisks:        clampUint32(r.state.RaidDisks),
+			Degraded:         clampUint32(r.state.Degraded),
+			State:            r.state.State,
+			SyncAction:       r.state.SyncAction,
+			SyncDoneSectors:  r.progress.syncDone,
+			SyncTotalSectors: r.progress.syncTotal,
+			SyncSpeedKibs:    r.progress.speedKiBs,
+			MismatchCnt:      r.progress.mismatches,
+			Members:          r.progress.members,
+		})
+	}
+	return &netrav1.MdSnapshot{TsMs: ts, Arrays: arrays}
+}
+
+// scrubs is whether sync_action is one that counts mismatch_cnt.
+func scrubs(action string) bool {
+	return action == "check" || action == "repair"
+}
+
+func clampUint32(n int) uint32 {
+	if n < 0 {
+		return 0
+	}
+	return uint32(min(n, math.MaxUint32)) //nolint:gosec // clamped to the uint32 range on the line above
 }
 
 // read walks /sys/block/md*/md and returns each array's state.
-func (m *Mdraid) read() (map[string]arrayState, error) {
+func (m *Mdraid) read() (map[string]arrayRead, error) {
 	blockDir := filepath.Join(m.sysRoot, "block")
 	entries, err := os.ReadDir(blockDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No /sys/block at all. A host with no md arrays is the common
 			// case, not a failure.
-			return map[string]arrayState{}, nil
+			return map[string]arrayRead{}, nil
 		}
 		return nil, fmt.Errorf("read %s: %w", blockDir, err)
 	}
 
-	out := make(map[string]arrayState)
+	out := make(map[string]arrayRead)
 
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "md") {
@@ -227,16 +324,76 @@ func (m *Mdraid) read() (map[string]arrayState, error) {
 			continue
 		}
 
-		out[e.Name()] = arrayState{
-			State:      readSysString(mdDir, "array_state"),
-			Level:      readSysString(mdDir, "level"),
-			RaidDisks:  readSysInt(mdDir, "raid_disks"),
-			Degraded:   readSysInt(mdDir, "degraded"),
-			SyncAction: readSysString(mdDir, "sync_action"),
+		done, total := readSyncCompleted(mdDir)
+		out[e.Name()] = arrayRead{
+			state: arrayState{
+				State:      readSysString(mdDir, "array_state"),
+				Level:      readSysString(mdDir, "level"),
+				RaidDisks:  readSysInt(mdDir, "raid_disks"),
+				Degraded:   readSysInt(mdDir, "degraded"),
+				SyncAction: readSysString(mdDir, "sync_action"),
+			},
+			progress: arrayProgress{
+				syncDone:   done,
+				syncTotal:  total,
+				speedKiBs:  readSysUint(mdDir, "sync_speed"),
+				mismatches: readSysUint(mdDir, "mismatch_cnt"),
+				members:    readMembers(mdDir),
+			},
 		}
 	}
 
 	return out, nil
+}
+
+// readSyncCompleted parses md/sync_completed, "<done> / <total>" in sectors
+// while a sync runs and "none" otherwise. Anything else is no reading.
+func readSyncCompleted(mdDir string) (done, total *uint64) {
+	a, b, ok := strings.Cut(readSysString(mdDir, "sync_completed"), "/")
+	if !ok {
+		return nil, nil
+	}
+	d, errD := strconv.ParseUint(strings.TrimSpace(a), 10, 64)
+	t, errT := strconv.ParseUint(strings.TrimSpace(b), 10, 64)
+	if errD != nil || errT != nil || t == 0 {
+		return nil, nil
+	}
+	return &d, &t
+}
+
+// readMembers lists md/dev-*: one directory per member, its state and slot
+// inside. Sorted by device, so an unchanged array reads the same every time.
+func readMembers(mdDir string) []*netrav1.MdMember {
+	entries, err := os.ReadDir(mdDir)
+	if err != nil {
+		return nil
+	}
+	var out []*netrav1.MdMember
+	for _, e := range entries {
+		device, ok := strings.CutPrefix(e.Name(), "dev-")
+		if !ok {
+			continue
+		}
+		dir := filepath.Join(mdDir, e.Name())
+		m := &netrav1.MdMember{Device: device, State: readSysString(dir, "state")}
+		if slot := readSysUint(dir, "slot"); slot != nil && *slot <= math.MaxUint32 {
+			s := uint32(*slot)
+			m.Slot = &s
+		}
+		out = append(out, m)
+	}
+	slices.SortFunc(out, func(a, b *netrav1.MdMember) int { return strings.Compare(a.Device, b.Device) })
+	return out
+}
+
+// readSysUint is readSysString for an unsigned counter, nil when the attribute
+// is absent or not a number -- "none" on sync_speed and slot included.
+func readSysUint(dir, name string) *uint64 {
+	v, err := strconv.ParseUint(readSysString(dir, name), 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
 }
 
 // readSysString reads one sysfs attribute, returning "" when it is absent.

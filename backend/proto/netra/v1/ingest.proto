@@ -54,6 +54,10 @@ message IngestRequest {
   // systemd_events. See SystemdSnapshot for why both exist.
   SystemdSnapshot systemd_snapshot = 20;
 
+  // What every md array is doing right now, sync progress included. See
+  // MdSnapshot.
+  MdSnapshot md_snapshot = 22;
+
   // 15 was `repeated ProcessSample processes`, the per-process-name table. It
   // read /proc/<pid>/stat for every process on the host each scrape, and the
   // kernel ptrace-checks each of those reads (do_task_stat), which a
@@ -1062,4 +1066,54 @@ message PackageEvent {
   string action = 3;
   string from_version = 4;
   string to_version = 5;
+}
+
+// MdSnapshot is the state of every md array on the host at ts_ms.
+//
+// The mdraid collector's events say when an array CHANGED; this says where it
+// IS, which the events cannot: a check or a rebuild moves its progress every
+// scrape, and an event per scrape is the series the collector exists to avoid.
+// The hub keeps only the newest snapshot (md_arrays), no history.
+//
+// Sent every scrape while the host has arrays, and once, empty, after its last
+// array is gone, so the hub can drop the rows. A host that never had an array
+// sends none, and an agent too old to know this message sends none: the hub
+// leaves the rows alone on an absent snapshot and replaces them on an empty
+// one.
+message MdSnapshot {
+  int64 ts_ms = 1;
+  repeated MdArray arrays = 2;
+}
+
+// MdArray is one array, read from /sys/block/<name>/md.
+message MdArray {
+  string name = 1;
+  string level = 2;
+  uint32 raid_disks = 3;
+  uint32 degraded = 4;
+  // array_state as the kernel spells it, unnormalized.
+  string state = 5;
+  // idle, check, repair, resync, recover, reshape, frozen.
+  string sync_action = 6;
+  // sync_completed, in 512-byte sectors. Unset while no sync runs (the kernel
+  // says "none").
+  optional uint64 sync_done_sectors = 7;
+  optional uint64 sync_total_sectors = 8;
+  // sync_speed in KiB/s, unset while no sync runs.
+  optional uint64 sync_speed_kibs = 9;
+  // Sectors found to differ by the last check or repair. Meaningful once one
+  // has finished; the kernel keeps the count until the next one starts.
+  optional uint64 mismatch_cnt = 10;
+  repeated MdMember members = 11;
+}
+
+// MdMember is one device in an array, from md/dev-<device>.
+message MdMember {
+  // The kernel name of the member, a partition or a whole disk: sdd1, sdf.
+  string device = 1;
+  // md's own words, comma-separated: in_sync, faulty, spare, write_mostly...
+  string state = 2;
+  // The member's role in the array, unset for a spare (the kernel says
+  // "none").
+  optional uint32 slot = 3;
 }

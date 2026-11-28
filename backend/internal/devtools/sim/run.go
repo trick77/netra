@@ -364,6 +364,9 @@ func (h *host) request(scrapes []*Scrape, isBackfill bool) *netrav1.IngestReques
 		if s.SystemdSnapshot != nil {
 			req.SystemdSnapshot = s.SystemdSnapshot
 		}
+		if s.MdSnapshot != nil {
+			req.MdSnapshot = s.MdSnapshot
+		}
 	}
 	return req
 }

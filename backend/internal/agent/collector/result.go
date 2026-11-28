@@ -46,6 +46,11 @@ type Result struct {
 	// nil must stay distinguishable from empty (see SystemdSnapshot.complete).
 	SystemdSnapshot *netrav1.SystemdSnapshot
 
+	// MdSnapshot is where every md array stands, sync progress included. A
+	// pointer for the same reason as SystemdSnapshot: nil is "nothing to
+	// say", an empty one is "the host has no arrays any more".
+	MdSnapshot *netrav1.MdSnapshot
+
 	// Inventory: what the host HAS, rather than what it measured. Reported on
 	// change rather than every scrape.
 	Addresses []*netrav1.HostAddress

@@ -214,7 +214,7 @@ func TestRowsMatchesWhatTheRequestCarries(t *testing.T) {
 		len(req.GetSmart()) + len(req.GetSystemdEvents()) +
 		len(req.GetPackageEvents()) + len(req.GetAddresses()) +
 		len(req.GetInterfaces()) + len(req.GetPackages()) +
-		len(req.GetSystemdSnapshot().GetUnits())
+		len(req.GetSystemdSnapshot().GetUnits()) + len(req.GetMdSnapshot().GetArrays())
 
 	if got != s.Rows() {
 		t.Errorf("Rows() reports %d but the request carries %d", s.Rows(), got)
