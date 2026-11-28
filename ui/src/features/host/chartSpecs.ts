@@ -1267,26 +1267,6 @@ export const STORAGE: PanelSpec[] = [
     max: 100,
     fmt: (n) => percent(n),
   },
-  // Operations, not bytes. Storage drew throughput, await and utilisation and
-  // never the count -- and it is the count that separates a small-random
-  // workload from a large-sequential one at identical MB/s, and the count a
-  // cloud volume is actually rate-limited on. A device sitting at its IOPS
-  // ceiling shows as high await and high utilisation with unremarkable
-  // throughput, which is three panels agreeing that something is wrong and
-  // none of them saying what.
-  {
-    title: "Disk operations",
-    slug: "disk-operations",
-    about:
-      "Requests per second rather than bytes. A small-random and a large-sequential workload are identical in throughput and differ here, and a cloud volume is rate-limited on this number.",
-    unit: "/s",
-    source: "diskIo",
-    bases: [
-      { base: "read_ops", label: "read" },
-      { base: "write_ops", label: "write" },
-    ],
-    fmt: count,
-  },
   // No Filesystem space or Filesystem inodes panels: the Filesystems table
   // carries what is left and the inode figure on each mount's row, beside
   // the Use% trend. Their links resolve to Filesystem usage (router.ts).
@@ -1851,18 +1831,13 @@ const GROUP_SLUGS: Record<
     },
   ],
   // A row per mount, then a row per drive. Filesystem usage is the trend on
-  // each mount's row; the four disk specs are the columns of each drive's.
+  // each mount's row; the three disk specs are the columns of each drive's.
   storage: [
     { title: "Filesystems", form: "filesystems", slugs: ["host-filesystem"] },
     {
       title: "Drives",
       form: "drives",
-      slugs: [
-        "disk-throughput",
-        "disk-utilisation",
-        "disk-latency",
-        "disk-operations",
-      ],
+      slugs: ["disk-throughput", "disk-utilisation", "disk-latency"],
     },
   ],
 };

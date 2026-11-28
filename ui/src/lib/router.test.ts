@@ -138,6 +138,7 @@ describe("the old chart-page route", () => {
     for (const slug of ["cpu-cores", "uptime"]) {
       expect(hostTabForSlug(slug)).toBe("system");
     }
+    expect(hostTabForSlug("disk-operations")).toBe("storage");
   });
 
   // The Graphs tab is gone and Filesystems is now Storage, but both are URLs

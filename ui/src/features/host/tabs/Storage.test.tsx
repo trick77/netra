@@ -214,19 +214,18 @@ describe("DriveRows", () => {
     const rows = screen.getAllByRole("row").slice(1);
     expect(
       rows.map((r) => within(r).getByRole("rowheader").textContent),
-    ).toEqual(["sdaoperations/s", "sdboperations/s"]);
+    ).toEqual(["sda", "sdb"]);
     expect(rows[0]).toHaveTextContent("1 kB/s · 2 kB/s");
     expect(rows[0]).toHaveTextContent("40% · peak 40%");
     expect(rows[1]).toHaveTextContent("4 ms · peak 4 ms");
   });
 
-  // Operations per second are no longer a chart on the tab; they are one
-  // click from the drive they belong to.
-  it("opens a drive's operations per second from its row", () => {
+  // The device name is a name, not a link to a chart the row does not draw.
+  it("hides no chart behind a drive's name", () => {
     render(<DriveRows group={group} sources={{ diskIo }} />);
-    expect(
-      screen.getByRole("button", { name: "sdb: operations per second" }),
-    ).toBeInTheDocument();
+    for (const header of screen.getAllByRole("rowheader")) {
+      expect(within(header).queryByRole("button")).toBeNull();
+    }
   });
 
   it("says why when no drive reported", () => {
