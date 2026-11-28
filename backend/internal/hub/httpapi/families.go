@@ -143,6 +143,17 @@ func (h *IngestHandler) storeFamilies(ctx context.Context, hostID int32, req *ne
 		}
 	}
 
+	// The md snapshot, through the same gate for the same reason: its ts
+	// guards every later write to md_arrays, and a future one would freeze
+	// the host's arrays at whatever it said.
+	if snap := req.GetMdSnapshot(); snap != nil {
+		if !plausibleTs(snap.GetTsMs(), future) {
+			logDropped(hostID, "md snapshot", 1)
+		} else if err := h.store.ApplyMdSnapshot(ctx, hostID, snap); err != nil {
+			return fmt.Errorf("md snapshot: %w", err)
+		}
+	}
+
 	return nil
 }
 

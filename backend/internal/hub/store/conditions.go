@@ -133,14 +133,25 @@ func openCondition(ctx context.Context, tx pgx.Tx, f conditions.Finding, recorde
 	//
 	// The row's opened_ts is the onset and always was. This event answers
 	// "when did netra conclude it", which is a different and also true fact.
-	return insertConditionEvent(ctx, tx, f.Key, recordedAt, f.Severity, map[string]any{
+	return insertConditionEvent(ctx, tx, f.Key, recordedAt, f.Severity, withMdSync(map[string]any{
 		"transition": "opened",
 		"severity":   f.Severity,
 		"opened_ts":  f.OpenedTS.UTC().Format(time.RFC3339),
 		// True when the onset is a floor rather than a moment, so a reader
 		// knows "since" is the earliest netra can vouch for.
 		"opened_at_least": f.OpenedAtLeast,
-	})
+	}, f.Detail))
+}
+
+// withMdSync carries a load finding's md_sync (deviationscan.go) into the
+// transition event, so the log says which arrays were at work when the load
+// opened or worsened. The condition row keeps the live list; the event keeps
+// the one at that moment.
+func withMdSync(event, finding map[string]any) map[string]any {
+	if v, ok := finding["md_sync"]; ok {
+		event["md_sync"] = v
+	}
+	return event
 }
 
 func resolveCondition(ctx context.Context, tx pgx.Tx, r conditions.Resolution, now time.Time) error {
@@ -221,7 +232,7 @@ func updateCondition(ctx context.Context, tx pgx.Tx, u conditions.Update, now ti
 	if !severityRose(u.PrevSeverity, u.Severity) {
 		return nil
 	}
-	return insertConditionEvent(ctx, tx, u.Key, now, u.Severity, map[string]any{
+	return insertConditionEvent(ctx, tx, u.Key, now, u.Severity, withMdSync(map[string]any{
 		"transition": "escalated",
 		"severity":   u.Severity,
 		// What it was, so a reader does not have to find the opening event to
@@ -231,7 +242,7 @@ func updateCondition(ctx context.Context, tx pgx.Tx, u conditions.Update, now ti
 		// it is what lets a consumer attach this to a lifecycle rather than
 		// scanning the log for a matching open.
 		"opened_ts": openedTS.UTC().Format(time.RFC3339),
-	})
+	}, u.Detail))
 }
 
 // severityRose reports whether a condition got worse.

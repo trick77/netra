@@ -327,12 +327,45 @@ function mdraidMessage(name: string, f: Record<string, unknown>): string {
   const { word } = mdraidCondition(f);
   if (!word) return everyField(f) || name;
 
-  // level and raid_disks describe the array; degraded counts the missing
-  // members. "1 of 2 devices" is the number an operator acts on.
+  // A whole, consistent array whose sync_action moved: the event IS the scrub
+  // or resync, and the sentence leads with it -- "md2 clean — raid1, 2
+  // devices, check" buried the one fact the row exists for in its last word.
+  // prev_sync_action tells a start from a finish; an event without it (a
+  // first sighting, or an agent that predates the key) can only say the work
+  // is running.
+  const sync = text(f, "sync_action");
+  const working = sync !== "" && sync !== "idle" && sync !== "frozen";
+  if (word === "clean") {
+    const prev = text(f, "prev_sync_action");
+    const prevWorking = prev !== "" && prev !== "idle" && prev !== "frozen";
+    const shape = mdraidShape(f);
+    const tail = shape === "" ? "" : ` — ${shape}`;
+    // frozen is a sync held, not ended: into it is a pause, out of it the
+    // same sync going on.
+    if (sync === "frozen" && prevWorking)
+      return `${name} ${prev} paused${tail}`;
+    if (working && prev === "frozen") return `${name} ${sync} resumed${tail}`;
+    if (working)
+      return prev === "" || prevWorking
+        ? `${name} ${sync} running${tail}`
+        : `${name} ${sync} started${tail}`;
+    if (prevWorking) {
+      const mismatches = Number(f["mismatch_cnt"]);
+      const found =
+        f["mismatch_cnt"] === undefined || !Number.isFinite(mismatches)
+          ? ""
+          : `, ${mismatches} mismatched sectors`;
+      return `${name} ${prev} finished${tail}${found}`;
+    }
+  }
+  return mdraidSentence(name, word, f);
+}
+
+/** "raid1, 2 devices" or "raid10, 3 of 4 devices": the array's shape. */
+function mdraidShape(f: Record<string, unknown>): string {
   const level = text(f, "level");
   const disks = Number(f["raid_disks"]);
   const degraded = Number(f["degraded"]);
-
   const parts: string[] = [];
   if (level) parts.push(level);
   if (Number.isFinite(disks) && disks > 0) {
@@ -342,11 +375,24 @@ function mdraidMessage(name: string, f: Record<string, unknown>): string {
         : `${disks} devices`,
     );
   }
+  return parts.join(", ");
+}
 
-  // A repair verb still earns a word when the array is WHOLE -- a scheduled
-  // check or scrub on a healthy array is worth seeing. When members are
-  // missing the word is already "rebuilding", and repeating sync_action after
-  // it says the same thing twice.
+function mdraidSentence(
+  name: string,
+  word: string,
+  f: Record<string, unknown>,
+): string {
+  // level and raid_disks describe the array; degraded counts the missing
+  // members. "1 of 2 devices" is the number an operator acts on.
+  const parts: string[] = [];
+  const shape = mdraidShape(f);
+  if (shape) parts.push(shape);
+
+  // A repair verb still earns a word on an array in any other state -- one
+  // that is not clean is worth seeing at work. When members are missing the
+  // word is already "rebuilding", and repeating sync_action after it says the
+  // same thing twice.
   const sync = text(f, "sync_action");
   if (sync && sync !== "idle" && word !== "rebuilding") parts.push(sync);
 
@@ -455,7 +501,12 @@ function conditionMessage(
   f: Record<string, unknown>,
 ): string {
   const what = CONDITION_LABELS[type] ?? type;
-  const named = subject ? `${what} — ${subject}` : what;
+  const base = subject ? `${what} — ${subject}` : what;
+  // The md arrays at work when the load condition was judged
+  // (store/deviationscan.go): a scrub waits on disks, and the wait is load.
+  // On the name, so the opening and the worsening rows both carry it.
+  const md = mdSyncNote(f);
+  const named = md === "" ? base : `${base} (${md})`;
 
   // Getting WORSE is its own transition, and it has to read as one. The hub
   // writes it when a condition's severity rises -- a disk that opened at 91%
@@ -526,6 +577,16 @@ function conditionMessage(
   }
 
   return named;
+}
+
+/** "md1 check, md2 check running", from a condition's md_sync list, or "". */
+export function mdSyncNote(fields: Record<string, unknown>): string {
+  const list = fields["md_sync"];
+  if (!Array.isArray(list)) return "";
+  const names = list.filter(
+    (one): one is string => typeof one === "string" && one !== "",
+  );
+  return names.length === 0 ? "" : `${names.join(", ")} running`;
 }
 
 /** One deviation figure with its unit, or "" when the detail did not carry it.

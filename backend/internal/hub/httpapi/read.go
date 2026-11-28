@@ -38,6 +38,7 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/hosts/{id}/addresses", listing(h.svc.Addresses))
 	mux.Handle("GET /api/v1/hosts/{id}/interfaces", listing(h.svc.Interfaces))
 	mux.Handle("GET /api/v1/hosts/{id}/drives", listing(h.svc.Drives))
+	mux.Handle("GET /api/v1/hosts/{id}/arrays", listing(h.svc.Arrays))
 	mux.Handle("GET /api/v1/hosts/{id}/packages", listing(h.svc.Packages))
 	mux.Handle("GET /api/v1/hosts/{id}/units", listing(h.svc.Units))
 	mux.Handle("GET /api/v1/hosts/{id}/metrics", http.HandlerFunc(h.metrics))

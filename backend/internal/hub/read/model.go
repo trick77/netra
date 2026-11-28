@@ -545,3 +545,42 @@ type driveRow struct {
 	raw        *int64
 	normalized *int16
 }
+
+// MdArray is one row of /hosts/{id}/arrays: an md array as its agent last
+// reported it (md_arrays).
+//
+// Progress, speed and ETA are derived from md's sectors and KiB/s here, so a
+// client gets figures in bytes and seconds rather than kernel units.
+//
+// Table: md_arrays
+type MdArray struct {
+	Name       string `json:"name"`
+	Level      string `json:"level"`
+	RaidDisks  int    `json:"raid_disks"`
+	Degraded   int    `json:"degraded"`
+	State      string `json:"state"`
+	SyncAction string `json:"sync_action"`
+	// 0-1, nil while no sync runs.
+	Progress *float64 `json:"progress"`
+	// Bytes per second, nil while no sync runs.
+	SpeedBps *int64 `json:"speed_bps"`
+	// Seconds left at the current speed, nil when either is unknown.
+	EtaS        *int64     `json:"eta_s"`
+	MismatchCnt *int64     `json:"mismatch_cnt"`
+	Members     []MdMember `json:"members"`
+	// When the agent read this.
+	Ts time.Time `json:"ts"`
+	// The agent has not reported this array for longer than MdStaleAfter: a
+	// host gone quiet mid-check would otherwise show its progress frozen as
+	// though it were live.
+	Stale bool `json:"stale"`
+}
+
+// MdMember is one device in an array, an element of md_arrays.members.
+//
+// Table: -
+type MdMember struct {
+	Device string `json:"device"`
+	State  string `json:"state"`
+	Slot   *int   `json:"slot,omitempty"`
+}

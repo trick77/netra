@@ -141,7 +141,9 @@ describe("messageOf, mdraid events", () => {
     ).toBe("md0 rebuilding — raid1, 1 of 2 devices");
   });
 
-  it("names a sync in progress but stays quiet when idle", () => {
+  // Without prev_sync_action -- a first sighting, or an agent before the
+  // key -- the sync can only be said to be running.
+  it("leads with a sync in progress", () => {
     expect(
       messageOf(
         event({
@@ -154,7 +156,100 @@ describe("messageOf, mdraid events", () => {
           },
         }),
       ),
-    ).toBe("md0 clean — raid5, 3 devices, resync");
+    ).toBe("md0 resync running — raid5, 3 devices");
+  });
+
+  const whole = { state: "clean", level: "raid1", raid_disks: 2, degraded: 0 };
+
+  it("says a check started when the array was idle before", () => {
+    expect(
+      messageOf(
+        event({
+          detail: { ...whole, sync_action: "check", prev_sync_action: "idle" },
+        }),
+      ),
+    ).toBe("md0 check started — raid1, 2 devices");
+  });
+
+  it("says a check finished, with what it found", () => {
+    expect(
+      messageOf(
+        event({
+          detail: {
+            ...whole,
+            sync_action: "idle",
+            prev_sync_action: "check",
+            mismatch_cnt: 0,
+          },
+        }),
+      ),
+    ).toBe("md0 check finished — raid1, 2 devices, 0 mismatched sectors");
+    expect(
+      messageOf(
+        event({
+          detail: { ...whole, sync_action: "idle", prev_sync_action: "resync" },
+        }),
+      ),
+    ).toBe("md0 resync finished — raid1, 2 devices");
+  });
+
+  it("calls a frozen sync paused and a thawed one resumed, not ended", () => {
+    expect(
+      messageOf(
+        event({
+          detail: {
+            ...whole,
+            sync_action: "frozen",
+            prev_sync_action: "check",
+          },
+        }),
+      ),
+    ).toBe("md0 check paused — raid1, 2 devices");
+    expect(
+      messageOf(
+        event({
+          detail: {
+            ...whole,
+            sync_action: "check",
+            prev_sync_action: "frozen",
+          },
+        }),
+      ),
+    ).toBe("md0 check resumed — raid1, 2 devices");
+  });
+
+  it("calls a sync that changed verbs still running", () => {
+    expect(
+      messageOf(
+        event({
+          detail: {
+            ...whole,
+            sync_action: "repair",
+            prev_sync_action: "check",
+          },
+        }),
+      ),
+    ).toBe("md0 repair running — raid1, 2 devices");
+  });
+
+  it("keeps the state word for an idle array that was idle", () => {
+    expect(
+      messageOf(
+        event({
+          detail: { ...whole, sync_action: "idle", prev_sync_action: "idle" },
+        }),
+      ),
+    ).toBe("md0 clean — raid1, 2 devices");
+  });
+
+  it("names the sync on an array in another state", () => {
+    expect(
+      messageOf(
+        event({
+          detail: { ...whole, state: "readonly", sync_action: "check" },
+        }),
+      ),
+    ).toBe("md0 readonly — raid1, 2 devices, check");
   });
 
   it("says the state alone when the array reported nothing else", () => {

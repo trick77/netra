@@ -5,10 +5,13 @@
 // utilisation and latency side by side, each column on one scale for every
 // drive, so a sixth drive adds a row rather than six more unlabelled lines.
 import type { ReactNode } from "react";
-import type { Filesystem, MetricsResponse } from "../../../lib/api";
+import type { Filesystem, MdArray, MetricsResponse } from "../../../lib/api";
+import { arraysByDrive, etaText, slotMap, syncing } from "../arrays";
+import { fractionAt } from "../../../ui/charts/cursor";
+import type { ChartMarker } from "../../../ui/charts/Chart";
 import type { Range } from "../../../lib/range";
 import { RAIL_RANGES } from "../../../lib/range";
-import { ABSENT, bytes, percent } from "../../../lib/format";
+import { ABSENT, bytes, percent, relative } from "../../../lib/format";
 import { griddedValues, latestValue } from "../../../lib/metrics";
 import { fsUsePercent } from "../../../lib/bands";
 import { currentFilesystems } from "../../../lib/host";
@@ -325,6 +328,21 @@ export function DriveRows({
     ...devices.flatMap((d) => (lat.devices.get(d) ?? []).map(bandPeak)),
   );
   const window = io.res?.window ?? null;
+  // The arrays each drive serves, and those arrays' events as markers on the
+  // drive's throughput: a check starting is why its disks went busy.
+  const memberOf = arraysByDrive(sources.arrays ?? []);
+  const markersFor = (device: string): ChartMarker[] => {
+    const names = memberOf.get(device);
+    if (!names) return [];
+    const out: ChartMarker[] = [];
+    for (const e of sources.events ?? []) {
+      if (e.type !== "mdraid" || !names.includes(e.subject ?? "")) continue;
+      const fraction = fractionAt(e.at, window);
+      if (fraction !== null)
+        out.push({ fraction, severity: e.severity, label: e.label });
+    }
+    return out;
+  };
 
   /**
    * One device's bands from one spec, named by their own label and coloured
@@ -432,6 +450,11 @@ export function DriveRows({
                 <tr key={device}>
                   <th scope="row">
                     <span className="drivename">{device}</span>
+                    {memberOf.has(device) && (
+                      <span className="drivearrays">
+                        {memberOf.get(device)!.join(" ")}
+                      </span>
+                    )}
                   </th>
                   <td className="drivecell">
                     <div ref={i === 0 ? ref : undefined}>
@@ -447,6 +470,7 @@ export function DriveRows({
                           mark="mirror"
                           mirrorPeak={ioPeak}
                           label={`${device} throughput over time`}
+                          markers={markersFor(device)}
                           gapRule
                         />,
                         {
@@ -512,6 +536,81 @@ export function DriveRows({
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+// --- Arrays ---------------------------------------------------------------
+
+/**
+ * The host's md arrays, a row each: level, members, which of them are in
+ * sync, and while md works on one, how far it has got and how long it has
+ * left. /proc/mdstat's answer, over the drives it keeps busy.
+ *
+ * Nothing at all on a host without arrays, or whose agent predates the
+ * snapshot: a heading over "no arrays" on every VPS is noise.
+ */
+export function MdArrays({ rows }: { rows: readonly MdArray[] | null }) {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <section className="mdarrays" aria-label="Arrays">
+      <h3 className="grouphead">Arrays</h3>
+      <ul>
+        {rows.map((a) => {
+          const down = a.degraded > 0;
+          // A stale row's progress is where the host stopped reporting, not
+          // where the sync is: no bar that reads as live.
+          const work = syncing(a) && !a.stale;
+          const pct = a.progress === null ? null : a.progress * 100;
+          const meta = [a.level, a.members.map((m) => m.device).join(" ")]
+            .filter((s) => s !== "")
+            .join(" · ");
+          return (
+            <li key={a.name}>
+              <div className="mdhead">
+                <span className="mdname">{a.name}</span>
+                <span className="mdmeta">{meta}</span>
+                <span className={down ? "mdslots down" : "mdslots"}>
+                  {slotMap(a)}
+                  {down && ` ${a.degraded} missing`}
+                </span>
+                {a.stale && (
+                  <span className="mdmeta">last reported {relative(a.ts)}</span>
+                )}
+              </div>
+              {work && (
+                <div className="mdsync">
+                  <div
+                    className="mdbar"
+                    role="progressbar"
+                    aria-label={`${a.name} ${a.sync_action}`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={pct === null ? undefined : Math.round(pct)}
+                  >
+                    <span style={{ width: `${pct ?? 0}%` }} />
+                  </div>
+                  <span className="mdsynctext">
+                    {[
+                      a.sync_action,
+                      pct === null ? null : `${pct.toFixed(1)} %`,
+                      a.speed_bps === null ? null : `${bytes(a.speed_bps)}/s`,
+                      a.eta_s === null ? null : `${etaText(a.eta_s)} left`,
+                    ]
+                      .filter((s): s is string => s !== null)
+                      .join(" · ")}
+                  </span>
+                </div>
+              )}
+              {!work && a.mismatch_cnt !== null && a.mismatch_cnt > 0 && (
+                <p className="mdmismatch">
+                  {a.mismatch_cnt} sectors differed in the last check
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

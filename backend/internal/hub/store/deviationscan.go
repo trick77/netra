@@ -129,9 +129,23 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		       ehp.slow, ep.fast, ehp.var, ep.first_ts, ep.updated_ts,
 		       ehp.weight, ehp.exc, ep.excursion_since,
 		       ehl.slow, el.fast, ehl.var, el.first_ts, el.updated_ts,
-		       ehl.weight, ehl.exc, el.excursion_since
+		       ehl.weight, ehl.exc, el.excursion_since,
+		       md.syncing
 		  FROM hosts h
 		  LEFT JOIN latest l ON l.host_id = h.id
+		  -- The md arrays at work right now. A check or a rebuild parks
+		  -- threads in uninterruptible I/O wait, which Linux counts into the
+		  -- load average, so a monthly scrub opens a load condition on the
+		  -- quietest CPU. Said beside the load, not instead of it: the load is
+		  -- still real. Only a fresh snapshot counts, so a host that stopped
+		  -- reporting mid-check does not claim one forever.
+		  LEFT JOIN LATERAL (
+		       SELECT array_agg(m.name || ' ' || m.sync_action ORDER BY m.name) AS syncing
+		         FROM md_arrays m
+		        WHERE m.host_id = h.id
+		          AND m.sync_action NOT IN ('', 'idle', 'frozen')
+		          AND m.ts >= now() - $1::interval
+		  ) md ON TRUE
 		  LEFT JOIN metric_ewma ep
 		         ON ep.host_id = h.id AND ep.kind = $2 AND ep.subject = ''
 		  LEFT JOIN metric_ewma el
@@ -157,10 +171,12 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 		var pSlow, pFast, pVar, pWeight, pExc, lSlow, lFast, lVar, lWeight, lExc *float64
 		var pFirst, pUpdated, pExcursion *time.Time
 		var lFirst, lUpdated, lExcursion *time.Time
+		var mdSyncing []string
 
 		if err := rows.Scan(&hostID, &procs, &load, &readingTS,
 			&pSlow, &pFast, &pVar, &pFirst, &pUpdated, &pWeight, &pExc, &pExcursion,
-			&lSlow, &lFast, &lVar, &lFirst, &lUpdated, &lWeight, &lExc, &lExcursion); err != nil {
+			&lSlow, &lFast, &lVar, &lFirst, &lUpdated, &lWeight, &lExc, &lExcursion,
+			&mdSyncing); err != nil {
 			return fmt.Errorf("scan host gauge: %w", err)
 		}
 
@@ -186,9 +202,19 @@ func (s *Store) scanHostGauges(ctx context.Context, scan *conditions.Scan,
 			State:     ewmaOf(hourOf(readingTS), lSlow, lFast, lVar, lWeight, lExc, lFirst, lUpdated, lExcursion),
 			IsOpen:    open[loadKey],
 			Rule:      conditions.RuleFor(conditions.KindLoad, ""),
+			Detail:    mdSyncDetail(mdSyncing),
 		})
 	}
 	return rows.Err()
+}
+
+// mdSyncDetail is the load condition's md_sync key: the arrays at work, as
+// "md1 check". nil when none is, so the detail carries no empty list.
+func mdSyncDetail(syncing []string) map[string]any {
+	if len(syncing) == 0 {
+		return nil
+	}
+	return map[string]any{"md_sync": syncing}
 }
 
 // ewmaOf rebuilds one subject's state from its LEFT JOINed columns.

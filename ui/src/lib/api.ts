@@ -600,6 +600,32 @@ export function getDrives(id: number | string): Promise<Drive[]> {
   return request<Drive[]>(`/api/v1/hosts/${id}/drives`);
 }
 
+/** One md array as its agent last reported it (read.MdArray). */
+export interface MdArray {
+  name: string;
+  level: string;
+  raid_disks: number;
+  degraded: number;
+  /** array_state, as the kernel spells it. */
+  state: string;
+  /** idle, check, repair, resync, recover, reshape, frozen. */
+  sync_action: string;
+  /** 0-1 while a sync runs, else null. */
+  progress: number | null;
+  speed_bps: number | null;
+  /** Seconds left at the current speed. */
+  eta_s: number | null;
+  mismatch_cnt: number | null;
+  members: { device: string; state: string; slot?: number }[];
+  ts: string;
+  /** Not reported for a while: the figures are as of `ts`, not now. */
+  stale: boolean;
+}
+
+export function getArrays(id: number | string): Promise<MdArray[]> {
+  return request<MdArray[]>(`/api/v1/hosts/${id}/arrays`);
+}
+
 export function getPackages(id: number | string): Promise<Pkg[]> {
   return request<Pkg[]>(`/api/v1/hosts/${id}/packages`);
 }

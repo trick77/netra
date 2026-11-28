@@ -1048,3 +1048,76 @@ describe("muting from the attention band", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("Overview, md arrays", () => {
+  const md = {
+    level: "raid1",
+    raid_disks: 2,
+    degraded: 0,
+    state: "clean",
+    speed_bps: null,
+    mismatch_cnt: null,
+    members: [],
+    ts: "2026-08-10T01:00:00Z",
+    stale: false,
+  };
+
+  it("names the arrays md is working on, and only while it is", () => {
+    renderOverview({
+      arrays: [
+        {
+          ...md,
+          name: "md1",
+          sync_action: "check",
+          progress: 0.69,
+          eta_s: 20160,
+        },
+        {
+          ...md,
+          name: "md3",
+          sync_action: "idle",
+          progress: null,
+          eta_s: null,
+        },
+      ],
+    });
+    expect(screen.getByLabelText("Arrays at work")).toHaveTextContent(
+      "md1 check 69.0 %, 5 h 36 min left",
+    );
+    expect(screen.getByLabelText("Arrays at work")).not.toHaveTextContent(
+      "md3",
+    );
+  });
+
+  it("says nothing when every array is idle", () => {
+    renderOverview({
+      arrays: [
+        {
+          ...md,
+          name: "md3",
+          sync_action: "idle",
+          progress: null,
+          eta_s: null,
+        },
+      ],
+    });
+    expect(screen.queryByLabelText("Arrays at work")).toBeNull();
+  });
+
+  // A host that went quiet mid-check: its last progress is not news.
+  it("says nothing about a check the host stopped reporting", () => {
+    renderOverview({
+      arrays: [
+        {
+          ...md,
+          name: "md1",
+          sync_action: "check",
+          progress: 0.4,
+          eta_s: 30240,
+          stale: true,
+        },
+      ],
+    });
+    expect(screen.queryByLabelText("Arrays at work")).toBeNull();
+  });
+});

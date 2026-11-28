@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { MetricsResponse } from "../../../lib/api";
+import type { MdArray, MetricsResponse } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { STORAGE_GROUPS } from "../chartSpecs";
-import { DriveRows, FilesystemTable } from "./Storage";
+import { DriveRows, FilesystemTable, MdArrays } from "./Storage";
 
 const t0 = Date.parse("2026-08-10T00:00:00Z");
 const window = { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:01:00Z" };
@@ -228,6 +228,49 @@ describe("DriveRows", () => {
     }
   });
 
+  // sda is in md0, sdb in nothing; md0's check started mid-window, and an
+  // event about another array and one of another type are not sda's.
+  it("names a drive's array and marks that array's events on it", () => {
+    const at = t0 + 30_000;
+    render(
+      <DriveRows
+        group={group}
+        sources={{
+          diskIo,
+          arrays: [mdArrayFixture({ name: "md0" })],
+          events: [
+            {
+              at,
+              severity: "info",
+              label: "md0 check started",
+              type: "mdraid",
+              subject: "md0",
+            },
+            {
+              at,
+              severity: "info",
+              label: "md9 check started",
+              type: "mdraid",
+              subject: "md9",
+            },
+            {
+              at,
+              severity: "critical",
+              label: "oom",
+              type: "oom_kill",
+              subject: "md0",
+            },
+          ],
+        }}
+      />,
+    );
+    const [sda, sdb] = screen.getAllByRole("row").slice(1);
+    expect(within(sda!).getByRole("rowheader")).toHaveTextContent("sdamd0");
+    expect(within(sdb!).getByRole("rowheader")).toHaveTextContent(/^sdb$/);
+    expect(sda!.querySelectorAll("[data-marker]")).toHaveLength(1);
+    expect(sdb!.querySelectorAll("[data-marker]")).toHaveLength(0);
+  });
+
   it("says why when no drive reported", () => {
     render(<DriveRows group={group} sources={{ diskIo: null }} />);
     expect(
@@ -283,5 +326,96 @@ describe("DriveRows", () => {
         expect.stringMatching(/^write/),
       ]),
     );
+  });
+});
+
+function mdArrayFixture(over: Partial<MdArray> = {}): MdArray {
+  return {
+    name: "md2",
+    level: "raid1",
+    raid_disks: 2,
+    degraded: 0,
+    state: "clean",
+    sync_action: "idle",
+    progress: null,
+    speed_bps: null,
+    eta_s: null,
+    mismatch_cnt: null,
+    members: [
+      { device: "sda1", state: "in_sync", slot: 0 },
+      { device: "sdc1", state: "in_sync", slot: 1 },
+    ],
+    ts: "2026-11-28T13:00:00Z",
+    stale: false,
+    ...over,
+  };
+}
+
+describe("MdArrays", () => {
+  it("draws nothing on a host without arrays", () => {
+    const { container } = render(<MdArrays rows={[]} />);
+    expect(container).toBeEmptyDOMElement();
+    const { container: none } = render(<MdArrays rows={null} />);
+    expect(none).toBeEmptyDOMElement();
+  });
+
+  it("says what mdstat says: the members, the slots, a check's progress", () => {
+    render(
+      <MdArrays
+        rows={[
+          mdArrayFixture({
+            sync_action: "check",
+            progress: 0.896,
+            speed_bps: 98_697_216,
+            eta_s: 6318,
+          }),
+        ]}
+      />,
+    );
+    const row = screen.getByRole("listitem");
+    expect(row).toHaveTextContent("md2raid1 · sda1 sdc1[UU]");
+    expect(row).toHaveTextContent(
+      "check · 89.6 % · 98.7 MB/s · 1 h 45 min left",
+    );
+    expect(
+      screen.getByRole("progressbar", { name: "md2 check" }),
+    ).toHaveAttribute("aria-valuenow", "90");
+  });
+
+  it("marks a degraded array and says what the last check found", () => {
+    render(
+      <MdArrays
+        rows={[
+          mdArrayFixture({
+            degraded: 1,
+            mismatch_cnt: 128,
+            members: [{ device: "sda1", state: "in_sync", slot: 0 }],
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText(/\[U_\]/)).toHaveClass("down");
+    expect(screen.getByText(/1 missing/)).toBeInTheDocument();
+    expect(
+      screen.getByText("128 sectors differed in the last check"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("draws no live progress for an array the host stopped reporting", () => {
+    render(
+      <MdArrays
+        rows={[
+          mdArrayFixture({
+            sync_action: "check",
+            progress: 0.4,
+            stale: true,
+            ts: new Date(Date.now() - 3 * 3600_000).toISOString(),
+          }),
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.getByText(/^last reported 3 h/)).toBeInTheDocument();
   });
 });

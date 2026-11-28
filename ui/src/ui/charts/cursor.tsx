@@ -71,6 +71,10 @@ export interface TimedEvent {
   at: number;
   severity: "critical" | "warning" | "info";
   label: string;
+  /** The event's type and subject, for a chart that draws only the events
+   * about what it shows: a drive's row and the arrays on that drive. */
+  type?: string;
+  subject?: string;
 }
 
 /** Where a moment falls across a window, 0-1, or null outside it. */
