@@ -1775,11 +1775,6 @@ tbody tr:hover .host-cell-name {
 .drivename {
   display: block;
 }
-/* Operations per second, one click from the drive: no chart on the tab. */
-.opslink {
-  font-size: var(--text-micro);
-  color: var(--accent);
-}
 /* Fixed layout: the three chart columns come out the same width whatever
    their figures say, so the one width DriveRows measures (in the first
    throughput cell) is every cell's width. Auto layout sized each column by

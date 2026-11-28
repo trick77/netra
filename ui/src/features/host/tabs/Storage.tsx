@@ -281,8 +281,12 @@ const CELL_HEIGHT = 40;
 /**
  * One row per drive: throughput mirrored (read above, write below),
  * utilisation and latency. One scale per column for every drive, so a quiet
- * disk reads as quiet next to a busy one. Operations per second, which the
- * tab no longer charts, are one click away under the device name.
+ * disk reads as quiet next to a busy one.
+ *
+ * No operations per second. It sat behind a link under the device name, a
+ * chart nobody saw unless they guessed the accent-coloured label was one, and
+ * the accent read as a warning. Utilisation and latency already say a drive
+ * is saturated; the count only adds why, and the agent still reports it.
  */
 export function DriveRows({
   group,
@@ -302,7 +306,6 @@ export function DriveRows({
   const io = view("disk-throughput");
   const util = view("disk-utilisation");
   const lat = view("disk-latency");
-  const ops = view("disk-operations");
 
   const devices = [...io.devices.keys()];
   if (devices.length === 0)
@@ -412,7 +415,6 @@ export function DriveRows({
               const pair = shape(io, device);
               const u = shape(util, device);
               const l = shape(lat, device);
-              const o = shape(ops, device);
               // The latest bucket, a gap included: a drive on a host that
               // stopped reporting has no current reading, and none of these
               // figures may print its last one as "now".
@@ -430,23 +432,6 @@ export function DriveRows({
                 <tr key={device}>
                   <th scope="row">
                     <span className="drivename">{device}</span>
-                    {o.length > 0 && (
-                      <Enlargeable
-                        title={`${ops.spec.title}: ${device}`}
-                        about={ops.spec.about}
-                        unit={ops.spec.unit}
-                        series={o}
-                        mirrored
-                        fmt={ops.spec.fmt}
-                        window={window}
-                        range={range}
-                        ranges={RAIL_RANGES}
-                        fetchSeries={widen(ops, device)}
-                        label={`${device}: operations per second`}
-                      >
-                        <span className="opslink">operations/s</span>
-                      </Enlargeable>
-                    )}
                   </th>
                   <td className="drivecell">
                     <div ref={i === 0 ? ref : undefined}>

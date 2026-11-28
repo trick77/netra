@@ -105,6 +105,9 @@ const RETIRED_SLUGS: Record<string, string> = {
   // table now, beside its Use% trend.
   "filesystem-space": "host-filesystem",
   "filesystem-inodes": "host-filesystem",
+  // Operations per second are gone from the drive rows; throughput is the
+  // column that stood beside them.
+  "disk-operations": "disk-throughput",
 };
 
 export function hostTabForSlug(retiring: string): HostTab {
