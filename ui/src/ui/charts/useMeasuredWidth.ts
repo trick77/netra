@@ -41,7 +41,31 @@ export function useMeasuredWidth<T extends HTMLElement>(
   // breakdown, whose data was already in hand, measured correctly.
   const [node, setNode] = useState<T | null>(null);
   const [measured, setMeasured] = useState<number | null>(null);
-  const ref = useCallback((next: T | null) => setNode(next), []);
+  // Measured once synchronously as the element attaches, before the browser
+  // paints. The observer below reports only after a frame, so the first
+  // picture of every chart was drawn at `fallback` and redrawn a frame later
+  // at its real width -- a visible jump of the plot and its time ticks on
+  // every tab switch. A ref callback runs in the commit, and a state update
+  // made there is applied before paint, so the first frame is the right one.
+  const ref = useCallback((next: T | null) => {
+    setNode(next);
+    if (next === null) return;
+    // The CONTENT width, as the observer's contentRect reports it, so the two
+    // agree and the observer's first report is not a second redraw.
+    // Fractional throughout and rounded once, as the observer's value is:
+    // clientWidth is already rounded, and subtracting padding from it can
+    // land a pixel off and bring the second redraw back.
+    const style = getComputedStyle(next);
+    const px = (v: string) => parseFloat(v || "0") || 0;
+    const width = Math.round(
+      next.getBoundingClientRect().width -
+        px(style.paddingLeft) -
+        px(style.paddingRight) -
+        px(style.borderLeftWidth) -
+        px(style.borderRightWidth),
+    );
+    if (width > 0) setMeasured((prev) => (prev === width ? prev : width));
+  }, []);
 
   useEffect(() => {
     // No ResizeObserver is not a crash: a test environment or an old browser
