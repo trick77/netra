@@ -382,6 +382,23 @@ export function HostPage({
     [hostId],
   );
 
+  // The events of one range, as markers, for an enlarged lead chart whose
+  // rail has left the page's range. The same query the tab's markers use.
+  const fetchEvents = useCallback(
+    async (next: Range) => {
+      const window = rangeWindow(next);
+      return timedEvents(
+        await getEvents({
+          host: hostId,
+          since: window.from,
+          until: window.to,
+          limit: MARKER_EVENTS,
+        }),
+      );
+    },
+    [hostId],
+  );
+
   // When the series last came down, and for which tab and range. A ref, not
   // state: nothing renders from it, and writing it must not cost a render on
   // every poll.
@@ -953,6 +970,7 @@ export function HostPage({
               range={drawn}
               fetchFamily={fetchFamily}
               events={markers}
+              fetchEvents={fetchEvents}
               threads={host.threads}
               pending={pending}
             />
@@ -983,6 +1001,7 @@ export function HostPage({
               range: drawn,
               fetchFamily,
               events: markers,
+              fetchEvents,
               pending,
             }}
           />
@@ -1034,6 +1053,7 @@ export function HostPage({
               range={drawn}
               fetchFamily={fetchFamily}
               events={markers}
+              fetchEvents={fetchEvents}
               pending={pending}
             />
             <Interfaces rows={data.interfaces ?? []} />

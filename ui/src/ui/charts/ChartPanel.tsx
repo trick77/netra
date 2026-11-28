@@ -5,7 +5,7 @@
 // panel is where that contract reaches the UI. It was built for the IP and
 // ICMP families, which had no columns in the schema at all; those are
 // collected now, and per-container networking is the remaining caller.
-import { useId, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import {
   fractionAt,
   indexAt,
@@ -190,6 +190,9 @@ export interface ChartPanelProps {
    * twenty times says nothing more than once.
    */
   events?: readonly TimedEvent[];
+  /** Another range's events, for the enlarged view once its rail leaves the
+   * page's range. See Enlargeable. */
+  fetchEvents?: (range: Range) => Promise<readonly TimedEvent[]>;
 }
 
 /**
@@ -201,6 +204,9 @@ export interface ChartPanelProps {
  * bare shape it asked for rather than a collapsed plot.
  */
 const AXIS_MIN_HEIGHT = 80;
+
+/** One empty list, so a panel without events keeps its marker memo. */
+const NO_EVENTS: readonly TimedEvent[] = [];
 
 export function ChartPanel({
   title,
@@ -235,7 +241,8 @@ export function ChartPanel({
   ranges,
   fetchSeries,
   footer,
-  events = [],
+  events = NO_EVENTS,
+  fetchEvents,
 }: ChartPanelProps) {
   // The width the CARD gives the chart, not the constant it used to be drawn
   // at -- see useMeasuredWidth for why the SVG is redrawn rather than scaled
@@ -270,12 +277,16 @@ export function ChartPanel({
   // The events this window covers, placed on its axis. One outside it -- a
   // poll that has not caught up, an event a second past `to` -- is dropped
   // rather than pinned to an edge where it would claim the wrong moment.
-  const markers: ChartMarker[] = [];
-  for (const e of events) {
-    const fraction = fractionAt(e.at, answered);
-    if (fraction !== null)
-      markers.push({ fraction, severity: e.severity, label: e.label });
-  }
+  // Memoised so the chart's grouping memo holds across cursor moves.
+  const markers = useMemo(() => {
+    const out: ChartMarker[] = [];
+    for (const e of events) {
+      const fraction = fractionAt(e.at, answered);
+      if (fraction !== null)
+        out.push({ fraction, severity: e.severity, label: e.label });
+    }
+    return out;
+  }, [events, answered]);
   // Within two buckets of the cursor: close enough to be the cause of what
   // the cursor rests on, which is the question the readout answers.
   const bucketMs =
@@ -522,6 +533,10 @@ export function ChartPanel({
           range={range}
           ranges={ranges}
           fetchSeries={fetchSeries}
+          // The same events the panel marks, on the dialog's own window;
+          // the enlarged view drew none before.
+          events={events}
+          fetchEvents={fetchEvents}
         >
           <Overlay
             series={series}

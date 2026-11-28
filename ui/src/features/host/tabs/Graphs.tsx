@@ -54,6 +54,9 @@ export interface GraphsProps {
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
   /** The window's events, drawn on the lead charts (PanelSpec.lead) only. */
   events?: readonly TimedEvent[];
+  /** Another range's events, for a lead chart's enlarged view once its rail
+   * leaves the page's range. */
+  fetchEvents?: (range: Range) => Promise<readonly TimedEvent[]>;
   /** The host's thread count, for the specs that rule against it. */
   threads?: number | null;
   /** The mount inventory, for the Storage tab's Filesystems table. */
@@ -169,6 +172,7 @@ export function SpecPanel({
       // Only what the host page's own fetcher will serve.
       ranges={RAIL_RANGES}
       events={spec.lead ? sources.events : undefined}
+      fetchEvents={spec.lead ? sources.fetchEvents : undefined}
       {...(height !== undefined ? { height } : {})}
     />
   );

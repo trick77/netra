@@ -14,7 +14,7 @@
 // not the caller's business.
 
 import { useState } from "react";
-import { Chart, markFor, type ChartSeries } from "./Chart";
+import { Chart, markFor, type ChartMarker, type ChartSeries } from "./Chart";
 import { mirrorPeaks } from "./geometry";
 import { mirroredTicks, niceTicks, timeLabel, timeTicks } from "./ticks";
 import { widestLabel } from "./plot";
@@ -77,6 +77,9 @@ export interface ChartFigureProps {
    * one with none. */
   window?: { from: string; to: string } | null;
   label: string;
+  /** Events on this window, placed already; grouped by Chart where they
+   * share pixels. The enlarged view used to draw none at all. */
+  markers?: readonly ChartMarker[];
 }
 
 export function ChartFigure({
@@ -94,6 +97,7 @@ export function ChartFigure({
   tickBase,
   window: answered = null,
   label,
+  markers,
 }: ChartFigureProps) {
   // null until the pointer is over the plot. The crosshair is a reading of
   // where the pointer IS; with no pointer there is no such reading, and a
@@ -155,6 +159,7 @@ export function ChartFigure({
         widestYLabel={widest}
         cursor={cursor}
         onCursorChange={setCursor}
+        markers={markers}
       />
 
       {answered && (

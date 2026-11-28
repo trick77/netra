@@ -20,7 +20,80 @@ import type { OverlaySeries } from "./Overlay";
 import { ChartDetail } from "./ChartDetail";
 import { scaleFor } from "./scale";
 import type { RailEntry } from "./RangeRail";
+import type { ChartMarker } from "./Chart";
+import { fractionAt, type TimedEvent } from "./cursor";
 import { RAIL_RANGES, type Range } from "../../lib/range";
+
+const NO_EVENTS: readonly TimedEvent[] = [];
+
+/**
+ * The events the open dialog marks: the panel's own at the page's range,
+ * fetched once per other range the rail moves to (and kept until the dialog
+ * closes). A range whose events are still out, or failed, marks nothing
+ * rather than the page's events on the wrong window.
+ */
+export function useDialogEvents(
+  open: boolean,
+  pageRange: Range | undefined,
+  dialogRange: Range | undefined,
+  pageEvents: readonly TimedEvent[] | undefined,
+  fetchEvents: ((range: Range) => Promise<readonly TimedEvent[]>) | undefined,
+): readonly TimedEvent[] {
+  const [byRange, setByRange] = useState<
+    Partial<Record<Range, readonly TimedEvent[]>>
+  >({});
+  const fetchRef = useRef(fetchEvents);
+  useLayoutEffect(() => {
+    fetchRef.current = fetchEvents;
+  });
+  const asked = useRef(new Set<Range>());
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (!open) setByRange({});
+  }
+
+  const other =
+    open && dialogRange !== undefined && dialogRange !== pageRange
+      ? dialogRange
+      : undefined;
+  useEffect(() => {
+    if (!open) {
+      asked.current = new Set();
+      return;
+    }
+    const fetch = fetchRef.current;
+    if (other === undefined || fetch === undefined) return;
+    if (asked.current.has(other)) return;
+    asked.current.add(other);
+    let live = true;
+    let settled = false;
+    fetch(other).then(
+      (events) => {
+        settled = true;
+        if (live) setByRange((prev) => ({ ...prev, [other]: events }));
+        else asked.current.delete(other);
+      },
+      () => {
+        // Marks nothing: the series still draw, and a failed marker read is
+        // no reason to say the chart failed. Asked again on the next visit.
+        settled = true;
+        asked.current.delete(other);
+      },
+    );
+    return () => {
+      live = false;
+      // Left before it answered: the answer is dropped, so the range has to
+      // be asked again when the rail comes back to it.
+      if (!settled) asked.current.delete(other);
+    };
+  }, [open, other]);
+
+  if (!open) return NO_EVENTS;
+  if (other === undefined) return pageEvents ?? NO_EVENTS;
+  return byRange[other] ?? NO_EVENTS;
+}
 
 /** What fetchSeries answers: the bands to draw and the window they cover,
  * already shaped -- the caller owns the response-to-bands conversion because
@@ -313,6 +386,13 @@ export interface EnlargeableProps {
   /** Loads these series at another range, for the dialog alone. Without it
    * the dialog carries no picker. */
   fetchSeries?: (range: Range) => Promise<DetailData>;
+  /** The events the panel marks, on the page's window. The dialog draws them
+   * while it shows the page's range. */
+  events?: readonly TimedEvent[];
+  /** The events of another range, for the dialog once its rail moves off the
+   * page's range. Without it the dialog marks events at the page's range
+   * only. */
+  fetchEvents?: (range: Range) => Promise<readonly TimedEvent[]>;
   /**
    * The button's accessible name. Defaults to `Enlarge {title}`, which is
    * enough for a titled card and not enough in a list: twenty rows of
@@ -347,6 +427,8 @@ export function Enlargeable({
   range,
   ranges,
   fetchSeries,
+  events,
+  fetchEvents,
   label,
   className,
   children,
@@ -374,6 +456,23 @@ export function Enlargeable({
   // moment later is a flicker, and an empty chart in netra asserts "the host
   // reported nothing".
   const shown = detail.series ?? detailSeries ?? series;
+  const shownWindow = detail.window ?? answered;
+  const dialogEvents = useDialogEvents(
+    enlarged,
+    range,
+    detail.range,
+    events,
+    fetchEvents,
+  );
+  const markers = useMemo(() => {
+    const out: ChartMarker[] = [];
+    for (const e of dialogEvents) {
+      const fraction = fractionAt(e.at, shownWindow);
+      if (fraction !== null)
+        out.push({ fraction, severity: e.severity, label: e.label });
+    }
+    return out;
+  }, [dialogEvents, shownWindow]);
   const span = scaleFor(shown, detail.series, {
     autoScale,
     min,
@@ -413,7 +512,8 @@ export function Enlargeable({
           mirrored={mirrored}
           tickBase={tickBase}
           hideAxis={hideAxis}
-          window={detail.window ?? answered}
+          window={shownWindow}
+          markers={markers}
           // The dialog's range and the dialog's setter. The page's setter is
           // deliberately not reachable from here.
           range={detail.range}
