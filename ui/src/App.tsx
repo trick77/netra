@@ -714,7 +714,7 @@ function FleetScreen({
       // says so instead.
       conditionError={
         poll.data && poll.data.conditions === null
-          ? "netra could not be asked what is wrong"
+          ? "Netra could not be asked what is wrong"
           : null
       }
     />

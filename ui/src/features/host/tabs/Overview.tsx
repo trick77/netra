@@ -619,7 +619,7 @@ export function Overview({
           absent panel, and only one of them is a fact about this host. */}
       {conditionsUnavailable && (
         <p className="note" role="alert">
-          netra could not be asked what is wrong with this host — nothing below
+          Netra could not be asked what is wrong with this host — nothing below
           is judged, so an empty panel means it could not look rather than that
           it looked and found nothing.
         </p>

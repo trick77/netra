@@ -99,7 +99,7 @@ func TestNotifyTestReportsEachChannel(t *testing.T) {
 		out[1].Channel != "channel 2 (generic+http)" || out[1].OK || out[1].Error == "" {
 		t.Errorf("results = %+v, want channel 1 ok and channel 2 failed with a reason", out)
 	}
-	if !strings.Contains(got, "test notification from netra") || !strings.Contains(got, "https://netra.example.com") {
+	if !strings.Contains(got, "test notification from Netra") || !strings.Contains(got, "https://netra.example.com") {
 		t.Errorf("the message read %q", got)
 	}
 

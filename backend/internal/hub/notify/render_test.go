@@ -28,7 +28,7 @@ func TestRenderLines(t *testing.T) {
 
 	title, body := notify.Render("web1", 7, conds, events, "", t0)
 
-	if title != "[netra] web1: 7 notifications" {
+	if title != "[Netra] web1: 7 notifications" {
 		t.Errorf("title = %q", title)
 	}
 	for _, want := range []string{

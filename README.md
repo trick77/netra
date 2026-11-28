@@ -1,4 +1,4 @@
-# netra
+# Netra
 
 Fleet monitoring for self-hosted Linux boxes. Two pieces:
 
@@ -26,7 +26,7 @@ Both images are published on every release:
 
 The hub sits behind Traefik. `compose.yaml` expects a Traefik instance already
 on the box, with a certificate for your hostname pre-loaded in its static
-config — there is no ACME resolver on netra's router.
+config — there is no ACME resolver on Netra's router.
 
 ```sh
 docker network create traefik      # external network, shared with your other stacks
@@ -137,7 +137,7 @@ apparently fresh directory ends up skipping initialisation.
 
 Traefik fronts the whole hub on `PUBLIC_FQDN` — agent ingest, the read API,
 the admin API and the management UI. The container publishes no host port at
-all, so netra cannot collide with anything else on the box and there is no
+all, so Netra cannot collide with anything else on the box and there is no
 tunnel to set up: open <https://your-hostname/> and log in with
 `BACKEND_ADMIN_TOKEN`.
 
@@ -218,7 +218,7 @@ names another service, stops the hub at startup. Channels: `smtp` (e-mail),
 provider. A message gets 45 s over all channels, then what is still out is
 cancelled; a URL's own `timeout=` does not change that.
 
-netra up to 0.1.8 used shoutrrr v0.8. What changed for its URLs:
+Netra up to 0.1.8 used shoutrrr v0.8. What changed for its URLs:
 
 - **Refused at startup** (the hub does not start; the error names the channel
   and the rule): `smtp` `from=`/`to=` that are not full addresses (`to=root`
@@ -417,29 +417,29 @@ silently switched off a metric nothing mentioned.
 The namespace alone is not enough to tell a `network_mode: host` container from
 a bridged one, and that distinction matters because a host-networked container's
 `/proc/<pid>/net/dev` *is* the host's file — counting it would attribute the
-whole machine's traffic to one container. netra reads
+whole machine's traffic to one container. Netra reads
 `HostConfig.NetworkMode` from the Docker socket to answer it, which is why the
 socket now earns per-container networking as well as names. The alternative,
 comparing `/proc/<pid>/ns/net` against PID 1's, needs `CAP_SYS_PTRACE`: that
 readlink goes through `ptrace_may_access`, which requires the capability for a
 non-dumpable target *even when the uids match*, and `no-new-privileges` makes
 every target non-dumpable. The counters themselves never needed it —
-`/proc/<pid>/net/dev` is world-readable — so netra does not ask for a capability
+`/proc/<pid>/net/dev` is world-readable — so Netra does not ask for a capability
 to answer a question the socket already answers. A host that declines the socket
 falls back to the namespace comparison and reports a capability if it is denied,
 rather than silently reporting nothing.
 
 The namespace makes every process's `/proc` entry readable to the container,
-`cmdline` and `environ` included. netra reads neither, and
+`cmdline` and `environ` included. Netra reads neither, and
 `backend/internal/agent/collector/argv_guard_test.go` fails the build if either name
 appears in a Go string literal.
 
-netra used to report a per-process-name table as well, and no longer does. The
+Netra used to report a per-process-name table as well, and no longer does. The
 collector read `/proc/<pid>/stat` for every process on the host each scrape;
 the kernel ptrace-checks each of those reads inside `do_task_stat`, and a
 `docker-default` container fails that check against every unconfined host
 process — one `apparmor="DENIED" operation="ptrace"` line a minute in the
-host's kernel log, which is the log netra exists to help an operator read. The
+host's kernel log, which is the log Netra exists to help an operator read. The
 process **count** is unaffected: it comes from counting entries in `/proc`,
 which needs no such read.
 
