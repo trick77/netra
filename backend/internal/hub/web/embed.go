@@ -27,7 +27,7 @@ var distFS embed.FS
 
 // unbuilt is what a binary built without the UI answers app routes with (503),
 // instead of a directory listing that every healthcheck reads as fine.
-var unbuilt = []byte("<!doctype html><title>netra</title><p>netra: this binary was built without the web UI; " +
+var unbuilt = []byte("<!doctype html><title>Netra</title><p>Netra: this binary was built without the web UI; " +
 	"run <code>make fe-build</code> before building, or use a released image.</p>\n")
 
 // Handler serves the SPA. Every path that is not a real file gets the shell,

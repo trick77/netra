@@ -74,7 +74,7 @@ export function LoginPage({ onSuccess }: LoginPageProps) {
 
   return (
     <div className="login">
-      <h1>netra</h1>
+      <h1>Netra</h1>
       <p className="sub">Enter the admin token to continue.</p>
 
       <form

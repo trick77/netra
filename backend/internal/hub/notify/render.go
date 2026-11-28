@@ -37,9 +37,9 @@ func Render(hostname string, hostID int32, conds []Condition, events []Event, hu
 	}
 
 	if len(lines) == 1 {
-		title = fmt.Sprintf("[netra] %s: %s", hostname, lines[0])
+		title = fmt.Sprintf("[Netra] %s: %s", hostname, lines[0])
 	} else {
-		title = fmt.Sprintf("[netra] %s: %d notifications", hostname, len(lines))
+		title = fmt.Sprintf("[Netra] %s: %d notifications", hostname, len(lines))
 	}
 
 	var sb strings.Builder

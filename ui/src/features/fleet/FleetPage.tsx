@@ -297,7 +297,7 @@ export function FleetPage({
       setFetchedConditions(answer ?? null);
       setFetchedConditionError(
         answer === null || answer === undefined
-          ? "netra could not be asked what is wrong"
+          ? "Netra could not be asked what is wrong"
           : null,
       );
 
@@ -559,7 +559,7 @@ export function FleetPage({
       {conditionError !== null && conditionError !== undefined ? (
         <p className="note" role="alert">
           The hosts loaded, but {conditionError} — nothing below is judged, so a
-          row with no mark on it means netra could not look rather than that it
+          row with no mark on it means Netra could not look rather than that it
           looked and found nothing.
         </p>
       ) : null}

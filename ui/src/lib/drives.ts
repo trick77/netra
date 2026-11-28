@@ -79,7 +79,7 @@ export function hostDriveNote(
       // answers perfectly and reports SCSI health pages instead of the
       // attribute table netra stores, so there is nothing here to grant or
       // map in.
-      return "This host's drives all answered SMART and none of them reported an attribute table, which is what SAS drives do: they reply with SCSI health pages that netra does not store. Nothing is misconfigured.";
+      return "This host's drives all answered SMART and none of them reported an attribute table, which is what SAS drives do: they reply with SCSI health pages that Netra does not store. Nothing is misconfigured.";
     default:
       // A capability netra does not know the wording of is still the agent
       // saying something went wrong, and quoting it verbatim is more use than
