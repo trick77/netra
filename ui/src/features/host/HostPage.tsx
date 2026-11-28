@@ -66,6 +66,7 @@ import {
   Units,
 } from "./tabs/Inventory";
 import { Overview } from "./tabs/Overview";
+import { useTabTitle } from "../../lib/title";
 
 export type HostTab =
   | "overview"
@@ -262,6 +263,9 @@ export function HostPage({
   // against a live clock has to move with it.
   const hostPoll = usePoll(() => getHost(hostId), POLL_MS, [hostId]);
   const host = hostPoll.data;
+  // The host, then the tab: two tabs of one host still read apart. A rename
+  // from the agents page shows on the next poll.
+  useTabTitle(host?.hostname, HOST_TABS.find((t) => t.id === tab)?.label);
   // One read for the header's list and every alert line's mute, so a mute
   // set on a line shows in the header at once and the other way round.
   const mutes = useMutes(Number(hostId));

@@ -1,12 +1,7 @@
 import { useState } from "react";
 import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
-import {
-  clampRange,
-  isRange,
-  PAGE_RANGES,
-  type Range,
-} from "../../lib/range";
+import { clampRange, isRange, PAGE_RANGES, type Range } from "../../lib/range";
 import { RANGE_KEY, readPref, writePref } from "../../lib/prefs";
 import { NotificationsCard } from "./NotificationsCard";
 
