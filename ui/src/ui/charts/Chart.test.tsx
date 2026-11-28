@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
-import { Chart, type ChartSeries } from "./Chart";
+import {
+  Chart,
+  groupMarkers,
+  type ChartMarker,
+  type ChartSeries,
+} from "./Chart";
 import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
 import { BAND_Y_PAD } from "./size";
 
@@ -23,6 +28,95 @@ const twoPairs: ChartSeries[] = [
 function draw(ui: React.ReactElement) {
   return render(ui).container;
 }
+
+// Events that would draw on the same pixels fold into one mark; at 12mo a
+// day is two pixels, and one rule per event drew a hatched block.
+describe("groupMarkers", () => {
+  const m = (
+    fraction: number,
+    severity: ChartMarker["severity"],
+    label = "e",
+  ): ChartMarker => ({ fraction, severity, label });
+
+  it("folds markers a few pixels apart into one, in the worse severity", () => {
+    // 1000 px wide: 0.500 and 0.503 are 3 px apart.
+    const groups = groupMarkers(
+      [m(0.5, "info", "restart"), m(0.503, "warning", "disk")],
+      1000,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      severity: "warning",
+      count: 2,
+      label: "2 events, worst: disk",
+    });
+    // At the first event's moment, not at a mean nobody experienced.
+    expect(groups[0]!.fraction).toBe(0.5);
+  });
+
+  it("names no 'worst' when every member is equally bad", () => {
+    const groups = groupMarkers(
+      [m(0.2, "info", "restart"), m(0.201, "info", "upgrade")],
+      1000,
+    );
+    expect(groups[0]!.label).toBe("2 events, first: restart");
+  });
+
+  // Drawn at their anchors, neighbouring groups are a whole gap apart, so a
+  // count never runs into the next glyph.
+  it("keeps drawn groups at least a gap apart", () => {
+    const groups = groupMarkers(
+      [m(0, "info"), m(0.023, "info"), m(0.023, "info"), m(0.024, "info")],
+      1000,
+    );
+    expect(groups.map((g) => g.fraction)).toEqual([0, 0.024]);
+  });
+
+  it("keeps markers far enough apart separate, left to right", () => {
+    const groups = groupMarkers([m(0.53, "critical"), m(0.5, "info")], 1000);
+    expect(groups.map((g) => [g.severity, g.count])).toEqual([
+      ["info", 1],
+      ["critical", 1],
+    ]);
+  });
+
+  it("never hides a critical event behind the others", () => {
+    const groups = groupMarkers(
+      [m(0.1, "info"), m(0.101, "critical", "down"), m(0.102, "warning")],
+      1000,
+    );
+    expect(groups).toEqual([
+      expect.objectContaining({ severity: "critical", count: 3 }),
+    ]);
+  });
+
+  // Anchored on the first member: a steady trickle must not chain one group
+  // across the whole axis.
+  it("does not chain a trickle into one group", () => {
+    const trickle = Array.from({ length: 50 }, (_, i) => m(i * 0.004, "info"));
+    // 4 px apart on 1000 px, 24 px groups: six or seven to a group (float
+    // rounding at the boundary), never one of 50.
+    const n = groupMarkers(trickle, 1000).length;
+    expect(n).toBeGreaterThanOrEqual(7);
+    expect(n).toBeLessThanOrEqual(9);
+  });
+
+  it("draws a group's size beside its glyph", () => {
+    const container = draw(
+      <Chart
+        series={series}
+        width={400}
+        height={140}
+        max={100}
+        markers={[m(0.5, "info"), m(0.501, "info"), m(0.502, "critical")]}
+      />,
+    );
+    const marks = container.querySelectorAll("[data-marker]");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.getAttribute("data-marker")).toBe("critical");
+    expect(marks[0]!.querySelector(".markercount")?.textContent).toBe("3");
+  });
+});
 
 describe("Chart", () => {
   describe("gapRule on a line chart", () => {

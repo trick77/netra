@@ -188,17 +188,19 @@ describe("event markers on a panel", () => {
     );
   }
 
+  // Left to right along the axis, the events being far enough apart that no
+  // two share pixels.
   it("draws one marker per event in the window, its severity in its shape", () => {
     const { container } = marked();
     const marks = container.querySelectorAll("[data-marker]");
     expect([...marks].map((m) => m.getAttribute("data-marker"))).toEqual([
+      "info",
       "warning",
       "critical",
-      "info",
     ]);
-    expect(marks[0]!.querySelector("path")).not.toBeNull();
-    expect(marks[1]!.querySelector("circle")).not.toBeNull();
-    expect(marks[2]!.querySelector("rect")).not.toBeNull();
+    expect(marks[0]!.querySelector("rect")).not.toBeNull();
+    expect(marks[1]!.querySelector("path")).not.toBeNull();
+    expect(marks[2]!.querySelector("circle")).not.toBeNull();
   });
 
   it("lists the events near the cursor in the readout", () => {
