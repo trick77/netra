@@ -11,7 +11,7 @@
 // an opt-in prop that defaults to absent, and a caller that asks for nothing
 // gets exactly the mark it drew before.
 
-import { memo, useId } from "react";
+import { memo, useId, useMemo } from "react";
 import {
   areaPath,
   dotPath,
@@ -242,7 +242,7 @@ export function Chart({
   onCursorChange,
   bandStroke = BAND_STROKE_WIDTH,
   gapRule = false,
-  markers = [],
+  markers = NO_MARKERS,
   mirrorPeak,
 }: ChartProps) {
   // React's useId, not a counter: two charts on one page must not mint the
@@ -320,6 +320,13 @@ export function Chart({
     top: rect.top + pad,
     bottom: rect.bottom - pad,
   };
+  // Grouped once per marker set and width, not on every cursor move: a lead
+  // chart carries up to 500 events and re-renders with the shared cursor.
+  const markWidth = axisRect.right - axisRect.left;
+  const groups = useMemo(
+    () => groupMarkers(markers, markWidth),
+    [markers, markWidth],
+  );
 
   // With no furniture the plot IS the image, and then the wrapper group and
   // the clip path are pure noise: nothing can overflow into margins that do
@@ -474,7 +481,7 @@ export function Chart({
         <AxisLabels rect={furnitureRect} y={y} x={x} format={format} />
       )}
 
-      {markers.map((m, i) => (
+      {groups.map((m, i) => (
         <Marker key={i} marker={m} rect={axisRect} plot={rect} />
       ))}
 
@@ -1141,8 +1148,78 @@ function LineMarks({
   );
 }
 
+/** One empty list, so a chart without markers keeps its grouping memo. */
+const NO_MARKERS: readonly ChartMarker[] = [];
+
 /**
- * One event: a dashed rule down the plot and its glyph at the top edge.
+ * Markers closer than this, in pixels of the drawn plot, are one group.
+ * Room for a glyph and a two-digit count beside it: at 10 px the counts ran
+ * into the next group's glyph.
+ */
+export const MARKER_GAP_PX = 24;
+
+const SEVERITY_RANK = { info: 0, warning: 1, critical: 2 } as const;
+
+/** Markers sharing pixels, drawn as one. */
+export interface MarkerGroup extends ChartMarker {
+  count: number;
+}
+
+/**
+ * Folds markers that would draw on top of each other into one group each.
+ *
+ * Every event used to draw its own rule. At 12mo a day is about two pixels,
+ * so a busy day drew dozens of dashed rules into one hatched block that said
+ * nothing about any of them -- and how soon that happens depends on how many
+ * events there are, not on the range. Grouped by distance in the plot's own
+ * pixels it holds for any range and any count: 1h with three events draws
+ * exactly what it always drew; a year draws at most one mark per gap.
+ *
+ * A group is drawn at its FIRST member, in the group's WORST severity, so a
+ * failure is never hidden behind an info line. At the first member rather
+ * than at the mean: a mean is a moment when nothing may have happened, where
+ * the cursor's readout then lists no event; and since every group starts at
+ * least one gap after the previous group's start, drawn positions are a gap
+ * apart too, so a count never runs into the next glyph. Anchored rather than
+ * chained, a steady trickle of events cannot grow one group across the axis.
+ */
+export function groupMarkers(
+  markers: readonly ChartMarker[],
+  widthPx: number,
+  gapPx: number = MARKER_GAP_PX,
+): MarkerGroup[] {
+  const sorted = [...markers].sort((a, b) => a.fraction - b.fraction);
+  const gap = widthPx > 0 ? gapPx / widthPx : 0;
+  const groups: { start: number; members: ChartMarker[] }[] = [];
+  for (const m of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && m.fraction - last.start < gap) last.members.push(m);
+    else groups.push({ start: m.fraction, members: [m] });
+  }
+  return groups.map(({ start, members }) => {
+    const first = members[0]!;
+    let worst = first;
+    for (const m of members)
+      if (SEVERITY_RANK[m.severity] > SEVERITY_RANK[worst.severity]) worst = m;
+    const mixed = members.some((m) => m.severity !== first.severity);
+    const label =
+      members.length === 1
+        ? first.label
+        : mixed
+          ? `${members.length} events, worst: ${worst.label}`
+          : `${members.length} events, first: ${first.label}`;
+    return {
+      fraction: start,
+      severity: worst.severity,
+      label,
+      count: members.length,
+    };
+  });
+}
+
+/**
+ * One event, or one group of events sharing pixels: a dashed rule down the
+ * plot, its glyph at the top edge, and the group's size beside the glyph.
  *
  * Mapped across the same inset rect as the crosshair, so a marker and the
  * cursor resting on its bucket draw on one line. Faint on purpose -- it
@@ -1153,7 +1230,7 @@ function Marker({
   rect,
   plot,
 }: {
-  marker: ChartMarker;
+  marker: MarkerGroup;
   rect: PlotRect;
   plot: PlotRect;
 }) {
@@ -1163,8 +1240,24 @@ function Marker({
   // The glyph needs a few pixels above the plot; a bare sparkline has none,
   // so it sits just inside the top edge instead of being cut off.
   const top = Math.max(plot.top, 4);
+  // The count reads beside the glyph, on the side with room: left of a group
+  // near the right edge, where the newest events pile up.
+  const countRight = x < (rect.left + rect.right) / 2;
   return (
-    <g data-marker={marker.severity}>
+    <g data-marker={marker.severity} data-count={marker.count}>
+      <title>{marker.label}</title>
+      {marker.count > 1 && (
+        <text
+          x={countRight ? x + 6 : x - 6}
+          y={top + 3}
+          textAnchor={countRight ? "start" : "end"}
+          fontSize={9}
+          fill={ink}
+          className="markercount"
+        >
+          {marker.count}
+        </text>
+      )}
       <line
         x1={x}
         x2={x}
