@@ -51,7 +51,9 @@ import {
 import {
   ContainerPage,
   CONTAINER_RANGE_VALUES,
+  displayTitle,
 } from "./features/container/ContainerPage";
+import { tabTitle, useTabTitle } from "./lib/title";
 import {
   EventsPage,
   EVENT_RANGE_VALUES,
@@ -279,14 +281,14 @@ function useDelegatedNavigation(go: Go) {
 /**
  * The tab's title, per page.
  *
- * index.html ships one static <title>netra</title> and nothing ever changed
- * it, so five open tabs of this app were five tabs reading "netra" -- and a
- * bookmark or a history entry carried no more than that either.
+ * index.html ships one static <title>, so without this every open tab of
+ * the app read the same -- and a bookmark or a history entry carried no more.
  *
- * The detail pages are deliberately NOT here: their title is a hostname or a
- * container key, which App does not have until the poll lands. They keep the
- * bare product name rather than flashing "netra" and then a name a moment
- * later, and naming themselves is the page's own job to take on later.
+ * The detail pages are NOT here: their title names the host, which App does
+ * not have until a poll lands, so HostPage and ContainerScreen set it
+ * themselves (useTabTitle) and App leaves those routes alone. Setting the
+ * bare name here too would race them: a parent's effect runs after its
+ * child's, so it would overwrite a title the page had just set.
  */
 const PAGE_TITLES: Partial<Record<Route["name"], string>> = {
   fleet: "All hosts",
@@ -298,10 +300,11 @@ const PAGE_TITLES: Partial<Record<Route["name"], string>> = {
 };
 
 function useDocumentTitle(route: Route) {
-  const page = PAGE_TITLES[route.name];
+  const name = route.name;
   useEffect(() => {
-    document.title = page === undefined ? "netra" : `${page} — netra`;
-  }, [page]);
+    if (name === "host" || name === "container") return;
+    document.title = tabTitle(PAGE_TITLES[name]);
+  }, [name]);
 }
 
 /**
@@ -830,6 +833,12 @@ function ContainerScreen({
 
   const container = poll.data?.containers.find(
     (c: Container) => c.container_key === containerKey,
+  );
+  // Here rather than in ContainerPage: this screen holds the poll, and the
+  // page mounts only once it has landed, so the loading state is named too.
+  useTabTitle(
+    poll.data?.host.hostname,
+    container ? displayTitle(container) : containerKey,
   );
 
   if (poll.loading && poll.data === null)

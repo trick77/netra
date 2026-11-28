@@ -559,17 +559,18 @@ describe("the top bar", () => {
     render(<App />);
     await screen.findByRole("heading", { level: 1, name: "Events" });
 
-    expect(document.title).toBe("Events — netra");
+    expect(document.title).toBe("Netra · Events");
   });
 
-  // A host page's title is a hostname App does not have until the poll lands,
-  // so it keeps the bare product name rather than flashing a wrong one.
-  it("falls back to the product name where the page names itself", async () => {
+  // The host page names its host, then its tab, once the host poll lands.
+  it("names the host and the tab on a host page", async () => {
     goTo("/hosts/3/overview");
     render(<App />);
     await screen.findByText("web-01");
 
-    expect(document.title).toBe("netra");
+    await waitFor(() =>
+      expect(document.title).toBe("Netra · web-01 · Overview"),
+    );
   });
 
   // The bar precedes the content in DOM order on every page, so the skip
